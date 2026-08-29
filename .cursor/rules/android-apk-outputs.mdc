@@ -1,0 +1,18 @@
+---
+description: After Android app changes, build APK and run on emulator
+globs: app/**/*
+alwaysApply: false
+---
+
+# Android build & emulator deploy
+
+Whenever you change Android app code or Gradle config under `app/`:
+
+1. Run `.\gradlew :app:assembleDebug` before finishing the turn.
+2. The build copies the APK to `outputs/HotWords-debug.apk` automatically.
+3. Install and launch on the connected emulator (default `emulator-5554`):
+   - `adb -s emulator-5554 install -r outputs/HotWords-debug.apk`
+   - `adb -s emulator-5554 shell monkey -p com.zeroglab.hotwords -c android.intent.category.LAUNCHER 1`
+4. If no emulator is connected, report that briefly; do not skip the build.
+
+Do not skip the build/deploy cycle after substantive Android UI/logic changes unless the user explicitly opts out for that turn.
