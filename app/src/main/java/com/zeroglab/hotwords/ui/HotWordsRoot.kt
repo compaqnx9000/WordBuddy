@@ -220,6 +220,8 @@ fun HotWordsRoot(
                             .hotWordsScreen(padding, consumeStatusBars = false),
                         entries = if (words.size in 1..80) viewModel.studyDeck() else emptyList(),
                         currentEntry = viewModel.currentCard(),
+                        prevEntry = viewModel.cardAtPlaybackIndex(ui.cardIndex - 1),
+                        nextEntry = viewModel.cardAtPlaybackIndex(ui.cardIndex + 1),
                         entryCount = words.size,
                         notebookName = activeNotebookName,
                         index = ui.cardIndex,

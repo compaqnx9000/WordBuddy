@@ -75,8 +75,22 @@ val copyDebugApkToOutputs by tasks.registering(Copy::class) {
     }
 }
 
+// Copy release APK to repo outputs/HotWords-release.apk after every assembleRelease.
+val copyReleaseApkToOutputs by tasks.registering(Copy::class) {
+    from(layout.buildDirectory.dir("outputs/apk/release"))
+    include("*.apk")
+    into(rootProject.layout.projectDirectory.dir("outputs"))
+    rename { "HotWords-release.apk" }
+    doFirst {
+        rootProject.layout.projectDirectory.dir("outputs").asFile.mkdirs()
+    }
+}
+
 afterEvaluate {
     tasks.named("assembleDebug").configure {
         finalizedBy(copyDebugApkToOutputs)
+    }
+    tasks.named("assembleRelease").configure {
+        finalizedBy(copyReleaseApkToOutputs)
     }
 }

@@ -57,6 +57,7 @@ import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -1132,7 +1133,7 @@ private fun ListTopBar(
             }
             .windowInsetsPadding(WindowInsets.statusBars)
             .height(56.sdp())
-            .padding(horizontal = 12.sdp()),
+            .padding(horizontal = 8.sdp()),
     ) {
         if (selectionMode) {
             Text(
@@ -1153,44 +1154,46 @@ private fun ListTopBar(
                 fontWeight = FontWeight.Bold,
             )
         } else {
-            Box(
-                Modifier
-                    .align(Alignment.CenterStart)
-                    .size(40.sdp())
-                    .clip(CircleShape)
-                    .clickable(onClick = onBack),
-                contentAlignment = Alignment.Center,
+            Row(
+                Modifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    Icons.Outlined.ArrowBackIosNew,
-                    contentDescription = "返回",
-                    tint = Stellar.CyanSoft,
-                    modifier = Modifier.size(18.sdp()),
-                )
-            }
-            Text(
-                text = title,
-                modifier = Modifier.align(Alignment.Center),
-                color = Stellar.CyanSoft,
-                fontSize = 20.ssp(),
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Box(
-                Modifier
-                    .align(Alignment.CenterEnd)
-                    .size(40.sdp())
-                    .clip(CircleShape)
-                    .clickable(onClick = onOpenMore),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "···",
-                    color = Stellar.Cyan,
-                    fontSize = 18.ssp(),
-                    fontWeight = FontWeight.Bold,
-                )
+                IconButton(onClick = onBack) {
+                    Icon(
+                        Icons.Outlined.ArrowBackIosNew,
+                        contentDescription = "返回",
+                        tint = Stellar.OnSurfaceVariant,
+                        modifier = Modifier.size(18.sdp()),
+                    )
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = title.ifBlank { "生词本" },
+                        color = Stellar.CyanSoft,
+                        fontSize = 18.ssp(),
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "列表模式",
+                        color = Stellar.OnSurfaceVariant,
+                        fontSize = 11.ssp(),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                IconButton(onClick = onOpenMore) {
+                    Text(
+                        text = "···",
+                        color = Stellar.Cyan,
+                        fontSize = 18.ssp(),
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
         }
     }

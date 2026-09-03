@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
@@ -78,7 +77,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
@@ -120,6 +118,8 @@ import com.zeroglab.hotwords.ui.lookup.stellarScreenBackground
 fun CardModeScreen(
     entries: List<VocabEntry>,
     currentEntry: VocabEntry?,
+    prevEntry: VocabEntry? = null,
+    nextEntry: VocabEntry? = null,
     entryCount: Int,
     notebookName: String,
     index: Int,
@@ -277,46 +277,35 @@ fun CardModeScreen(
                     )
                 }
             } else {
-                val entry = currentEntry
-                var dragX by remember { mutableFloatStateOf(0f) }
-                Box(
-                    Modifier
+                LargeDeckSwipePager(
+                    current = currentEntry,
+                    prev = prevEntry,
+                    next = nextEntry,
+                    lockWordPager = lockWordPager,
+                    onPrev = onPrev,
+                    onNext = onNext,
+                    modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth()
-                        .pointerInput(safeIndex, total, lockWordPager) {
-                            if (lockWordPager) return@pointerInput
-                            detectHorizontalDragGestures(
-                                onDragEnd = {
-                                    when {
-                                        dragX < -72f && safeIndex < total - 1 -> onNext()
-                                        dragX > 72f && safeIndex > 0 -> onPrev()
-                                    }
-                                    dragX = 0f
-                                },
-                                onHorizontalDrag = { _, dx -> dragX += dx },
-                            )
+                        .fillMaxWidth(),
+                ) { entry ->
+                    CardPage(
+                        entry = entry,
+                        imageBusy = imageBusy && entry.id == imageTargetId,
+                        accent = accent,
+                        onSpeakWord = onSpeak,
+                        onSpeakAccent = onSpeakAccent,
+                        onOpenImageChooser = {
+                            imageTargetId = entry.id
+                            showImageDialog = true
                         },
-                ) {
-                    key(entry.id) {
-                        CardPage(
-                            entry = entry,
-                            imageBusy = imageBusy && entry.id == imageTargetId,
-                            accent = accent,
-                            onSpeakWord = onSpeak,
-                            onSpeakAccent = onSpeakAccent,
-                            onOpenImageChooser = {
-                                imageTargetId = entry.id
-                                showImageDialog = true
-                            },
-                            onEditMeaning = { meaningEditEntry = entry },
-                            onSpeakText = onSpeakText,
-                            onSpeakTextSlow = onSpeakTextSlow,
-                            onSpeakSyllables = onSpeakSyllables,
-                            onToggleRelatedStar = onToggleRelatedStar,
-                            isRelatedWordSaved = isRelatedWordSaved,
-                            onExampleScrollChange = { scrolling -> lockWordPager = scrolling },
-                        )
-                    }
+                        onEditMeaning = { meaningEditEntry = entry },
+                        onSpeakText = onSpeakText,
+                        onSpeakTextSlow = onSpeakTextSlow,
+                        onSpeakSyllables = onSpeakSyllables,
+                        onToggleRelatedStar = onToggleRelatedStar,
+                        isRelatedWordSaved = isRelatedWordSaved,
+                        onExampleScrollChange = { scrolling -> lockWordPager = scrolling },
+                    )
                 }
             }
         }
@@ -949,6 +938,75 @@ private fun ExampleActionCircle(
         contentAlignment = Alignment.Center,
     ) {
         content()
+    }
+}
+
+private data class VirtualCardWindow(
+    val entries: List<VocabEntry>,
+    val centerPage: Int,
+)
+
+private fun virtualCardWindow(
+    current: VocabEntry,
+    prev: VocabEntry?,
+    next: VocabEntry?,
+): VirtualCardWindow = when {
+    prev != null && next != null -> VirtualCardWindow(listOf(prev, current, next), 1)
+    prev != null -> VirtualCardWindow(listOf(prev, current), 1)
+    next != null -> VirtualCardWindow(listOf(current, next), 0)
+    else -> VirtualCardWindow(listOf(current), 0)
+}
+
+/** Swipe carousel for large decks: only prev / current / next pages are composed. */
+@Composable
+private fun LargeDeckSwipePager(
+    current: VocabEntry,
+    prev: VocabEntry?,
+    next: VocabEntry?,
+    lockWordPager: Boolean,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    modifier: Modifier = Modifier,
+    pageContent: @Composable (VocabEntry) -> Unit,
+) {
+    val window = remember(current.id, prev?.id, next?.id) {
+        virtualCardWindow(current, prev, next)
+    }
+    val pagerState = rememberPagerState(
+        initialPage = window.centerPage,
+        pageCount = { window.entries.size.coerceAtLeast(1) },
+    )
+
+    LaunchedEffect(current.id, window.centerPage, window.entries.size) {
+        if (!pagerState.isScrollInProgress && pagerState.currentPage != window.centerPage) {
+            pagerState.scrollToPage(window.centerPage)
+        }
+    }
+
+    LaunchedEffect(pagerState, window.centerPage) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { page ->
+                if (page == window.centerPage) return@collect
+                when {
+                    page < window.centerPage -> onPrev()
+                    page > window.centerPage -> onNext()
+                }
+            }
+    }
+
+    HorizontalPager(
+        state = pagerState,
+        modifier = modifier,
+        beyondViewportPageCount = 1,
+        userScrollEnabled = !lockWordPager && window.entries.size > 1,
+        key = { page -> window.entries[page].id },
+        flingBehavior = PagerDefaults.flingBehavior(
+            state = pagerState,
+            snapPositionalThreshold = 0.45f,
+        ),
+    ) { page ->
+        pageContent(window.entries[page])
     }
 }
 

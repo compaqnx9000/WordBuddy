@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.zeroglab.hotwords.audio.TtsPlayer
 import com.zeroglab.hotwords.data.AiImageClient
+import com.zeroglab.hotwords.data.BuiltInWordbookSeeder
 import com.zeroglab.hotwords.data.DictionaryClient
 import com.zeroglab.hotwords.data.LookupCache
 import com.zeroglab.hotwords.data.ImageCodec
@@ -20,6 +21,7 @@ import com.zeroglab.hotwords.data.SettingsStore
 import com.zeroglab.hotwords.data.VocabEntry
 import com.zeroglab.hotwords.data.HotWordsApi
 import com.zeroglab.hotwords.data.WordHeads
+import com.zeroglab.hotwords.data.WordPage
 import com.zeroglab.hotwords.data.SessionStore
 import com.zeroglab.hotwords.data.UserSession
 import com.zeroglab.hotwords.data.VocabRepository
@@ -52,6 +54,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 
 data class DateSection(
     val dateLabel: String,
@@ -226,20 +229,14 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun bootstrapGuestCatalogs() {
-        runCatching { api.listCatalogs() }
-            .onSuccess { books ->
-                if (books.isEmpty()) return@onSuccess
-                publishMergedNotebooks(repo.notebooks.value, books)
-                val preferred = repo.notebooks.value.firstOrNull { it.id == _ui.value.activeNotebookId }
-                    ?: repo.notebooks.value.firstOrNull { !it.isSystem }
-                    ?: repo.notebooks.value.firstOrNull()
-                if (preferred != null) {
-                    selectNotebook(preferred.id)
-                }
-            }
-            .onFailure { error ->
-                _ui.update { it.copy(listError = error.message ?: "无法加载系统词书") }
-            }
+        val server = runCatching { api.listCatalogs() }.getOrDefault(emptyList())
+        publishMergedNotebooks(repo.notebooks.value, server)
+        val preferred = repo.notebooks.value.firstOrNull { it.id == _ui.value.activeNotebookId }
+            ?: repo.notebooks.value.firstOrNull { it.slug == Notebook.ZHONGKAO_SLUG }
+            ?: repo.notebooks.value.firstOrNull()
+        if (preferred != null) {
+            selectNotebook(preferred.id)
+        }
     }
 
     private suspend fun syncPublishedCatalogs() {
@@ -257,7 +254,10 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         val users = existing.filter { book ->
             !book.isSystem && book.id !in catalogIds && book.slug !in catalogSlugs
         }
-        val merged = (users + catalogs).sortedWith(
+        val bundled = BuiltInWordbookSeeder.missingNotebooks(catalogs).map { built ->
+            existing.firstOrNull { it.slug == built.slug } ?: built
+        }
+        val merged = (users + catalogs + bundled).sortedWith(
             compareBy<Notebook> { if (it.isSystem) 1 else 0 }
                 .thenBy { it.sortOrder }
                 .thenBy { it.id },
@@ -298,7 +298,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Always replace the active map — never leave the previous notebook's offsets. */
     private fun publishLetterIndexForNotebook(notebookId: Long) {
-        if (notebookId <= 0L) return
+        if (notebookId == 0L) return
         if (_ui.value.activeNotebookId != notebookId) return
         val map = letterIndexByNotebook[notebookId] ?: headsCache[notebookId]?.letterIndex
         if (map != null) letterIndexByNotebook[notebookId] = map
@@ -359,6 +359,29 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         val filtered = filteredWords.value
         if (filtered.isEmpty()) return null
         return filtered.getOrNull(naturalIndexOfCurrentCard())
+    }
+
+    /** Entry at shuffle playback index (cardIndex ± 1 for swipe peek pages). */
+    fun cardAtPlaybackIndex(playbackIndex: Int): VocabEntry? {
+        val filtered = filteredWords.value
+        if (filtered.isEmpty()) return null
+        val last = filtered.lastIndex
+        val settings = _ui.value.settings
+        var idx = playbackIndex
+        if (settings.loop) {
+            idx = (idx % filtered.size + filtered.size) % filtered.size
+        } else if (idx !in 0..last) {
+            return null
+        }
+        val order = _ui.value.shuffledOrder
+        val natural = if (order == null || order.isEmpty()) {
+            idx
+        } else if (idx in order.indices) {
+            order[idx]
+        } else {
+            idx
+        }.coerceIn(0, last)
+        return filtered.getOrNull(natural)
     }
 
     /** 0-based index in the unshuffled notebook list (not the shuffle playback order). */
@@ -798,7 +821,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     fun onNotebookTabOpened() {
         viewModelScope.launch {
             syncPublishedCatalogs()
-            val id = _ui.value.activeNotebookId.takeIf { it > 0L }
+            val id = _ui.value.activeNotebookId.takeIf { it != 0L }
                 ?: _session.value?.vocabNotebookId?.takeIf { it > 0L }
                 ?: repo.notebooks.value.firstOrNull()?.id
                 ?: return@launch
@@ -811,20 +834,19 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 } else if (repo.hasMore) {
                     refreshNotebook(id, reset = false, prefetchAll = true)
                 }
-            } else {
-                hydrateNotebook(id)
             }
         }
     }
 
     fun selectNotebook(id: Long) {
-        if (id <= 0L) return
+        if (id == 0L) return
         if (id == _ui.value.activeNotebookId && repo.items.value.isNotEmpty()) {
             applyCachedLetterIndex(id)
             if (_alphabetLetterIndex.value.isEmpty()) refreshAlphabetLetterIndex(id)
             viewModelScope.launch {
-                if (loadHeads(id)) hydrateNotebook(id)
-                else if (repo.hasMore) refreshNotebook(id, reset = false, prefetchAll = true)
+                if (!loadHeads(id) && repo.hasMore) {
+                    refreshNotebook(id, reset = false, prefetchAll = true)
+                }
             }
             return
         }
@@ -855,10 +877,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 if (_ui.value.activeNotebookId == id) {
                     _ui.update { it.copy(listLoading = false) }
                 }
-                if (loadedHeads) {
-                    hydrateNotebook(id)
-                    return@launch
-                }
+                return@launch
             }
             // User notebooks / cache miss: small SQLite read is fine.
             withContext(Dispatchers.IO) { repo.openCachedNotebook(id) }
@@ -873,15 +892,13 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     cached == 0 -> refreshNotebook(id, reset = true, prefetchAll = true)
                     repo.hasMore -> refreshNotebook(id, reset = false, prefetchAll = true)
                 }
-            } else {
-                hydrateNotebook(id)
             }
         }
     }
 
     fun loadMoreWords() {
         val id = _ui.value.activeNotebookId
-        if (id <= 0L || pageJob?.isActive == true || !repo.hasMore) return
+        if (id == 0L || pageJob?.isActive == true || !repo.hasMore) return
         if (id in headsReady) {
             hydrateNotebook(id)
             return
@@ -895,7 +912,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun seekAlphabetLetter(letter: Char) {
         val id = _ui.value.activeNotebookId
-        if (id <= 0L) return
+        if (id == 0L) return
         val target = letterIndexByNotebook[id]?.get(letter)
             ?: _alphabetLetterIndex.value[letter]
             ?: _alphabetLetterIndex.value.entries
@@ -957,15 +974,24 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         if (token == null && notebook?.isSystem != true) return false
         val heads = headsCache[notebookId] ?: run {
             withContext(Dispatchers.IO) {
-                runCatching { api.listHeads(token, notebookId) }
-                    .recoverCatching { error ->
-                        if (notebook?.isSystem == true && token != null) {
-                            api.listHeads(null, notebookId)
-                        } else {
-                            throw error
+                if (BuiltInWordbookSeeder.isBundledId(notebookId)) {
+                    BuiltInWordbookSeeder.load(getApplication(), notebookId)?.heads
+                } else {
+                    runCatching { api.listHeads(token, notebookId) }
+                        .recoverCatching { error ->
+                            if (notebook?.isSystem == true && token != null) {
+                                api.listHeads(null, notebookId)
+                            } else {
+                                throw error
+                            }
                         }
-                    }
-                    .getOrNull()
+                        .recoverCatching {
+                            notebook?.slug?.let { slug ->
+                                BuiltInWordbookSeeder.loadBySlug(getApplication(), slug)?.heads
+                            } ?: throw it
+                        }
+                        .getOrNull()
+                }
             }?.also { headsCache[notebookId] = it }
         } ?: return false
         if (heads.items.isEmpty()) return false
@@ -975,14 +1001,77 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             _alphabetLetterIndex.value = heads.letterIndex
             headsAppendJob?.cancel()
             headsAppendJob = viewModelScope.launch {
-                applyHeadsProgressive(notebookId, heads)
+                if (BuiltInWordbookSeeder.isBundledId(notebookId)) {
+                    applyBundledProgressive(notebookId)
+                } else {
+                    applyHeadsProgressive(notebookId, heads)
+                }
             }
         }
         return true
     }
 
+    /** Load full bundled rows (definitions included) from APK assets. */
+    private suspend fun applyBundledProgressive(notebookId: Long) {
+        if (_ui.value.activeNotebookId != notebookId) return
+        val packed = withContext(Dispatchers.IO) {
+            BuiltInWordbookSeeder.load(getApplication(), notebookId)
+        } ?: return
+        val entries = packed.entries
+        val total = entries.size
+        val previewCount = minOf(HEADS_PREVIEW_COUNT, total)
+        if (_ui.value.activeNotebookId != notebookId) return
+        repo.applyHeads(notebookId, entries.subList(0, previewCount), total)
+        studyDeckFiltered = null
+        _ui.update { it.copy(listLoading = false) }
+        if (previewCount >= total) return
+        yield()
+        delay(16)
+        var from = previewCount
+        while (from < total) {
+            if (_ui.value.activeNotebookId != notebookId) return
+            val end = minOf(from + HEADS_CHUNK, total)
+            repo.appendHeadStubs(notebookId, entries.subList(from, end), total)
+            studyDeckFiltered = null
+            from = end
+            yield()
+        }
+    }
+
+    private suspend fun ensureBundledLoadedUpTo(notebookId: Long, minCount: Int) {
+        val packed = BuiltInWordbookSeeder.cached(notebookId)
+            ?: withContext(Dispatchers.IO) { BuiltInWordbookSeeder.load(getApplication(), notebookId) }
+            ?: return
+        if (_ui.value.activeNotebookId != notebookId) return
+        val need = minCount.coerceIn(0, packed.entries.size)
+        if (repo.items.value.size >= need &&
+            repo.items.value.firstOrNull()?.notebookId == notebookId
+        ) {
+            return
+        }
+        if (repo.items.value.isEmpty() ||
+            repo.items.value.firstOrNull()?.notebookId != notebookId
+        ) {
+            val previewEnd = minOf(HEADS_PREVIEW_COUNT, need, packed.entries.size)
+            repo.applyHeads(notebookId, packed.entries.subList(0, previewEnd), packed.entries.size)
+            studyDeckFiltered = null
+        }
+        var from = repo.items.value.size
+        while (from < need && _ui.value.activeNotebookId == notebookId) {
+            val end = minOf(from + HEADS_CHUNK, need)
+            repo.appendHeadStubs(notebookId, packed.entries.subList(from, end), packed.entries.size)
+            studyDeckFiltered = null
+            from = end
+            yield()
+        }
+    }
+
     /** Load ordered stubs until at least [minCount] rows exist (alphabet seek). */
     private suspend fun ensureHeadsLoadedUpTo(notebookId: Long, minCount: Int) {
+        if (BuiltInWordbookSeeder.isBundledId(notebookId)) {
+            ensureBundledLoadedUpTo(notebookId, minCount)
+            return
+        }
         val heads = headsCache[notebookId] ?: return
         if (_ui.value.activeNotebookId != notebookId) return
         val need = minCount.coerceIn(0, heads.items.size)
@@ -1017,8 +1106,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Paint the first screen of stubs immediately, then append the rest in
-     * chunks so chip taps stay responsive on 3k–6k catalogs.
+     * Paint the first screen of stubs immediately, hydrate definitions, then
+     * append remaining stubs in chunks.
      */
     private suspend fun applyHeadsProgressive(notebookId: Long, heads: WordHeads) {
         if (_ui.value.activeNotebookId != notebookId) return
@@ -1032,6 +1121,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         repo.applyHeads(notebookId, preview, total)
         studyDeckFiltered = null
         _ui.update { it.copy(listLoading = false) }
+        hydrateDefinitions(notebookId, from = 0)
         if (previewCount >= items.size) return
         yield()
         delay(16)
@@ -1050,31 +1140,89 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Pull definition rows from API/bundled assets into stub list. */
+    private suspend fun hydrateDefinitions(notebookId: Long, from: Int = 0) {
+        if (BuiltInWordbookSeeder.isBundledId(notebookId)) return
+        val token = _session.value?.token
+        val notebook = notebooks.value.firstOrNull { it.id == notebookId }
+        if (token == null && notebook?.isSystem != true) return
+        var cursor = from.coerceAtLeast(0)
+        val total = notebooks.value.firstOrNull { it.id == notebookId }?.wordCount
+            ?: repo.items.value.size
+        var passes = 0
+        while (coroutineContext.isActive && _ui.value.activeNotebookId == notebookId && passes < 3) {
+            val items = repo.items.value
+            if (items.isEmpty()) {
+                delay(32)
+                continue
+            }
+            while (cursor < items.size && items[cursor].definitions.isNotEmpty()) {
+                cursor += 1
+            }
+            if (cursor >= total || cursor >= items.size) {
+                if (passes == 0 && from > 0) {
+                    cursor = 0
+                    passes += 1
+                    continue
+                }
+                break
+            }
+            if (!fetchPage(token, notebookId, reset = false, fromIndex = cursor, mergeOnly = true)) {
+                // Server missing rows — try packaged fallback by slug.
+                val slug = notebook?.slug
+                if (slug != null &&
+                    fetchBundledPageBySlug(slug, notebookId, cursor, mergeOnly = true)
+                ) {
+                    cursor += PAGE_LIMIT
+                    continue
+                }
+                break
+            }
+            cursor += PAGE_LIMIT
+        }
+    }
+
+    private suspend fun fetchBundledPageBySlug(
+        slug: String,
+        notebookId: Long,
+        fromIndex: Int,
+        mergeOnly: Boolean,
+        reset: Boolean = false,
+    ): Boolean {
+        val packed = BuiltInWordbookSeeder.loadBySlug(getApplication(), slug) ?: return false
+        val start = when {
+            reset || mergeOnly || fromIndex > 0 -> fromIndex.coerceAtLeast(0)
+            else -> repo.items.value.size
+        }
+        if (start >= packed.entries.size) return false
+        val slice = packed.entries.subList(start, minOf(start + PAGE_LIMIT, packed.entries.size))
+        val page = WordPage(
+            items = slice.map { it.copy(notebookId = notebookId) },
+            total = packed.entries.size,
+            nextCursor = if (start + slice.size < packed.entries.size) "${start + slice.size}" else null,
+            fromIndex = start,
+        )
+        withContext(Dispatchers.IO) {
+            when {
+                mergeOnly || (fromIndex > 0 && notebookId in headsReady) -> repo.mergeDetails(notebookId, page)
+                fromIndex > 0 -> repo.applySeekWindow(notebookId, page, fromIndex)
+                reset -> repo.applyFirstPage(notebookId, page)
+                else -> repo.applyNextPage(notebookId, page)
+            }
+        }
+        studyDeckFiltered = null
+        return true
+    }
+
     private fun hydrateNotebook(notebookId: Long, around: Int = 0) {
         if (notebookId != _ui.value.activeNotebookId) return
+        if (BuiltInWordbookSeeder.isBundledId(notebookId)) return
         if (hydrateJob?.isActive == true) return
         val token = _session.value?.token
         val notebook = notebooks.value.firstOrNull { it.id == notebookId }
         if (token == null && notebook?.isSystem != true) return
         hydrateJob = viewModelScope.launch {
-            var from = around.coerceAtLeast(0)
-            val total = notebooks.value.firstOrNull { it.id == notebookId }?.wordCount
-                ?: repo.items.value.size
-            var passes = 0
-            while (isActive && _ui.value.activeNotebookId == notebookId && passes < 2) {
-                val items = repo.items.value
-                while (from < items.size && items[from].definitions.isNotEmpty()) from += 1
-                if (from >= total || from >= items.size) {
-                    if (passes == 0 && around > 0) {
-                        from = 0
-                        passes += 1
-                        continue
-                    }
-                    break
-                }
-                if (!fetchPage(token, notebookId, reset = false, fromIndex = from, mergeOnly = true)) break
-                from += PAGE_LIMIT
-            }
+            hydrateDefinitions(notebookId, from = around.coerceAtLeast(0))
         }
     }
 
@@ -1092,6 +1240,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private fun refreshAlphabetLetterIndex(notebookId: Long) {
         letterIndexJob?.cancel()
         publishLetterIndexForNotebook(notebookId)
+        if (BuiltInWordbookSeeder.isBundledId(notebookId)) return
         val token = _session.value?.token
         val notebook = notebooks.value.firstOrNull { it.id == notebookId }
         if (token == null && notebook?.isSystem != true) return
@@ -1144,7 +1293,11 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         fromIndex: Int = 0,
         mergeOnly: Boolean = false,
     ): Boolean {
-        return runCatching {
+        if (BuiltInWordbookSeeder.isBundledId(id)) {
+            return fetchBundledPage(id, reset, fromIndex, mergeOnly)
+        }
+        val notebook = repo.notebooks.value.firstOrNull { it.id == id }
+        val apiResult = runCatching {
             val cursor = when {
                 reset || mergeOnly || fromIndex > 0 -> null
                 else -> repo.currentCursor()
@@ -1153,8 +1306,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 api.listWords(token, id, cursor, limit = PAGE_LIMIT, fromIndex = fromIndex)
             }
                 .recoverCatching { error ->
-                    val system = repo.notebooks.value.firstOrNull { it.id == id }?.isSystem == true
-                    if (system && token != null) {
+                    if (notebook?.isSystem == true && token != null) {
                         api.listWords(null, id, cursor, limit = PAGE_LIMIT, fromIndex = fromIndex)
                     } else {
                         throw error
@@ -1177,10 +1329,51 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             studyDeckFiltered = null
-        }.onFailure { error ->
-            if (error is CancellationException) throw error
-            _ui.update { it.copy(listError = error.message ?: "加载失败") }
-        }.isSuccess
+        }
+        if (apiResult.isSuccess) return true
+        val error = apiResult.exceptionOrNull() ?: return false
+        if (error is CancellationException) throw error
+        val slug = notebook?.slug
+        if (notebook?.isSystem == true && slug != null &&
+            fetchBundledPageBySlug(slug, id, fromIndex, mergeOnly, reset)
+        ) {
+            return true
+        }
+        _ui.update { it.copy(listError = error.message ?: "加载失败") }
+        return false
+    }
+
+    private suspend fun fetchBundledPage(
+        id: Long,
+        reset: Boolean,
+        fromIndex: Int,
+        mergeOnly: Boolean,
+    ): Boolean {
+        val packed = BuiltInWordbookSeeder.cached(id)
+            ?: withContext(Dispatchers.IO) { BuiltInWordbookSeeder.load(getApplication(), id) }
+            ?: return false
+        val start = when {
+            reset || mergeOnly || fromIndex > 0 -> fromIndex.coerceAtLeast(0)
+            else -> repo.items.value.size
+        }
+        if (start >= packed.entries.size) return false
+        val slice = packed.entries.subList(start, minOf(start + PAGE_LIMIT, packed.entries.size))
+        val page = WordPage(
+            items = slice,
+            total = packed.entries.size,
+            nextCursor = if (start + slice.size < packed.entries.size) "${start + slice.size}" else null,
+            fromIndex = start,
+        )
+        withContext(Dispatchers.IO) {
+            when {
+                mergeOnly || (fromIndex > 0 && id in headsReady) -> repo.mergeDetails(id, page)
+                fromIndex > 0 -> repo.applySeekWindow(id, page, fromIndex)
+                reset -> repo.applyFirstPage(id, page)
+                else -> repo.applyNextPage(id, page)
+            }
+        }
+        studyDeckFiltered = null
+        return true
     }
 
     private fun dbPersistAsync(items: List<VocabEntry>) {
