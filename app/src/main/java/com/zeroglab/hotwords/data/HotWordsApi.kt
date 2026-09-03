@@ -1,0 +1,387 @@
+package com.zeroglab.hotwords.data
+
+import com.zeroglab.hotwords.BuildConfig
+import java.net.HttpURLConnection
+import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+
+data class AuthResult(
+    val session: UserSession?,
+    val isNewUser: Boolean = false,
+)
+
+data class WordPage(
+    val items: List<VocabEntry>,
+    val total: Int,
+    val nextCursor: String?,
+    val fromIndex: Int = 0,
+)
+
+data class WordHead(
+    val id: Long,
+    val text: String,
+    val isPhrase: Boolean = false,
+    val ipaUk: String? = null,
+    val ipaUs: String? = null,
+    val sortOrder: Int = 0,
+) {
+    fun toStub(notebookId: Long): VocabEntry = VocabEntry(
+        id = id,
+        notebookId = notebookId,
+        text = text,
+        isPhrase = isPhrase,
+        ipaUk = ipaUk,
+        ipaUs = ipaUs,
+        definitions = emptyList(),
+        sortOrder = sortOrder,
+    )
+}
+
+data class WordHeads(
+    val items: List<WordHead>,
+    val total: Int,
+    val letterIndex: Map<Char, Int>,
+)
+
+class ApiException(message: String) : Exception(message)
+
+class HotWordsApi {
+    private val bases = linkedSetOf(
+        BuildConfig.API_BASE_URL.trimEnd('/'),
+        BuildConfig.API_FALLBACK_URL.trimEnd('/'),
+    ).filter { it.isNotBlank() }
+
+    @Volatile
+    private var baseUrl = bases.first()
+
+    suspend fun sendCode(phone: String): String? = withContext(Dispatchers.IO) {
+        val root = request("POST", "/auth/send-code", auth = null, body = JSONObject().put("phone", phone))
+        if (root.has("debugCode") && !root.isNull("debugCode")) root.optString("debugCode") else null
+    }
+
+    suspend fun login(phone: String, code: String): AuthResult = withContext(Dispatchers.IO) {
+        parseAuth(
+            request(
+                "POST",
+                "/auth/login",
+                auth = null,
+                body = JSONObject().put("phone", phone).put("code", code),
+            ),
+        )
+    }
+
+    suspend fun register(phone: String, code: String, password: String): AuthResult =
+        withContext(Dispatchers.IO) {
+            parseAuth(
+                request(
+                    "POST",
+                    "/auth/register",
+                    auth = null,
+                    body = JSONObject()
+                        .put("phone", phone)
+                        .put("code", code)
+                        .put("password", password),
+                ),
+            )
+        }
+
+    private fun parseAuth(root: JSONObject): AuthResult {
+        if (root.optBoolean("isNewUser")) return AuthResult(session = null, isNewUser = true)
+        val user = root.getJSONObject("user")
+        return AuthResult(
+            session = UserSession(
+                token = root.getString("token"),
+                userId = user.getLong("id"),
+                phone = user.getString("phone"),
+                vocabNotebookId = root.getLong("vocabNotebookId"),
+            ),
+            isNewUser = false,
+        )
+    }
+
+    suspend fun listNotebooks(token: String): List<Notebook> = withContext(Dispatchers.IO) {
+        val root = request("GET", "/notebooks", token)
+        val items = root.getJSONArray("items")
+        buildList {
+            for (i in 0 until items.length()) add(parseNotebook(items.getJSONObject(i)))
+        }
+    }
+
+    /** Public catalogs (中考 / 高考 / CET) — no login required. */
+    suspend fun listCatalogs(): List<Notebook> = withContext(Dispatchers.IO) {
+        val root = request("GET", "/catalogs", auth = null)
+        val items = root.getJSONArray("items")
+        buildList {
+            for (i in 0 until items.length()) add(parseNotebook(items.getJSONObject(i)))
+        }
+    }
+
+    suspend fun createNotebook(token: String, name: String): Notebook = withContext(Dispatchers.IO) {
+        val root = request(
+            "POST",
+            "/notebooks",
+            token,
+            body = JSONObject().put("name", name.trim()),
+        )
+        parseNotebook(root.getJSONObject("item"))
+    }
+
+    suspend fun deleteNotebook(token: String, id: Long) = withContext(Dispatchers.IO) {
+        request("DELETE", "/notebooks/$id", token)
+    }
+
+    suspend fun listWords(
+        token: String?,
+        notebookId: Long,
+        cursor: String?,
+        limit: Int = 100,
+        fromIndex: Int = 0,
+    ): WordPage =
+        withContext(Dispatchers.IO) {
+            val path = buildString {
+                append("/notebooks/").append(notebookId).append("/words?limit=").append(limit)
+                if (!cursor.isNullOrBlank()) {
+                    append("&cursor=").append(enc(cursor))
+                } else if (fromIndex > 0) {
+                    append("&fromIndex=").append(fromIndex)
+                }
+            }
+            val root = request("GET", path, token)
+            val items = root.getJSONArray("items")
+            WordPage(
+                items = buildList {
+                    for (i in 0 until items.length()) add(parseWord(items.getJSONObject(i)))
+                },
+                total = root.optInt("total"),
+                nextCursor = optNullableString(root, "nextCursor"),
+                fromIndex = root.optInt("fromIndex", fromIndex),
+            )
+        }
+
+    /**
+     * Absolute 0-based index of the first word for each initial letter in the notebook.
+     * Keys are A–Z and optionally '#'.
+     */
+    suspend fun letterIndex(token: String?, notebookId: Long): Map<Char, Int> =
+        withContext(Dispatchers.IO) {
+            val root = request("GET", "/notebooks/$notebookId/letter-index", token)
+            parseLetterIndex(root.optJSONObject("index"))
+        }
+
+    /** Full ordered word heads (id + text) for in-memory seeks. */
+    suspend fun listHeads(token: String?, notebookId: Long): WordHeads =
+        withContext(Dispatchers.IO) {
+            val root = request("GET", "/notebooks/$notebookId/heads", token)
+            val items = root.optJSONArray("items") ?: JSONArray()
+            WordHeads(
+                items = buildList {
+                    for (i in 0 until items.length()) {
+                        val obj = items.getJSONObject(i)
+                        add(
+                            WordHead(
+                                id = obj.getLong("id"),
+                                text = obj.optString("text"),
+                                isPhrase = obj.optBoolean("isPhrase"),
+                                ipaUk = optNullableString(obj, "ipaUk"),
+                                ipaUs = optNullableString(obj, "ipaUs"),
+                                sortOrder = obj.optInt("sortOrder"),
+                            ),
+                        )
+                    }
+                },
+                total = root.optInt("total"),
+                letterIndex = parseLetterIndex(root.optJSONObject("index")),
+            )
+        }
+
+    private fun parseLetterIndex(obj: JSONObject?): Map<Char, Int> {
+        if (obj == null) return emptyMap()
+        return buildMap {
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                if (key.isEmpty()) continue
+                put(key[0].uppercaseChar(), obj.getInt(key))
+            }
+        }
+    }
+
+    suspend fun createWord(token: String, notebookId: Long, entry: VocabEntry): VocabEntry =
+        withContext(Dispatchers.IO) {
+            val root = request(
+                "POST",
+                "/notebooks/$notebookId/words",
+                token,
+                body = wordBody(entry),
+            )
+            parseWord(root.getJSONObject("item"))
+        }
+
+    suspend fun updateWord(
+        token: String,
+        id: Long,
+        definitions: List<Definition>? = null,
+        examples: List<ExampleSentence>? = null,
+        nearWords: List<String>? = null,
+        synonyms: List<String>? = null,
+        antonyms: List<String>? = null,
+    ): VocabEntry = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+        if (definitions != null) body.put("definitions", JSONArray(encodeDefinitions(definitions)))
+        if (examples != null) {
+            val array = JSONArray()
+            examples.forEach { item ->
+                array.put(JSONObject().put("english", item.english).put("chinese", item.chinese))
+            }
+            body.put("examples", array)
+        }
+        if (nearWords != null) body.put("nearWords", JSONArray(nearWords))
+        if (synonyms != null) body.put("synonyms", JSONArray(synonyms))
+        if (antonyms != null) body.put("antonyms", JSONArray(antonyms))
+        val root = request("PATCH", "/words/$id", token, body = body)
+        parseWord(root.getJSONObject("item"))
+    }
+
+    suspend fun deleteWord(token: String, id: Long) = withContext(Dispatchers.IO) {
+        request("DELETE", "/words/$id", token)
+    }
+
+    private fun parseWord(obj: JSONObject): VocabEntry {
+        return VocabEntry(
+            id = obj.getLong("id"),
+            notebookId = obj.getLong("notebookId"),
+            text = obj.getString("text"),
+            isPhrase = obj.optBoolean("isPhrase"),
+            ipaUk = optNullableString(obj, "ipaUk"),
+            ipaUs = optNullableString(obj, "ipaUs"),
+            definitions = decodeDefinitions(obj.optJSONArray("definitions")?.toString() ?: "[]"),
+            examples = decodeExamples(
+                JSONArray().also { out ->
+                    val raw = obj.optJSONArray("examples") ?: return@also
+                    for (i in 0 until raw.length()) {
+                        val ex = raw.optJSONObject(i) ?: continue
+                        out.put(
+                            JSONObject()
+                                .put("en", ex.optString("english").ifBlank { ex.optString("en") })
+                                .put("zh", ex.optString("chinese").ifBlank { ex.optString("zh") }),
+                        )
+                    }
+                }.toString(),
+            ),
+            nearWords = decodeStringList(obj.optJSONArray("nearWords")?.toString()),
+            synonyms = decodeStringList(obj.optJSONArray("synonyms")?.toString()),
+            antonyms = decodeStringList(obj.optJSONArray("antonyms")?.toString()),
+            sortOrder = obj.optInt("sortOrder"),
+            addedAtMillis = obj.optLong("addedAtMillis", System.currentTimeMillis()),
+        )
+    }
+
+    private fun wordBody(entry: VocabEntry): JSONObject {
+        val examples = JSONArray()
+        entry.examples.forEach { item ->
+            examples.put(JSONObject().put("english", item.english).put("chinese", item.chinese))
+        }
+        return JSONObject()
+            .put("text", entry.text)
+            .put("isPhrase", entry.isPhrase)
+            .put("ipaUk", entry.ipaUk)
+            .put("ipaUs", entry.ipaUs)
+            .put("definitions", JSONArray(encodeDefinitions(entry.definitions)))
+            .put("examples", examples)
+            .put("nearWords", JSONArray(entry.nearWords))
+            .put("synonyms", JSONArray(entry.synonyms))
+            .put("antonyms", JSONArray(entry.antonyms))
+    }
+
+    private fun request(method: String, path: String, auth: String?, body: JSONObject? = null): JSONObject {
+        var lastError: Exception? = null
+        val order = listOf(baseUrl) + bases.filter { it != baseUrl }
+        for (base in order) {
+            try {
+                val json = requestOnce(base, method, path, auth, body)
+                baseUrl = base
+                return json
+            } catch (error: ApiException) {
+                throw error
+            } catch (error: Exception) {
+                lastError = error
+            }
+        }
+        throw lastError?.let { friendlyNetworkError(it) } ?: ApiException("无法连接服务器")
+    }
+
+    private fun requestOnce(
+        base: String,
+        method: String,
+        path: String,
+        auth: String?,
+        body: JSONObject?,
+    ): JSONObject {
+        val conn = java.net.URI("$base$path").toURL().openConnection() as HttpURLConnection
+        try {
+            conn.requestMethod = method
+            conn.connectTimeout = 8000
+            conn.readTimeout = 15000
+            conn.setRequestProperty("Accept", "application/json")
+            if (!auth.isNullOrBlank()) conn.setRequestProperty("Authorization", "Bearer $auth")
+            if (body != null) {
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
+            }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val text = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
+            val json = parseObject(text)
+            if (code !in 200..299) {
+                throw ApiException(json.optString("error").ifBlank { "http $code" })
+            }
+            return json
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun parseNotebook(obj: JSONObject): Notebook {
+        return Notebook(
+            id = obj.getLong("id"),
+            name = obj.getString("name"),
+            sortOrder = obj.optInt("sortOrder"),
+            createdAtMillis = obj.optLong("createdAtMillis"),
+            kind = obj.optString("kind", "user"),
+            slug = optNullableString(obj, "slug"),
+            wordCount = obj.optInt("wordCount"),
+        )
+    }
+
+    private fun parseObject(text: String): JSONObject {
+        if (text.isBlank()) return JSONObject()
+        return runCatching { JSONObject(text) }.getOrElse { JSONObject() }
+    }
+
+    private fun optNullableString(obj: JSONObject, key: String): String? {
+        if (!obj.has(key) || obj.isNull(key)) return null
+        val value = obj.optString(key).trim()
+        return value.takeIf { it.isNotBlank() && it != "null" }
+    }
+
+    private fun enc(value: String): String =
+        java.net.URLEncoder.encode(value, StandardCharsets.UTF_8.name())
+
+    private fun friendlyNetworkError(error: Exception): ApiException {
+        val message = error.message.orEmpty()
+        val hint = when {
+            message.contains("Connection reset", ignoreCase = true) ||
+                message.contains("failed to connect", ignoreCase = true) ||
+                message.contains("ECONNREFUSED", ignoreCase = true) ->
+                "无法连接服务器，请确认后端已启动（server 目录执行 npm start），并已运行 adb reverse tcp:8787 tcp:8787"
+            message.contains("timeout", ignoreCase = true) ->
+                "连接服务器超时，请检查网络或后端是否正常运行"
+            else -> message.ifBlank { "无法连接服务器" }
+        }
+        return ApiException(hint)
+    }
+}

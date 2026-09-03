@@ -71,8 +71,6 @@ fun LookupScreen(
     wordCount: Int,
     userName: String,
     onToggleTheme: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onOpenAccount: () -> Unit,
     onQuery: (String) -> Unit,
     onSubmit: () -> Unit,
     onToggleStar: () -> Unit,
@@ -126,10 +124,7 @@ fun LookupScreen(
                 .fillMaxSize()
                 .imePadding(),
         ) {
-            HomeProfileHeader(
-                onOpenMenu = onOpenSettings,
-                onOpenAccount = onOpenAccount,
-            )
+            HomeProfileHeader()
             Column(
                 Modifier
                     .weight(1f)
@@ -230,6 +225,7 @@ private fun LookupContent(
             LookupResultBlock(
                 entry = result.entry,
                 saved = result.saved,
+                relatedLoading = ui.lookupRelatedLoading,
                 accent = accent,
                 imageBusy = imageBusy,
                 onToggleStar = onToggleStar,
@@ -244,7 +240,7 @@ private fun LookupContent(
         }
         else -> {
             Text(
-                text = "Search a word to see phonetics, meanings, and examples.",
+                text = "搜索单词，查看音标、释义和例句。",
                 color = Stellar.OnSurfaceVariant,
                 fontSize = 15.ssp(),
             )
@@ -256,6 +252,7 @@ private fun LookupContent(
 private fun LookupResultBlock(
     entry: VocabEntry,
     saved: Boolean,
+    relatedLoading: Boolean,
     accent: Accent,
     imageBusy: Boolean,
     onToggleStar: () -> Unit,
@@ -288,6 +285,13 @@ private fun LookupResultBlock(
             onToggleStar = onToggleRelatedStar,
             isWordSaved = isRelatedWordSaved,
             stellar = true,
+        )
+    } else if (relatedLoading) {
+        Text(
+            text = "关联词加载中…",
+            color = Stellar.OnSurfaceVariant.copy(alpha = 0.85f),
+            fontSize = 13.ssp(),
+            modifier = Modifier.padding(top = 8.sdp()),
         )
     }
     if (entry.examples.isNotEmpty()) {
@@ -405,13 +409,13 @@ private fun WordHeader(
 private fun AccentChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Text(
         text = label,
-        color = if (selected) Stellar.OnSurface else Stellar.OnSurfaceVariant,
+        color = if (selected) Stellar.OnPrimary else Stellar.OnSurfaceVariant,
         fontSize = 11.ssp(),
         fontWeight = FontWeight.Bold,
         letterSpacing = 0.08.em,
         modifier = Modifier
             .clip(RoundedCornerShape(16.sdp()))
-            .background(if (selected) Color(0xFF3A4344) else Color.Transparent)
+            .background(if (selected) Stellar.Cyan else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.sdp(), vertical = 6.sdp()),
     )

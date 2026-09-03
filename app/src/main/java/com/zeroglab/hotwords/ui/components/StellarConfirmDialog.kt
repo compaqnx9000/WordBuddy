@@ -94,17 +94,19 @@ fun StellarConfirmDialog(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = dismissText,
-                    color = Stellar.OnSurfaceVariant,
-                    fontSize = 13.ssp(),
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .clickable(onClick = onDismiss)
-                        .padding(horizontal = 14.sdp(), vertical = 10.sdp()),
-                )
-                Spacer(Modifier.padding(horizontal = 4.sdp()))
+                if (dismissText.isNotBlank()) {
+                    Text(
+                        text = dismissText,
+                        color = Stellar.OnSurfaceVariant,
+                        fontSize = 13.ssp(),
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .clickable(onClick = onDismiss)
+                            .padding(horizontal = 14.sdp(), vertical = 10.sdp()),
+                    )
+                    Spacer(Modifier.padding(horizontal = 4.sdp()))
+                }
                 Text(
                     text = confirmText,
                     color = Stellar.OnPrimary,

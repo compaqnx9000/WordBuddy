@@ -1,0 +1,298 @@
+package com.zeroglab.hotwords.ui.settings
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.ArrowBackIosNew
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.zeroglab.hotwords.BuildConfig
+import com.zeroglab.hotwords.R
+import com.zeroglab.hotwords.ui.components.StellarConfirmDialog
+import com.zeroglab.hotwords.ui.design.sdp
+import com.zeroglab.hotwords.ui.design.ssp
+import com.zeroglab.hotwords.ui.lookup.Stellar
+import com.zeroglab.hotwords.ui.lookup.stellarGlass
+import com.zeroglab.hotwords.ui.lookup.stellarPanelBackgroundColor
+import com.zeroglab.hotwords.ui.lookup.stellarScreenBackground
+import java.util.Calendar
+
+@Composable
+fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
+    var detailTitle by remember { mutableStateOf<String?>(null) }
+    var detailMessage by remember { mutableStateOf("") }
+
+    detailTitle?.let { title ->
+        StellarConfirmDialog(
+            title = title,
+            message = detailMessage,
+            confirmText = "知道了",
+            dismissText = "",
+            onDismiss = { detailTitle = null },
+            onConfirm = { detailTitle = null },
+        )
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .stellarScreenBackground(),
+        ) {
+            AboutTopBar(onBack = onDismiss)
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.sdp())
+                    .padding(bottom = 28.sdp()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.height(28.sdp()))
+                AboutBrandHeader()
+                Spacer(Modifier.height(28.sdp()))
+
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .stellarGlass()
+                        .padding(vertical = 2.sdp()),
+                ) {
+                    AboutMenuRow(
+                        title = "功能介绍",
+                        onClick = {
+                            detailTitle = "功能介绍"
+                            detailMessage =
+                                "词搭子帮你查词、收藏、卡片背诵。\n\n" +
+                                    "· 首页快速查词，查看音标、释义与例句\n" +
+                                    "· 收藏到生词本，支持导入导出\n" +
+                                    "· 卡片模式复习，可朗读与切换英音美音\n" +
+                                    "· 内置四级 / 六级词书，随时开背"
+                        },
+                    )
+                    AboutMenuDivider()
+                    AboutMenuRow(
+                        title = "投诉",
+                        onClick = {
+                            detailTitle = "投诉"
+                            detailMessage =
+                                "如遇内容错误、体验问题或违规信息，请通过「帮助与反馈」联系我们，或发送邮件至 support@zeroglab.com。\n\n我们会尽快核实处理。"
+                        },
+                    )
+                    AboutMenuDivider()
+                    AboutMenuRow(
+                        title = "版本更新",
+                        onClick = {
+                            detailTitle = "版本更新"
+                            detailMessage =
+                                "当前版本 ${BuildConfig.VERSION_NAME}\n\n已是最新版本。后续更新将通过应用商店推送。"
+                        },
+                    )
+                }
+
+                Spacer(Modifier.height(36.sdp()))
+                AboutLegalFooter(
+                    onOpenAgreement = {
+                        detailTitle = "软件许可及服务协议"
+                        detailMessage =
+                            "使用词搭子即表示你同意遵守本软件的使用规范。请勿将本应用用于违法用途。词库与查词服务可能依赖第三方数据源，结果仅供学习参考。"
+                    },
+                    onOpenPrivacySummary = {
+                        detailTitle = "隐私保护指引摘要"
+                        detailMessage =
+                            "我们仅收集账号登录与学习所需的最少信息（如手机号、词库数据）。不会出售你的个人信息。详细说明见《隐私保护指引》。"
+                    },
+                    onOpenPrivacy = {
+                        detailTitle = "隐私保护指引"
+                        detailMessage =
+                            "词搭子会本地缓存部分词条以便离线浏览，并在登录后将你的生词本同步至服务器。你可以随时退出登录清除本机缓存。\n\n如需删除账号数据，请联系 support@zeroglab.com。"
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AboutTopBar(onBack: () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .background(stellarPanelBackgroundColor())
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .height(56.sdp())
+            .padding(horizontal = 12.sdp()),
+    ) {
+        Box(
+            Modifier
+                .align(Alignment.CenterStart)
+                .size(40.sdp())
+                .clip(CircleShape)
+                .clickable(onClick = onBack),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Outlined.ArrowBackIosNew,
+                contentDescription = "返回",
+                tint = Stellar.CyanSoft,
+                modifier = Modifier.size(18.sdp()),
+            )
+        }
+        Text(
+            text = "关于词搭子",
+            modifier = Modifier.align(Alignment.Center),
+            color = Stellar.CyanSoft,
+            fontSize = 20.ssp(),
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun AboutBrandHeader() {
+    val logoShape = RoundedCornerShape(22.sdp())
+    Image(
+        painter = painterResource(R.drawable.ic_wordbuddy_logo),
+        contentDescription = "词搭子",
+        contentScale = ContentScale.Fit,
+        modifier = Modifier
+            .shadow(
+                elevation = 16.sdp(),
+                shape = logoShape,
+                ambientColor = Stellar.Cyan.copy(alpha = 0.4f),
+                spotColor = Stellar.Cyan.copy(alpha = 0.3f),
+            )
+            .size(88.sdp())
+            .clip(logoShape),
+    )
+    Spacer(Modifier.height(16.sdp()))
+    Text(
+        text = "词搭子",
+        color = Stellar.CyanSoft,
+        fontSize = 24.ssp(),
+        fontWeight = FontWeight.Bold,
+    )
+    Spacer(Modifier.height(6.sdp()))
+    Text(
+        text = "Version ${BuildConfig.VERSION_NAME}",
+        color = Stellar.OnSurfaceVariant,
+        fontSize = 14.ssp(),
+    )
+}
+
+@Composable
+private fun AboutMenuRow(title: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.sdp(), vertical = 16.sdp()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            color = Stellar.OnSurface,
+            fontSize = 16.ssp(),
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+            contentDescription = null,
+            tint = Stellar.OnSurfaceVariant.copy(alpha = 0.45f),
+            modifier = Modifier.size(20.sdp()),
+        )
+    }
+}
+
+@Composable
+private fun AboutMenuDivider() {
+    HorizontalDivider(
+        thickness = 0.5.dp,
+        color = Stellar.Outline.copy(alpha = 0.45f),
+    )
+}
+
+@Composable
+private fun AboutLegalFooter(
+    onOpenAgreement: () -> Unit,
+    onOpenPrivacySummary: () -> Unit,
+    onOpenPrivacy: () -> Unit,
+) {
+    val year = Calendar.getInstance().get(Calendar.YEAR)
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.sdp()),
+    ) {
+        AboutLegalLink("《软件许可及服务协议》", onOpenAgreement)
+        AboutLegalLink("《隐私保护指引摘要》", onOpenPrivacySummary)
+        AboutLegalLink("《隐私保护指引》", onOpenPrivacy)
+        Spacer(Modifier.height(6.sdp()))
+        Text(
+            text = "客服邮箱：support@zeroglab.com",
+            color = Stellar.OnSurfaceVariant.copy(alpha = 0.75f),
+            fontSize = 12.ssp(),
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = "ZeroGLab 版权所有\nCopyright © 2024-$year ZeroGLab. All Rights Reserved.",
+            color = Stellar.OnSurfaceVariant.copy(alpha = 0.55f),
+            fontSize = 11.ssp(),
+            textAlign = TextAlign.Center,
+            lineHeight = 16.ssp(),
+        )
+    }
+}
+
+@Composable
+private fun AboutLegalLink(text: String, onClick: () -> Unit) {
+    Text(
+        text = text,
+        color = Stellar.Cyan,
+        fontSize = 13.ssp(),
+        modifier = Modifier.clickable(onClick = onClick),
+    )
+}

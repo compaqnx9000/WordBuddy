@@ -79,7 +79,7 @@ fun LookupInputBox(
             )
             if (value.isEmpty()) {
                 Text(
-                    text = "Search words...",
+                    text = "搜索单词…",
                     color = Stellar.OnSurfaceVariant.copy(alpha = 0.5f),
                     fontSize = 16.ssp(),
                 )

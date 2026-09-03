@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.zeroglab.hotwords.data.LookupCache
 import com.zeroglab.hotwords.data.DictionaryClient
 import com.zeroglab.hotwords.data.VocabEntry
 import com.zeroglab.hotwords.ui.design.sdp
@@ -232,7 +233,7 @@ private fun RelatedWordPreviewDialog(
         entry = null
         runCatching {
             withContext(Dispatchers.IO) {
-                DictionaryClient().lookup(word)
+                LookupCache.get(word) ?: DictionaryClient().lookupCore(word).entry
             }
         }.onSuccess {
             entry = it

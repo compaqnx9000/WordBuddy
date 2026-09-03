@@ -21,7 +21,6 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -50,16 +49,12 @@ enum class MainTab {
 fun MainBottomBar(
     selected: MainTab,
     onSelect: (MainTab) -> Unit,
-    onOpenSettings: () -> Unit = {},
     stellar: Boolean = false,
-    settingsSelected: Boolean = false,
 ) {
     if (stellar) {
         StellarBottomBar(
             selected = selected,
             onSelect = onSelect,
-            onOpenSettings = onOpenSettings,
-            settingsSelected = settingsSelected,
         )
         return
     }
@@ -107,8 +102,6 @@ fun MainBottomBar(
 private fun StellarBottomBar(
     selected: MainTab,
     onSelect: (MainTab) -> Unit,
-    onOpenSettings: () -> Unit,
-    settingsSelected: Boolean,
 ) {
     Column(
         Modifier
@@ -132,35 +125,27 @@ private fun StellarBottomBar(
     ) {
         Row(Modifier.fillMaxWidth()) {
             StellarTab(
-                label = "Home",
-                selected = !settingsSelected && selected == MainTab.Home,
+                label = "首页",
+                selected = selected == MainTab.Home,
                 selectedIcon = Icons.Filled.Home,
                 unselectedIcon = Icons.Outlined.Home,
                 onClick = { onSelect(MainTab.Home) },
                 modifier = Modifier.weight(1f),
             )
             StellarTab(
-                label = "Book",
-                selected = !settingsSelected && selected == MainTab.Notebook,
+                label = "生词本",
+                selected = selected == MainTab.Notebook,
                 selectedIcon = Icons.Filled.MenuBook,
                 unselectedIcon = Icons.Outlined.MenuBook,
                 onClick = { onSelect(MainTab.Notebook) },
                 modifier = Modifier.weight(1f),
             )
             StellarTab(
-                label = "AI Studio",
-                selected = !settingsSelected && selected == MainTab.Me,
+                label = "我",
+                selected = selected == MainTab.Me,
                 selectedIcon = Icons.Filled.AutoAwesome,
                 unselectedIcon = Icons.Outlined.AutoAwesome,
                 onClick = { onSelect(MainTab.Me) },
-                modifier = Modifier.weight(1f),
-            )
-            StellarTab(
-                label = "Settings",
-                selected = settingsSelected,
-                selectedIcon = Icons.Outlined.Settings,
-                unselectedIcon = Icons.Outlined.Settings,
-                onClick = onOpenSettings,
                 modifier = Modifier.weight(1f),
             )
         }

@@ -23,7 +23,21 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.ArrowBackIosNew
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.zeroglab.hotwords.ui.components.StellarConfirmDialog
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
@@ -48,12 +62,12 @@ import com.zeroglab.hotwords.data.Notebook
 import com.zeroglab.hotwords.data.StudySettings
 import com.zeroglab.hotwords.ui.design.sdp
 import com.zeroglab.hotwords.ui.design.ssp
-import com.zeroglab.hotwords.ui.lookup.HomeProfileHeader
 import com.zeroglab.hotwords.ui.lookup.Stellar
 import com.zeroglab.hotwords.ui.lookup.StellarPalettes
 import com.zeroglab.hotwords.ui.lookup.hasStellarWallpaperBackground
 import com.zeroglab.hotwords.ui.lookup.stellarScreenBackground
 import com.zeroglab.hotwords.ui.lookup.stellarScreenBackgroundColor
+import com.zeroglab.hotwords.ui.lookup.stellarPanelBackgroundColor
 import com.zeroglab.hotwords.ui.lookup.stellarGlass
 
 @Composable
@@ -62,10 +76,42 @@ fun AppSettingsScreen(
     notebooks: List<Notebook>,
     onBack: () -> Unit,
     onChange: ((StudySettings) -> StudySettings) -> Unit,
+    onLogout: () -> Unit = {},
+    onSwitchAccount: () -> Unit = {},
     modifier: Modifier = Modifier,
     title: String = "设置",
-    onOpenAccount: (() -> Unit)? = null,
 ) {
+    var showHelpDialog by remember { mutableStateOf(false) }
+    var showAboutDialog by remember { mutableStateOf(false) }
+    var showLogoutConfirm by remember { mutableStateOf(false) }
+
+    if (showHelpDialog) {
+        StellarConfirmDialog(
+            title = "帮助与反馈",
+            message = "使用中遇到问题，可通过应用商店评论反馈，或联系开发团队。\n\n我们会持续改进查词、收藏与背诵体验。",
+            confirmText = "知道了",
+            dismissText = "",
+            onDismiss = { showHelpDialog = false },
+            onConfirm = { showHelpDialog = false },
+        )
+    }
+    if (showAboutDialog) {
+        AboutWordBuddyDialog(onDismiss = { showAboutDialog = false })
+    }
+    if (showLogoutConfirm) {
+        StellarConfirmDialog(
+            title = "退出登录",
+            message = "退出后将清除本机登录状态与词库缓存，需要重新登录。",
+            confirmText = "退出",
+            destructive = true,
+            onDismiss = { showLogoutConfirm = false },
+            onConfirm = {
+                showLogoutConfirm = false
+                onLogout()
+            },
+        )
+    }
+
     Box(
         modifier
             .fillMaxSize()
@@ -91,10 +137,7 @@ fun AppSettingsScreen(
         }
 
         Column(Modifier.fillMaxSize()) {
-            HomeProfileHeader(
-                onOpenMenu = onBack,
-                onOpenAccount = onOpenAccount ?: onBack,
-            )
+            SettingsTopBar(title = title, onBack = onBack)
             Column(
                 Modifier
                     .weight(1f)
@@ -105,19 +148,6 @@ fun AppSettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(16.sdp()),
             ) {
                 Column(Modifier.padding(top = 8.sdp(), bottom = 8.sdp())) {
-                    Text(
-                        text = title,
-                        color = Stellar.CyanSoft,
-                        fontSize = 32.ssp(),
-                        fontWeight = FontWeight.Bold,
-                        style = androidx.compose.ui.text.TextStyle(
-                            shadow = androidx.compose.ui.graphics.Shadow(
-                                color = Stellar.CyanSoft.copy(alpha = 0.35f),
-                                blurRadius = 18f,
-                            ),
-                        ),
-                    )
-                    Spacer(Modifier.height(8.sdp()))
                     Text(
                         text = "配置你的沉浸式学习体验。",
                         color = Stellar.OnSurfaceVariant.copy(alpha = 0.85f),
@@ -148,8 +178,155 @@ fun AppSettingsScreen(
                     onAiImageAutoGen = { enabled -> onChange { it.copy(aiImageAutoGen = enabled) } },
                     onDefaultNotebook = { id -> onChange { it.copy(defaultNotebookId = id) } },
                 )
+
+                SettingsLinkGroup {
+                    SettingsLinkRow(
+                        title = "帮助与反馈",
+                        onClick = { showHelpDialog = true },
+                    )
+                    SettingsGroupDivider()
+                    SettingsLinkRow(
+                        title = "关于词搭子",
+                        onClick = { showAboutDialog = true },
+                    )
+                }
+
+                SettingsActionGroup {
+                    SettingsActionRow(
+                        title = "切换账号",
+                        onClick = onSwitchAccount,
+                    )
+                    SettingsGroupDivider()
+                    SettingsActionRow(
+                        title = "退出登录",
+                        onClick = { showLogoutConfirm = true },
+                        destructive = true,
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun SettingsTopBar(title: String, onBack: () -> Unit) {
+    val line = Stellar.Cyan.copy(alpha = 0.20f)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .background(stellarPanelBackgroundColor())
+            .drawBehind {
+                drawLine(
+                    color = line,
+                    start = Offset(0f, size.height),
+                    end = Offset(size.width, size.height),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .height(56.sdp())
+            .padding(horizontal = 12.sdp()),
+    ) {
+        Box(
+            Modifier
+                .align(Alignment.CenterStart)
+                .size(40.sdp())
+                .clip(CircleShape)
+                .clickable(onClick = onBack),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Outlined.ArrowBackIosNew,
+                contentDescription = "返回",
+                tint = Stellar.CyanSoft,
+                modifier = Modifier.size(18.sdp()),
+            )
+        }
+        Text(
+            text = title,
+            modifier = Modifier.align(Alignment.Center),
+            color = Stellar.CyanSoft,
+            fontSize = 20.ssp(),
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun SettingsLinkGroup(content: @Composable () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .stellarGlass()
+            .padding(vertical = 2.sdp()),
+        content = { content() },
+    )
+}
+
+@Composable
+private fun SettingsActionGroup(content: @Composable () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .stellarGlass()
+            .padding(vertical = 2.sdp()),
+        content = { content() },
+    )
+}
+
+@Composable
+private fun SettingsGroupDivider() {
+    HorizontalDivider(
+        thickness = 0.5.dp,
+        color = Stellar.Outline.copy(alpha = 0.45f),
+    )
+}
+
+@Composable
+private fun SettingsLinkRow(title: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.sdp(), vertical = 16.sdp()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            color = Stellar.OnSurface,
+            fontSize = 16.ssp(),
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+            contentDescription = null,
+            tint = Stellar.OnSurfaceVariant.copy(alpha = 0.45f),
+            modifier = Modifier.size(20.sdp()),
+        )
+    }
+}
+
+@Composable
+private fun SettingsActionRow(
+    title: String,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 16.sdp()),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = title,
+            color = if (destructive) Stellar.Pink else Stellar.OnSurface,
+            fontSize = 16.ssp(),
+            fontWeight = FontWeight.Medium,
+        )
     }
 }
 
@@ -363,7 +540,7 @@ private fun DefaultNotebookPicker(
             horizontalArrangement = Arrangement.spacedBy(8.sdp()),
             verticalArrangement = Arrangement.spacedBy(8.sdp()),
         ) {
-            notebooks.forEach { notebook ->
+            notebooks.filter { !it.isSystem }.forEach { notebook ->
                 val selected = notebook.id == selectedId
                 Text(
                     text = notebook.name,

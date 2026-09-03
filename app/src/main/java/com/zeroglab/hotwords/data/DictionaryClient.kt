@@ -11,7 +11,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class DictionaryClient {
-    suspend fun lookup(query: String): VocabEntry = withContext(Dispatchers.IO) {
+    data class LookupCore(
+        val entry: VocabEntry,
+        val youdaoRoot: JSONObject?,
+    )
+
+    /** Fast path: definitions, IPA, examples only (no Datamuse). */
+    suspend fun lookupCore(query: String): LookupCore = withContext(Dispatchers.IO) {
         val q = query.trim()
         require(q.isNotEmpty()) { "empty query" }
 
@@ -34,17 +40,41 @@ class DictionaryClient {
         }
 
         val text = base.text
-        coroutineScope {
-            val synDeferred = async { loadCommonSynonyms(youdaoRoot, text) }
-            val antDeferred = async { loadCommonAntonyms(text) }
-            val corpus = collectCorpusExamples(youdaoRoot)
-            val examples = SenseExampleBuilder.examplesFor(text, base.definitions, corpus)
-            base.copy(
+        val corpus = collectCorpusExamples(youdaoRoot)
+        val examples = SenseExampleBuilder.examplesFor(text, base.definitions, corpus)
+        LookupCore(
+            entry = base.copy(
                 examples = examples,
-                synonyms = synDeferred.await(),
-                antonyms = antDeferred.await(),
-            )
+                synonyms = emptyList(),
+                antonyms = emptyList(),
+                nearWords = emptyList(),
+            ),
+            youdaoRoot = youdaoRoot,
+        )
+    }
+
+    suspend fun enrichSynonymsAntonyms(
+        word: String,
+        youdaoRoot: JSONObject?,
+    ): Pair<List<String>, List<String>> = withContext(Dispatchers.IO) {
+        coroutineScope {
+            val synDeferred = async { loadCommonSynonyms(youdaoRoot, word) }
+            val antDeferred = async { loadCommonAntonyms(word) }
+            synDeferred.await() to antDeferred.await()
         }
+    }
+
+    /** Full lookup; uses [LookupCache] when available. */
+    suspend fun lookup(query: String): VocabEntry = withContext(Dispatchers.IO) {
+        LookupCache.get(query)?.let { return@withContext it }
+        val core = lookupCore(query)
+        val (synonyms, antonyms) = enrichSynonymsAntonyms(core.entry.text, core.youdaoRoot)
+        val nearWords = NearWordsFinder.find(core.entry.text)
+        core.entry.copy(
+            synonyms = synonyms,
+            antonyms = antonyms,
+            nearWords = nearWords,
+        ).also { LookupCache.put(it) }
     }
 
     private fun parseYoudao(root: JSONObject, fallback: String): VocabEntry? {

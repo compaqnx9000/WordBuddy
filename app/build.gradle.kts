@@ -14,9 +14,17 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
+        // Release / physical builds talk to the Aliyun API.
+        buildConfigField("String", "API_BASE_URL", "\"http://39.96.67.128:8787\"")
+        buildConfigField("String", "API_FALLBACK_URL", "\"http://39.96.67.128:8787\"")
     }
 
     buildTypes {
+        debug {
+            // Emulator reaches this machine via 10.0.2.2 (local catalogs include 中考).
+            buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8787\"")
+            buildConfigField("String", "API_FALLBACK_URL", "\"http://192.168.1.3:8787\"")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -37,6 +45,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

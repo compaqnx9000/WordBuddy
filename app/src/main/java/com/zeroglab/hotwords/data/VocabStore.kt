@@ -22,12 +22,12 @@ data class NotebookImportResult(
 
 private const val TABLE = "vocab"
 private const val NOTEBOOK_TABLE = "notebooks"
-private const val DB_VERSION = 6
+private const val DB_VERSION = 8
 
 private const val VOCAB_DDL = """
     CREATE TABLE $TABLE (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        notebook_id INTEGER NOT NULL DEFAULT 1,
+        id INTEGER PRIMARY KEY NOT NULL,
+        notebook_id INTEGER NOT NULL,
         word TEXT NOT NULL COLLATE NOCASE,
         is_phrase INTEGER NOT NULL DEFAULT 0,
         ipa_uk TEXT,
@@ -46,41 +46,28 @@ private const val VOCAB_DDL = """
 
 private const val NOTEBOOK_DDL = """
     CREATE TABLE $NOTEBOOK_TABLE (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        id INTEGER PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
         sort_order INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'user',
+        slug TEXT,
+        word_count INTEGER NOT NULL DEFAULT 0
     )
 """
 
 class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db", null, DB_VERSION) {
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL(NOTEBOOK_DDL)
-        val now = System.currentTimeMillis()
-        db.execSQL(
-            "INSERT INTO $NOTEBOOK_TABLE (id, name, sort_order, created_at) VALUES (?, ?, 0, ?)",
-            arrayOf(Notebook.DEFAULT_ID, Notebook.DEFAULT_NAME, now),
-        )
+        db.execSQL(NOTEBOOK_DDL.trimIndent())
         db.execSQL(VOCAB_DDL.trimIndent())
         db.execSQL("CREATE INDEX idx_vocab_notebook_sort ON $TABLE(notebook_id, sort_order)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 2) {
-            runCatching { db.execSQL("ALTER TABLE $TABLE ADD COLUMN image_blob BLOB") }
-        }
-        if (oldVersion < 3) {
-            runCatching { db.execSQL("ALTER TABLE $TABLE ADD COLUMN near_words TEXT DEFAULT '[]'") }
-        }
-        if (oldVersion < 4) {
-            runCatching { db.execSQL("ALTER TABLE $TABLE ADD COLUMN synonyms TEXT DEFAULT '[]'") }
-            runCatching { db.execSQL("ALTER TABLE $TABLE ADD COLUMN antonyms TEXT DEFAULT '[]'") }
-        }
-        if (oldVersion < 5) {
-            runCatching { db.execSQL("ALTER TABLE $TABLE ADD COLUMN examples TEXT DEFAULT '[]'") }
-        }
-        if (oldVersion < 6) {
-            migrateToMultiNotebook(db)
+        if (oldVersion < 8) {
+            db.execSQL("DROP TABLE IF EXISTS $TABLE")
+            db.execSQL("DROP TABLE IF EXISTS $NOTEBOOK_TABLE")
+            onCreate(db)
         }
     }
 
@@ -165,8 +152,8 @@ class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db",
     }
 
     fun deleteNotebook(id: Long) {
-        if (id == Notebook.DEFAULT_ID) error("默认生词本不能删除")
-        if (listNotebooks().size <= 1) error("至少保留一个生词本")
+        val notebook = findNotebook(id) ?: return
+        if (notebook.isSystem || notebook.kind == Notebook.KIND_CATALOG) error("系统词书不能删除")
         writableDatabase.beginTransaction()
         try {
             writableDatabase.delete(TABLE, "notebook_id = ?", arrayOf(id.toString()))
@@ -175,6 +162,114 @@ class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db",
         } finally {
             writableDatabase.endTransaction()
         }
+    }
+
+    fun replaceNotebooks(notebooks: List<Notebook>) {
+        writableDatabase.beginTransaction()
+        try {
+            val keepIds = notebooks.map { it.id }
+            if (keepIds.isEmpty()) {
+                writableDatabase.delete(TABLE, null, null)
+            } else {
+                val placeholders = keepIds.joinToString(",") { "?" }
+                writableDatabase.delete(
+                    TABLE,
+                    "notebook_id NOT IN ($placeholders)",
+                    keepIds.map { it.toString() }.toTypedArray(),
+                )
+            }
+            writableDatabase.delete(NOTEBOOK_TABLE, null, null)
+            notebooks.forEach { book ->
+                writableDatabase.insertWithOnConflict(
+                    NOTEBOOK_TABLE,
+                    null,
+                    ContentValues().apply {
+                        put("id", book.id)
+                        put("name", book.name)
+                        put("sort_order", book.sortOrder)
+                        put("created_at", book.createdAtMillis)
+                        put("kind", book.kind)
+                        put("slug", book.slug)
+                        put("word_count", book.wordCount)
+                    },
+                    SQLiteDatabase.CONFLICT_REPLACE,
+                )
+            }
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+    }
+
+    fun setWordCount(notebookId: Long, count: Int) {
+        writableDatabase.update(
+            NOTEBOOK_TABLE,
+            ContentValues().apply { put("word_count", count.coerceAtLeast(0)) },
+            "id = ?",
+            arrayOf(notebookId.toString()),
+        )
+    }
+
+    fun upsertEntries(entries: List<VocabEntry>) {
+        if (entries.isEmpty()) return
+        writableDatabase.beginTransaction()
+        try {
+            entries.forEach { entry ->
+                writableDatabase.insertWithOnConflict(
+                    TABLE,
+                    null,
+                    entry.toValues(includeWord = true).apply {
+                        put("id", entry.id)
+                        put("notebook_id", entry.notebookId)
+                    },
+                    SQLiteDatabase.CONFLICT_REPLACE,
+                )
+            }
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+    }
+
+    fun wipeAll() {
+        writableDatabase.beginTransaction()
+        try {
+            writableDatabase.delete(TABLE, null, null)
+            writableDatabase.delete(NOTEBOOK_TABLE, null, null)
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+    }
+
+    /** Bulk-insert built-in wordbook rows (full VocabEntry fields). Caller should ensure notebook empty. */
+    fun seedNotebookEntries(notebookId: Long, entries: List<VocabEntry>) {
+        if (entries.isEmpty()) return
+        val now = System.currentTimeMillis()
+        writableDatabase.beginTransaction()
+        try {
+            entries.forEachIndexed { index, entry ->
+                val values = entry.toValues(includeWord = true).apply {
+                    put("notebook_id", notebookId)
+                    put("sort_order", index)
+                    put("added_at", now)
+                    putNull("image_blob")
+                }
+                writableDatabase.insertWithOnConflict(
+                    TABLE,
+                    null,
+                    values,
+                    SQLiteDatabase.CONFLICT_IGNORE,
+                )
+            }
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+    }
+
+    fun clearNotebookWords(notebookId: Long) {
+        writableDatabase.delete(TABLE, "notebook_id = ?", arrayOf(notebookId.toString()))
     }
 
     fun moveEntriesToNotebook(entryIds: List<Long>, targetNotebookId: Long) {
@@ -239,8 +334,9 @@ class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db",
             return existing.id
         }
         val values = entry.toValues(includeWord = true)
+        if (entry.id > 0L) values.put("id", entry.id)
         values.put("notebook_id", notebookId)
-        values.put("sort_order", nextFrontOrder(notebookId))
+        values.put("sort_order", if (entry.sortOrder != 0) entry.sortOrder else nextFrontOrder(notebookId))
         values.put("added_at", entry.addedAtMillis)
         return writableDatabase.insertOrThrow(TABLE, null, values)
     }
@@ -394,13 +490,15 @@ class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db",
         return ContentValues().apply {
             if (includeWord) put("word", text.trim())
             put("is_phrase", if (isPhrase) 1 else 0)
-            put("ipa_uk", ipaUk)
-            put("ipa_us", ipaUs)
+            if (ipaUk == null) putNull("ipa_uk") else put("ipa_uk", ipaUk)
+            if (ipaUs == null) putNull("ipa_us") else put("ipa_us", ipaUs)
             put("definitions", encodeDefinitions(definitions))
             put("examples", encodeExamples(examples))
             put("near_words", encodeStringList(nearWords))
             put("synonyms", encodeStringList(synonyms))
             put("antonyms", encodeStringList(antonyms))
+            put("sort_order", sortOrder)
+            put("added_at", if (addedAtMillis > 0L) addedAtMillis else System.currentTimeMillis())
             if (imageBlob == null) {
                 putNull("image_blob")
             } else {
@@ -415,6 +513,9 @@ class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db",
             name = getString(getColumnIndexOrThrow("name")),
             sortOrder = getInt(getColumnIndexOrThrow("sort_order")),
             createdAtMillis = getLong(getColumnIndexOrThrow("created_at")),
+            kind = optionalString("kind") ?: Notebook.KIND_USER,
+            slug = optionalString("slug"),
+            wordCount = runCatching { getInt(getColumnIndexOrThrow("word_count")) }.getOrDefault(0),
         )
     }
 
@@ -453,15 +554,166 @@ class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db",
 
 class VocabRepository(context: Context) {
     private val db = VocabDbHelper(context.applicationContext)
-    private val _items = MutableStateFlow(db.listAll())
+    private var activeNotebookId: Long = 0L
+    private var nextCursor: String? = null
+    var hasMore: Boolean = false
+        private set
+    /** When > 0, [_items} is a window starting at this absolute notebook index (alphabet jump). */
+    var listWindowStart: Int = 0
+        private set
+
+    private val _items = MutableStateFlow(emptyList<VocabEntry>())
     private val _notebooks = MutableStateFlow(db.listNotebooks())
     val items: StateFlow<List<VocabEntry>> = _items.asStateFlow()
     val notebooks: StateFlow<List<Notebook>> = _notebooks.asStateFlow()
 
-    private fun refresh() {
-        _items.value = db.listAll()
+    fun publishNotebooks(books: List<Notebook>) {
+        db.replaceNotebooks(books)
         _notebooks.value = db.listNotebooks()
     }
+
+    fun openCachedNotebook(notebookId: Long) {
+        activeNotebookId = notebookId
+        val cached = db.listByNotebook(notebookId)
+        _items.value = cached
+        listWindowStart = 0
+        restorePaging(cached, notebookId)
+    }
+
+    fun applyFirstPage(notebookId: Long, page: WordPage) {
+        activeNotebookId = notebookId
+        db.upsertEntries(page.items)
+        val cached = db.listByNotebook(notebookId)
+        val count = maxOf(page.total, cached.size)
+        db.setWordCount(notebookId, count)
+        nextCursor = page.nextCursor
+        hasMore = page.nextCursor != null || cached.size < count
+        listWindowStart = 0
+        _items.value = cached
+        _notebooks.value = db.listNotebooks()
+    }
+
+    fun applyNextPage(notebookId: Long, page: WordPage) {
+        db.upsertEntries(page.items)
+        nextCursor = page.nextCursor
+        hasMore = page.nextCursor != null
+        if (activeNotebookId != notebookId) return
+        val seen = _items.value.mapTo(HashSet()) { it.id }
+        val appended = page.items.filter { seen.add(it.id) }
+        if (appended.isNotEmpty()) {
+            _items.value = _items.value + appended
+        }
+    }
+
+    /** Replace the in-memory list with a window starting at [fromIndex] (fast alphabet seek). */
+    fun applySeekWindow(notebookId: Long, page: WordPage, fromIndex: Int) {
+        activeNotebookId = notebookId
+        db.upsertEntries(page.items)
+        if (page.total > 0) db.setWordCount(notebookId, page.total)
+        nextCursor = page.nextCursor
+        hasMore = page.nextCursor != null
+        listWindowStart = fromIndex.coerceAtLeast(0)
+        _items.value = page.items
+        _notebooks.value = db.listNotebooks()
+    }
+
+    /** Full ordered stubs (or existing full rows) so alphabet / slider can seek in RAM. */
+    fun applyHeads(notebookId: Long, heads: List<VocabEntry>, total: Int) {
+        activeNotebookId = notebookId
+        val existing = if (_items.value.firstOrNull()?.notebookId == notebookId) {
+            _items.value.associateBy { it.id }
+        } else {
+            emptyMap()
+        }
+        _items.value = heads.map { head ->
+            val old = existing[head.id]
+            if (old != null && old.definitions.isNotEmpty()) {
+                old.copy(
+                    text = head.text,
+                    isPhrase = head.isPhrase,
+                    ipaUk = head.ipaUk ?: old.ipaUk,
+                    ipaUs = head.ipaUs ?: old.ipaUs,
+                    sortOrder = head.sortOrder,
+                )
+            } else {
+                head
+            }
+        }
+        val count = maxOf(total, heads.size)
+        db.setWordCount(notebookId, count)
+        nextCursor = heads.lastOrNull()?.let { "${it.sortOrder}:${it.id}" }
+        hasMore = heads.size < count || _items.value.any { it.definitions.isEmpty() }
+        listWindowStart = 0
+        _notebooks.value = db.listNotebooks()
+    }
+
+    /** Append more ordered stubs after [applyHeads] preview (progressive catalog load). */
+    fun appendHeadStubs(notebookId: Long, more: List<VocabEntry>, total: Int) {
+        if (activeNotebookId != notebookId || more.isEmpty()) return
+        val seen = _items.value.mapTo(HashSet()) { it.id }
+        val appended = more.filter { seen.add(it.id) }
+        if (appended.isEmpty()) return
+        _items.value = _items.value + appended
+        val count = maxOf(total, _items.value.size)
+        db.setWordCount(notebookId, count)
+        nextCursor = _items.value.lastOrNull()?.let { "${it.sortOrder}:${it.id}" }
+        hasMore = _items.value.size < count || _items.value.any { it.definitions.isEmpty() }
+    }
+
+    /** Overlay full details onto an already-complete heads list. Does not replace order. */
+    fun mergeDetails(notebookId: Long, page: WordPage) {
+        if (activeNotebookId != notebookId || page.items.isEmpty()) return
+        val byId = page.items.associateBy { it.id }
+        val current = _items.value
+        if (current.isEmpty()) {
+            applyNextPage(notebookId, page)
+            return
+        }
+        var changed = false
+        val next = current.map { row ->
+            val fresh = byId[row.id] ?: return@map row
+            if (fresh.definitions.isEmpty() && row.definitions.isNotEmpty()) row
+            else {
+                changed = true
+                fresh
+            }
+        }
+        if (changed) _items.value = next
+        hasMore = _items.value.any { it.definitions.isEmpty() }
+        nextCursor = _items.value.lastOrNull()?.let { "${it.sortOrder}:${it.id}" }
+    }
+
+    fun persistEntries(entries: List<VocabEntry>) {
+        db.upsertEntries(entries)
+    }
+
+    private fun restorePaging(items: List<VocabEntry>, notebookId: Long) {
+        val total = _notebooks.value.firstOrNull { it.id == notebookId }?.wordCount ?: items.size
+        nextCursor = items.lastOrNull()?.let { "${it.sortOrder}:${it.id}" }
+        hasMore = items.size < total
+        listWindowStart = 0
+    }
+
+    fun currentCursor(): String? = nextCursor
+
+    fun wipeCache() {
+        db.wipeAll()
+        activeNotebookId = 0L
+        nextCursor = null
+        hasMore = false
+        listWindowStart = 0
+        _items.value = emptyList()
+        _notebooks.value = emptyList()
+    }
+
+    private fun refresh() {
+        if (activeNotebookId > 0L) {
+            _items.value = db.listByNotebook(activeNotebookId)
+        }
+        _notebooks.value = db.listNotebooks()
+    }
+
+    fun peekWord(notebookId: Long, word: String): VocabEntry? = db.findByWord(notebookId, word)
 
     suspend fun getByWord(notebookId: Long, word: String): VocabEntry? = withContext(Dispatchers.IO) {
         db.findByWord(notebookId, word)
@@ -471,6 +723,19 @@ class VocabRepository(context: Context) {
         db.findById(id)
     }
 
+    suspend fun cacheEntry(entry: VocabEntry) = withContext(Dispatchers.IO) {
+        val existed = db.findById(entry.id) != null
+        db.upsertEntries(listOf(entry))
+        if (!existed) {
+            val count = maxOf(
+                (_notebooks.value.firstOrNull { it.id == entry.notebookId }?.wordCount ?: 0) + 1,
+                db.countWordsInNotebook(entry.notebookId),
+            )
+            db.setWordCount(entry.notebookId, count)
+        }
+        refresh()
+    }
+
     suspend fun insert(entry: VocabEntry): Long = withContext(Dispatchers.IO) {
         val id = db.insert(entry)
         refresh()
@@ -478,7 +743,13 @@ class VocabRepository(context: Context) {
     }
 
     suspend fun delete(id: Long) = withContext(Dispatchers.IO) {
+        val existing = db.findById(id)
         db.delete(id)
+        if (existing != null) {
+            val count = db.countWordsInNotebook(existing.notebookId)
+            val reported = _notebooks.value.firstOrNull { it.id == existing.notebookId }?.wordCount ?: count
+            db.setWordCount(existing.notebookId, minOf(count, (reported - 1).coerceAtLeast(0)))
+        }
         refresh()
     }
 
@@ -558,7 +829,7 @@ internal fun encodeDefinitions(definitions: List<Definition>): String {
 
 internal fun decodeDefinitions(raw: String): List<Definition> {
     if (raw.isBlank()) return emptyList()
-    val array = JSONArray(raw)
+    val array = runCatching { JSONArray(raw) }.getOrElse { return emptyList() }
     return buildList {
         for (i in 0 until array.length()) {
             val obj = array.optJSONObject(i) ?: continue
@@ -587,7 +858,7 @@ internal fun encodeExamples(examples: List<ExampleSentence>): String {
 
 internal fun decodeExamples(raw: String?): List<ExampleSentence> {
     if (raw.isNullOrBlank()) return emptyList()
-    val array = JSONArray(raw)
+    val array = runCatching { JSONArray(raw) }.getOrElse { return emptyList() }
     return buildList {
         for (i in 0 until array.length()) {
             val obj = array.optJSONObject(i) ?: continue
@@ -606,7 +877,7 @@ internal fun encodeStringList(words: List<String>): String {
 
 internal fun decodeStringList(raw: String?): List<String> {
     if (raw.isNullOrBlank()) return emptyList()
-    val array = JSONArray(raw)
+    val array = runCatching { JSONArray(raw) }.getOrElse { return emptyList() }
     return buildList {
         for (i in 0 until array.length()) {
             val word = array.optString(i).trim()

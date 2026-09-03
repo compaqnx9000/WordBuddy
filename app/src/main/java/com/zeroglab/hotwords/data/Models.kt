@@ -81,10 +81,22 @@ data class Notebook(
     val name: String,
     val sortOrder: Int = 0,
     val createdAtMillis: Long = System.currentTimeMillis(),
+    val kind: String = KIND_USER,
+    val slug: String? = null,
+    val wordCount: Int = 0,
 ) {
+    val isSystem: Boolean
+        get() = kind == KIND_CATALOG
+
     companion object {
-        const val DEFAULT_ID = 1L
+        const val DEFAULT_ID = 0L
         const val DEFAULT_NAME = "生词本"
+        const val KIND_USER = "user"
+        const val KIND_CATALOG = "catalog"
+        const val CET4_SLUG = "cet4"
+        const val CET6_SLUG = "cet6"
+        const val ZHONGKAO_SLUG = "zhongkao"
+        const val GAOKAO_SLUG = "gaokao"
     }
 }
 

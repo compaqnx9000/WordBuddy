@@ -17,6 +17,12 @@
 .cursor/apk-build-needed
 /outputs/
 h5/node_modules/
+server/node_modules/
 h5/dist/
+tmp_dict/
 .env
 .env.*
+/tmp_dict/
+tmp_apk/
+tmp_ui/
+scripts/__pycache__/

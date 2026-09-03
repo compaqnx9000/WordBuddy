@@ -4,11 +4,10 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
@@ -33,7 +33,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.filled.Pause
@@ -44,14 +43,21 @@ import androidx.compose.material.icons.outlined.ArrowBackIosNew
 import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.LinearScale
 import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -84,6 +90,10 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import com.zeroglab.hotwords.data.Accent
 import com.zeroglab.hotwords.data.AppTheme
 import com.zeroglab.hotwords.data.Definition
@@ -105,13 +115,15 @@ import com.zeroglab.hotwords.ui.lookup.hasStellarWallpaperBackground
 import com.zeroglab.hotwords.ui.lookup.stellarGlass
 import com.zeroglab.hotwords.ui.lookup.stellarPanelBackgroundColor
 import com.zeroglab.hotwords.ui.lookup.stellarScreenBackground
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.launch
 
 @Composable
 fun CardModeScreen(
     entries: List<VocabEntry>,
+    currentEntry: VocabEntry?,
+    entryCount: Int,
+    notebookName: String,
     index: Int,
+    sourceIndex: Int,
     shuffled: Boolean,
     playing: Boolean,
     speakOnPageChange: Boolean,
@@ -121,6 +133,7 @@ fun CardModeScreen(
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onPageSelected: (Int) -> Unit,
+    onSeekPage: (Int) -> Unit = onPageSelected,
     onPlayToggle: () -> Unit,
     onShuffle: () -> Unit,
     onSpeak: () -> Unit,
@@ -137,6 +150,7 @@ fun CardModeScreen(
     onSpeakSyllables: (List<String>) -> Unit,
     onToggleRelatedStar: (VocabEntry) -> Unit,
     isRelatedWordSaved: (String) -> Boolean,
+    onNearEnd: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var showImageDialog by remember { mutableStateOf(false) }
@@ -151,33 +165,39 @@ fun CardModeScreen(
             onPickImage(id, uri)
         }
     }
-    val total = entries.size
+    val total = entryCount
     val safeIndex = if (total == 0) 0 else index.coerceIn(0, total - 1)
+    val usePager = total in 1..80
     val pagerState = rememberPagerState(
-        initialPage = safeIndex,
-        pageCount = { total.coerceAtLeast(1) },
+        initialPage = if (usePager) safeIndex else 0,
+        pageCount = { if (usePager) total.coerceAtLeast(1) else 1 },
     )
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(safeIndex, total) {
-        if (total == 0) return@LaunchedEffect
+    LaunchedEffect(safeIndex, total, usePager) {
+        if (!usePager || total == 0) return@LaunchedEffect
         if (pagerState.currentPage != safeIndex) {
-            pagerState.animateScrollToPage(safeIndex)
+            if (kotlin.math.abs(pagerState.currentPage - safeIndex) > 1) {
+                pagerState.scrollToPage(safeIndex)
+            } else {
+                pagerState.animateScrollToPage(safeIndex)
+            }
         }
     }
 
-    LaunchedEffect(pagerState, total) {
-        if (total == 0) return@LaunchedEffect
+    LaunchedEffect(pagerState, total, usePager) {
+        if (!usePager || total == 0) return@LaunchedEffect
         snapshotFlow { pagerState.settledPage }
             .distinctUntilChanged()
             .collect { page ->
                 onPageSelected(page)
+                if (page >= total - 4) onNearEnd()
             }
     }
 
     fun goPrev() {
         if (total == 0) return
-        if (pagerState.currentPage > 0) {
+        if (usePager && pagerState.currentPage > 0) {
             scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
         } else {
             onPrev()
@@ -186,7 +206,7 @@ fun CardModeScreen(
 
     fun goNext() {
         if (total == 0) return
-        if (pagerState.currentPage < total - 1) {
+        if (usePager && pagerState.currentPage < total - 1) {
             scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
         } else {
             onNext()
@@ -216,61 +236,113 @@ fun CardModeScreen(
                 },
             ),
     ) {
-        CardTopBar(onBack = onBack)
-        if (entries.isEmpty()) {
+        CardTopBar(title = notebookName, onBack = onBack)
+        if (total == 0 || currentEntry == null) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text("词库是空的", color = Stellar.OnSurfaceVariant, fontSize = 16.ssp())
             }
         } else {
             var lockWordPager by remember { mutableStateOf(false) }
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                beyondViewportPageCount = 1,
-                userScrollEnabled = !lockWordPager,
-                flingBehavior = PagerDefaults.flingBehavior(
+            if (usePager) {
+                HorizontalPager(
                     state = pagerState,
-                    snapPositionalThreshold = 0.72f,
-                ),
-            ) { page ->
-                CardPage(
-                    entry = entries[page],
-                    imageBusy = imageBusy && entries[page].id == imageTargetId,
-                    accent = accent,
-                    onSpeakWord = onSpeak,
-                    onSpeakAccent = onSpeakAccent,
-                    onOpenImageChooser = {
-                        imageTargetId = entries[page].id
-                        showImageDialog = true
-                    },
-                    onEditMeaning = { meaningEditEntry = entries[page] },
-                    onSpeakText = onSpeakText,
-                    onSpeakTextSlow = onSpeakTextSlow,
-                    onSpeakSyllables = onSpeakSyllables,
-                    onToggleRelatedStar = onToggleRelatedStar,
-                    isRelatedWordSaved = isRelatedWordSaved,
-                    onExampleTouchChange = { touching -> lockWordPager = touching },
-                )
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    beyondViewportPageCount = 1,
+                    userScrollEnabled = !lockWordPager,
+                    key = { page -> entries.getOrNull(page)?.id ?: page },
+                    flingBehavior = PagerDefaults.flingBehavior(
+                        state = pagerState,
+                        snapPositionalThreshold = 0.45f,
+                    ),
+                ) { page ->
+                    CardPage(
+                        entry = entries[page],
+                        imageBusy = imageBusy && entries[page].id == imageTargetId,
+                        accent = accent,
+                        onSpeakWord = onSpeak,
+                        onSpeakAccent = onSpeakAccent,
+                        onOpenImageChooser = {
+                            imageTargetId = entries[page].id
+                            showImageDialog = true
+                        },
+                        onEditMeaning = { meaningEditEntry = entries[page] },
+                        onSpeakText = onSpeakText,
+                        onSpeakTextSlow = onSpeakTextSlow,
+                        onSpeakSyllables = onSpeakSyllables,
+                        onToggleRelatedStar = onToggleRelatedStar,
+                        isRelatedWordSaved = isRelatedWordSaved,
+                        onExampleScrollChange = { scrolling -> lockWordPager = scrolling },
+                    )
+                }
+            } else {
+                val entry = currentEntry
+                var dragX by remember { mutableFloatStateOf(0f) }
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .pointerInput(safeIndex, total, lockWordPager) {
+                            if (lockWordPager) return@pointerInput
+                            detectHorizontalDragGestures(
+                                onDragEnd = {
+                                    when {
+                                        dragX < -72f && safeIndex < total - 1 -> onNext()
+                                        dragX > 72f && safeIndex > 0 -> onPrev()
+                                    }
+                                    dragX = 0f
+                                },
+                                onHorizontalDrag = { _, dx -> dragX += dx },
+                            )
+                        },
+                ) {
+                    key(entry.id) {
+                        CardPage(
+                            entry = entry,
+                            imageBusy = imageBusy && entry.id == imageTargetId,
+                            accent = accent,
+                            onSpeakWord = onSpeak,
+                            onSpeakAccent = onSpeakAccent,
+                            onOpenImageChooser = {
+                                imageTargetId = entry.id
+                                showImageDialog = true
+                            },
+                            onEditMeaning = { meaningEditEntry = entry },
+                            onSpeakText = onSpeakText,
+                            onSpeakTextSlow = onSpeakTextSlow,
+                            onSpeakSyllables = onSpeakSyllables,
+                            onToggleRelatedStar = onToggleRelatedStar,
+                            isRelatedWordSaved = isRelatedWordSaved,
+                            onExampleScrollChange = { scrolling -> lockWordPager = scrolling },
+                        )
+                    }
+                }
             }
         }
         CardControlBar(
-            pageLabel = if (total == 0) "0 / 0" else "${pagerState.currentPage + 1} / $total",
+            sourceIndex = sourceIndex.coerceIn(0, (total - 1).coerceAtLeast(0)),
+            pageCount = total,
             shuffled = shuffled,
             playing = playing,
             speakOnPageChange = speakOnPageChange,
-            onList = onBack,
             onShuffle = onShuffle,
             onPrev = ::goPrev,
             onPlayToggle = onPlayToggle,
             onNext = ::goNext,
             onToggleSpeak = onToggleSpeak,
+            onSeekPage = { natural ->
+                if (total == 0) return@CardControlBar
+                val target = natural.coerceIn(0, total - 1)
+                onSeekPage(target)
+                if (target >= total - 4) onNearEnd()
+            },
         )
     }
 
     if (showImageDialog) {
-        val target = entries.firstOrNull { it.id == imageTargetId }
+        val target = currentEntry?.takeIf { it.id == imageTargetId }
+            ?: entries.firstOrNull { it.id == imageTargetId }
         ImageSourceDialog(
             definitions = target?.definitions.orEmpty(),
             busy = imageBusy,
@@ -319,9 +391,9 @@ private fun CardPage(
     onSpeakSyllables: (List<String>) -> Unit,
     onToggleRelatedStar: (VocabEntry) -> Unit,
     isRelatedWordSaved: (String) -> Boolean,
-    onExampleTouchChange: (Boolean) -> Unit,
+    onExampleScrollChange: (Boolean) -> Unit,
 ) {
-    val scrollState = rememberScrollState()
+    val scrollState = remember(entry.id) { ScrollState(0) }
     var phonicsOn by remember(entry.id) { mutableStateOf(false) }
     val phonics = remember(entry.text) { NaturalPhonics.analyze(entry.text) }
 
@@ -337,6 +409,8 @@ private fun CardPage(
             entry = entry,
             phonics = phonics,
             phonicsOn = phonicsOn,
+            glowEnabled = true,
+            showImage = true,
             imageBusy = imageBusy,
             accent = accent,
             onSpeakWord = onSpeakWord,
@@ -369,7 +443,7 @@ private fun CardPage(
                 examples = entry.examples,
                 onSpeakExample = onSpeakText,
                 onSpeakExampleSlow = onSpeakTextSlow,
-                onTouchChange = onExampleTouchChange,
+                onInnerScrollChange = onExampleScrollChange,
             )
         }
         Spacer(Modifier.height(12.sdp()))
@@ -381,6 +455,8 @@ private fun CardWordHeader(
     entry: VocabEntry,
     phonics: NaturalPhonics.PhonicsBreakdown,
     phonicsOn: Boolean,
+    glowEnabled: Boolean,
+    showImage: Boolean,
     imageBusy: Boolean,
     accent: Accent,
     onSpeakWord: () -> Unit,
@@ -400,6 +476,7 @@ private fun CardWordHeader(
                     word = entry.text,
                     phonics = phonics,
                     phonicsOn = phonicsOn,
+                    glowEnabled = glowEnabled,
                 )
                 Spacer(Modifier.height(6.sdp()))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.sdp())) {
@@ -433,6 +510,7 @@ private fun CardWordHeader(
             WordMnemonicThumb(
                 imageBlob = entry.imageBlob,
                 hasImage = entry.hasImage,
+                showImage = showImage,
                 busy = imageBusy,
                 onChangeImage = onOpenImageChooser,
             )
@@ -475,6 +553,7 @@ private fun CardWordDisplay(
     word: String,
     phonics: NaturalPhonics.PhonicsBreakdown,
     phonicsOn: Boolean,
+    glowEnabled: Boolean,
 ) {
     val fontSize = when {
         word.length >= 14 -> 28.ssp()
@@ -523,10 +602,14 @@ private fun CardWordDisplay(
                 text = word,
                 style = wordStyle.copy(
                     color = Stellar.CyanSoft,
-                    shadow = Shadow(
-                        color = Stellar.Cyan.copy(alpha = 0.55f),
-                        blurRadius = 22f,
-                    ),
+                    shadow = if (glowEnabled) {
+                        Shadow(
+                            color = Stellar.Cyan.copy(alpha = 0.55f),
+                            blurRadius = 22f,
+                        )
+                    } else {
+                        null
+                    },
                 ),
                 modifier = Modifier.alpha(if (phonicsOn) 0f else 1f),
             )
@@ -578,13 +661,13 @@ private fun phonicsDottedWord(
 private fun CardAccentChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Text(
         text = label,
-        color = if (selected) Stellar.OnSurface else Stellar.OnSurfaceVariant,
+        color = if (selected) Stellar.OnPrimary else Stellar.OnSurfaceVariant,
         fontSize = 11.ssp(),
         fontWeight = FontWeight.Bold,
         letterSpacing = 0.04.em,
         modifier = Modifier
             .clip(RoundedCornerShape(16.sdp()))
-            .background(if (selected) Color(0xFF3A4344) else Color.Transparent)
+            .background(if (selected) Stellar.Cyan else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 10.sdp(), vertical = 6.sdp()),
     )
@@ -673,6 +756,7 @@ private fun CardDefinitionCard(
 private fun WordMnemonicThumb(
     imageBlob: ByteArray?,
     hasImage: Boolean,
+    showImage: Boolean,
     busy: Boolean,
     onChangeImage: () -> Unit,
 ) {
@@ -691,7 +775,7 @@ private fun WordMnemonicThumb(
                 color = Stellar.Cyan,
                 strokeWidth = 2.dp,
             )
-            hasImage -> MnemonicImage(
+            hasImage && showImage -> MnemonicImage(
                 imageBlob = imageBlob,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -731,9 +815,17 @@ private fun CardExamplePanel(
     examples: List<ExampleSentence>,
     onSpeakExample: (String) -> Unit,
     onSpeakExampleSlow: (String) -> Unit,
-    onTouchChange: (Boolean) -> Unit,
+    onInnerScrollChange: (Boolean) -> Unit,
 ) {
     val pagerState = rememberPagerState(pageCount = { examples.size })
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.isScrollInProgress }
+            .distinctUntilChanged()
+            .collect { onInnerScrollChange(it) }
+    }
+    DisposableEffect(Unit) {
+        onDispose { onInnerScrollChange(false) }
+    }
     val blockOuterPagerScroll = remember {
         object : NestedScrollConnection {
             override fun onPostScroll(
@@ -749,19 +841,6 @@ private fun CardExamplePanel(
     Column(
         Modifier
             .fillMaxWidth()
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    onTouchChange(true)
-                    try {
-                        do {
-                            val event = awaitPointerEvent()
-                        } while (event.changes.any { it.pressed })
-                    } finally {
-                        onTouchChange(false)
-                    }
-                }
-            }
             .nestedScroll(blockOuterPagerScroll)
             .stellarGlass()
             .padding(horizontal = 20.sdp(), vertical = 22.sdp()),
@@ -831,7 +910,7 @@ private fun CardExamplePanel(
                 },
             ) {
                 Text(
-                    text = "SLOW",
+                    text = "慢速",
                     color = Stellar.Cyan,
                     fontSize = 10.ssp(),
                     fontWeight = FontWeight.Bold,
@@ -874,7 +953,10 @@ private fun ExampleActionCircle(
 }
 
 @Composable
-private fun CardTopBar(onBack: () -> Unit) {
+private fun CardTopBar(
+    title: String,
+    onBack: () -> Unit,
+) {
     val line = Stellar.Cyan.copy(alpha = 0.20f)
     Row(
         Modifier
@@ -901,38 +983,86 @@ private fun CardTopBar(onBack: () -> Unit) {
                 modifier = Modifier.size(18.sdp()),
             )
         }
-        Text(
-            text = "Vocabulary",
+        Column(
             modifier = Modifier.weight(1f),
-            color = Stellar.CyanSoft,
-            fontSize = 20.ssp(),
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-        )
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = title.ifBlank { "生词本" },
+                color = Stellar.CyanSoft,
+                fontSize = 18.ssp(),
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
+            Text(
+                text = "卡片模式",
+                color = Stellar.OnSurfaceVariant,
+                fontSize = 11.ssp(),
+                textAlign = TextAlign.Center,
+            )
+        }
         Spacer(Modifier.size(48.sdp()))
     }
 }
 
 @Composable
 private fun CardControlBar(
-    pageLabel: String,
+    sourceIndex: Int,
+    pageCount: Int,
     shuffled: Boolean,
     playing: Boolean,
     speakOnPageChange: Boolean,
-    onList: () -> Unit,
     onShuffle: () -> Unit,
     onPrev: () -> Unit,
     onPlayToggle: () -> Unit,
     onNext: () -> Unit,
     onToggleSpeak: () -> Unit,
+    onSeekPage: (Int) -> Unit,
 ) {
+    var sliding by remember { mutableStateOf(false) }
+    var showSeekSlider by remember { mutableStateOf(false) }
+    var sliderValue by remember { mutableFloatStateOf(sourceIndex.toFloat()) }
+    var lastSeekPage by remember { mutableIntStateOf(sourceIndex) }
+    LaunchedEffect(sourceIndex, pageCount, sliding) {
+        if (!sliding) {
+            sliderValue = sourceIndex.coerceAtLeast(0).toFloat()
+            lastSeekPage = sourceIndex
+        }
+    }
+    // While dragging: if the thumb pauses ~90ms, jump to that word (avoids thrashing every pixel).
+    LaunchedEffect(sliderValue, sliding, pageCount, showSeekSlider) {
+        if (!showSeekSlider || !sliding || pageCount <= 1) return@LaunchedEffect
+        val target = sliderValue.roundToInt().coerceIn(0, pageCount - 1)
+        delay(90)
+        if (target != lastSeekPage) {
+            lastSeekPage = target
+            onSeekPage(target)
+        }
+    }
+    val displayIndex = if (sliding && showSeekSlider) {
+        sliderValue.roundToInt().coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+    } else {
+        sourceIndex
+    }
+    val pageLabel = if (pageCount == 0) "0 / 0" else "${displayIndex + 1} / $pageCount"
+    val barShape = RoundedCornerShape(topStart = 20.sdp(), topEnd = 20.sdp())
+
     Column(
         Modifier
             .fillMaxWidth()
-            .background(Stellar.SurfaceContainer.copy(alpha = 0.94f))
+            .shadow(
+                elevation = 10.dp,
+                shape = barShape,
+                ambientColor = Stellar.Cyan.copy(alpha = 0.22f),
+                spotColor = Stellar.Cyan.copy(alpha = 0.18f),
+            )
+            .clip(barShape)
+            .background(Stellar.SurfaceContainer.copy(alpha = 0.96f))
+            .border(1.dp, Stellar.NeonBorder, barShape)
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = 20.sdp(), vertical = 8.sdp()),
-        verticalArrangement = Arrangement.spacedBy(6.sdp()),
+        verticalArrangement = Arrangement.spacedBy(4.sdp()),
     ) {
         Box(Modifier.fillMaxWidth()) {
             Row(
@@ -965,13 +1095,45 @@ private fun CardControlBar(
                 )
             }
             Icon(
-                Icons.AutoMirrored.Outlined.List,
-                contentDescription = "列表",
-                tint = Stellar.OnSurfaceVariant,
+                Icons.Outlined.LinearScale,
+                contentDescription = if (showSeekSlider) "隐藏进度条" else "显示进度条",
+                tint = if (showSeekSlider) Stellar.Cyan else Stellar.OnSurfaceVariant,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .size(20.sdp())
-                    .clickable(onClick = onList),
+                    .size(22.sdp())
+                    .clickable(enabled = pageCount > 1) {
+                        showSeekSlider = !showSeekSlider
+                        if (!showSeekSlider) sliding = false
+                    },
+            )
+        }
+        if (showSeekSlider && pageCount > 1) {
+            Slider(
+                value = sliderValue.coerceIn(0f, (pageCount - 1).toFloat()),
+                onValueChange = { value ->
+                    sliding = true
+                    sliderValue = value
+                },
+                onValueChangeFinished = {
+                    val target = sliderValue.roundToInt().coerceIn(0, pageCount - 1)
+                    if (target != lastSeekPage) {
+                        lastSeekPage = target
+                        onSeekPage(target)
+                    }
+                    sliding = false
+                },
+                valueRange = 0f..(pageCount - 1).toFloat(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(28.sdp()),
+                colors = SliderDefaults.colors(
+                    thumbColor = Stellar.Cyan,
+                    activeTrackColor = Stellar.Cyan,
+                    inactiveTrackColor = Stellar.Outline.copy(alpha = 0.45f),
+                    disabledThumbColor = Stellar.OnSurfaceVariant.copy(alpha = 0.4f),
+                    disabledActiveTrackColor = Stellar.Outline.copy(alpha = 0.3f),
+                    disabledInactiveTrackColor = Stellar.Outline.copy(alpha = 0.2f),
+                ),
             )
         }
         Row(

@@ -11,7 +11,7 @@ class SettingsStore(context: Context) {
         val accentStyleName = prefs.getString(KEY_ACCENT_STYLE, AccentStyle.CyberNeon.name)
             ?: AccentStyle.CyberNeon.name
         val savedName = prefs.getString(KEY_DISPLAY_NAME, DEFAULT_DISPLAY_NAME) ?: DEFAULT_DISPLAY_NAME
-        val displayName = if (savedName == LEGACY_DISPLAY_NAME) {
+        val displayName = if (savedName == LEGACY_DISPLAY_NAME || savedName == "热词") {
             prefs.edit().putString(KEY_DISPLAY_NAME, DEFAULT_DISPLAY_NAME).apply()
             DEFAULT_DISPLAY_NAME
         } else {

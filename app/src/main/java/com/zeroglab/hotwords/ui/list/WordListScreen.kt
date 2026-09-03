@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -38,6 +40,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowBackIosNew
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -49,6 +52,8 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
@@ -60,15 +65,21 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
@@ -79,14 +90,18 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.zeroglab.hotwords.data.Definition
 import com.zeroglab.hotwords.data.Notebook
+import com.zeroglab.hotwords.data.SortMode
 import com.zeroglab.hotwords.data.VocabEntry
 import com.zeroglab.hotwords.ui.VocabUiState
 import com.zeroglab.hotwords.ui.components.StellarConfirmDialog
@@ -140,6 +155,7 @@ fun WordListScreen(
     notebooks: List<Notebook>,
     activeNotebookName: String,
     onSelectNotebook: (Long) -> Unit,
+    onCreateNotebookClick: () -> Boolean = { true },
     onCreateNotebook: (String) -> Unit,
     onDeleteNotebook: (Long) -> Unit,
     onMoveEntries: (List<Long>, Long) -> Unit,
@@ -150,7 +166,13 @@ fun WordListScreen(
     onDelete: (Long) -> Unit,
     onDeleteEntries: (List<Long>) -> Unit,
     onReorder: (from: Int, to: Int) -> Unit,
-    onRecite: () -> Unit,
+    onRecite: (startEntryId: Long?) -> Unit,
+    onBack: () -> Unit,
+    onLoadMore: () -> Unit = {},
+    alphabetLetterIndex: Map<Char, Int> = emptyMap(),
+    onSeekAlphabetLetter: (Char) -> Unit = {},
+    pendingScrollEntryId: Long? = null,
+    onPendingScrollConsumed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -160,8 +182,81 @@ fun WordListScreen(
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
     var showMoveDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showMoreMenu by remember { mutableStateOf(false) }
+    var showStatsDialog by remember { mutableStateOf(false) }
     var openSwipeId by remember { mutableStateOf<Long?>(null) }
+    var lastClickedEntryId by remember { mutableStateOf<Long?>(null) }
+    val catalogLocked = notebooks.firstOrNull { it.id == ui.activeNotebookId }?.isSystem == true
     val listState = rememberLazyListState()
+    val listScope = rememberCoroutineScope()
+    var pendingAlphabetLetter by remember { mutableStateOf<Char?>(null) }
+    val listComplete = entries.size >= totalCount && totalCount > 0
+    // Absolute letter offsets match only the notebook's natural order (manual / alpha).
+    val seekLetterIndex = when (ui.sortMode) {
+        SortMode.MANUAL, SortMode.ALPHA -> alphabetLetterIndex
+        else -> emptyMap()
+    }
+    val entryTexts = remember(entries) { entries.map { it.text } }
+    fun jumpToAlphabetLetter(letter: Char) {
+        pendingAlphabetLetter = letter
+        onSeekAlphabetLetter(letter)
+        val target = seekLetterIndex[letter]?.takeIf { it < entries.size }
+            ?: resolveAlphabetScrollIndex(
+                letter = letter,
+                texts = entryTexts,
+                absoluteIndex = seekLetterIndex,
+                listComplete = listComplete,
+            )
+        if (target != null) {
+            listScope.launch { listState.scrollToItem(target) }
+        }
+    }
+    LaunchedEffect(pendingAlphabetLetter, entries.size, seekLetterIndex, listComplete) {
+        val letter = pendingAlphabetLetter ?: return@LaunchedEffect
+        val target = seekLetterIndex[letter]?.takeIf { it < entries.size }
+            ?: resolveAlphabetScrollIndex(
+                letter = letter,
+                texts = entryTexts,
+                absoluteIndex = seekLetterIndex,
+                listComplete = listComplete,
+            )
+            ?: return@LaunchedEffect
+        listState.scrollToItem(target)
+        pendingAlphabetLetter = null
+    }
+    LaunchedEffect(ui.activeNotebookId) {
+        pendingAlphabetLetter = null
+        lastClickedEntryId = null
+        selectionMode = false
+        selectedIds = emptySet()
+        openSwipeId = null
+        // Only jump to top when switching notebooks — not when returning from card.
+        if (pendingScrollEntryId == null) {
+            listState.scrollToItem(0)
+        }
+    }
+    LaunchedEffect(pendingScrollEntryId, entries.size, totalCount) {
+        val id = pendingScrollEntryId ?: return@LaunchedEffect
+        val index = entries.indexOfFirst { it.id == id }
+        if (index >= 0) {
+            listState.scrollToItem(index)
+            lastClickedEntryId = id
+            onPendingScrollConsumed()
+            return@LaunchedEffect
+        }
+        if (entries.size < totalCount) {
+            onLoadMore()
+        } else {
+            onPendingScrollConsumed()
+        }
+    }
+    LaunchedEffect(ui.activeNotebookId, entries.size) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .collect { last ->
+                if (ui.listLoading || entries.isEmpty() || last < 0) return@collect
+                if (last >= (entries.lastIndex - 8).coerceAtLeast(0)) onLoadMore()
+            }
+    }
     val dragDropState = rememberDragDropState(listState, onMove = onReorder)
     val reordering = dragDropState.draggingItemIndex != null
     val wordStyle = TextStyle(
@@ -170,8 +265,13 @@ fun WordListScreen(
     )
     val ipaStyle = TextStyle(fontSize = 13.ssp())
     val textMeasurer = rememberTextMeasurer()
-    val longestWordPx = remember(entries, wordStyle, textMeasurer) {
-        entries.maxOfOrNull { entry ->
+    val measureSample = remember(
+        entries.size.coerceAtMost(80),
+        entries.firstOrNull()?.id,
+        entries.getOrNull(79)?.id,
+    ) { entries.take(80) }
+    val longestWordPx = remember(measureSample, wordStyle, textMeasurer) {
+        measureSample.maxOfOrNull { entry ->
             textMeasurer.measure(
                 text = AnnotatedString(entry.text),
                 style = wordStyle,
@@ -180,8 +280,8 @@ fun WordListScreen(
         } ?: 0
     }
     // The ipa line carries the speaker icon, so it can be wider than the word itself.
-    val longestIpaPx = remember(entries, ipaStyle, textMeasurer) {
-        entries.maxOfOrNull { entry ->
+    val longestIpaPx = remember(measureSample, ipaStyle, textMeasurer) {
+        measureSample.maxOfOrNull { entry ->
             val ipa = buildSlashIpa(entry) ?: return@maxOfOrNull 0
             textMeasurer.measure(
                 text = AnnotatedString(ipa),
@@ -203,30 +303,41 @@ fun WordListScreen(
     ) {
         ListTopBar(
             title = activeNotebookName,
-            totalCount = totalCount,
-            hideDefinitions = ui.hideDefinitions,
             selectionMode = selectionMode,
             selectedCount = selectedIds.size,
-            onToggleHide = onToggleHide,
-            onToggleSelectionMode = {
-                selectionMode = true
-                selectedIds = emptySet()
-                openSwipeId = null
+            onBack = {
+                if (selectionMode) {
+                    selectionMode = false
+                    selectedIds = emptySet()
+                } else {
+                    onBack()
+                }
             },
+            onOpenMore = { showMoreMenu = true },
             onCancelSelection = {
                 selectionMode = false
                 selectedIds = emptySet()
             },
         )
+        if (!ui.listError.isNullOrBlank()) {
+            Text(
+                text = ui.listError,
+                color = Stellar.Pink,
+                fontSize = 13.ssp(),
+                modifier = Modifier.padding(horizontal = 16.sdp(), vertical = 6.sdp()),
+            )
+        }
         NotebookSwitcher(
             notebooks = notebooks,
             activeNotebookId = ui.activeNotebookId,
             onSelect = {
                 if (!selectionMode) onSelectNotebook(it)
             },
-            onCreate = { showCreateDialog = true },
+            onCreate = {
+                if (onCreateNotebookClick()) showCreateDialog = true
+            },
             onDeleteRequest = { notebook ->
-                if (notebook.id != Notebook.DEFAULT_ID && notebooks.size > 1) {
+                if (!notebook.isSystem) {
                     notebookToDelete = notebook
                 }
             },
@@ -252,7 +363,7 @@ fun WordListScreen(
                 )
                 with(density) { measured.size.height.toDp() } + 2.dp
             }
-            if (totalCount == 0) {
+            if (entries.isEmpty() && !ui.listLoading) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
                         "还没有生词，去首页查词并点星星收藏",
@@ -261,52 +372,41 @@ fun WordListScreen(
                     )
                 }
             } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .then(if (selectionMode) Modifier else Modifier.dragContainer(dragDropState)),
-                    contentPadding = PaddingValues(bottom = 88.sdp()),
-                    verticalArrangement = Arrangement.spacedBy(8.sdp()),
-                ) {
-                    itemsIndexed(entries, key = { _, item -> item.id }) { index, entry ->
-                        val selected = entry.id in selectedIds
-                        if (selectionMode) {
-                            WordRowBody(
-                                entry = entry,
-                                showMeaning = ui.hideDefinitions == (entry.id in ui.revealedIds),
-                                wordColumnWidth = cappedWordColumn,
-                                meaningStyle = meaningStyle,
-                                meaningBlockHeight = meaningBlockHeight,
-                                selectionMode = true,
-                                selected = selected,
-                                onSelectToggle = {
-                                    selectedIds = if (selected) {
-                                        selectedIds - entry.id
-                                    } else {
-                                        selectedIds + entry.id
-                                    }
-                                },
-                                onToggleMeaning = {},
-                                onSpeak = {},
-                            )
-                        } else {
-                        DraggableItem(dragDropState = dragDropState, index = index) { isDragging ->
-                            SwipeRevealDelete(
-                                revealed = openSwipeId == entry.id,
-                                enabled = !reordering,
-                                onRevealChange = { open ->
-                                    openSwipeId = when {
-                                        open -> entry.id
-                                        openSwipeId == entry.id -> null
-                                        else -> openSwipeId
-                                    }
-                                },
-                                onDelete = {
-                                    openSwipeId = null
-                                    onDelete(entry.id)
-                                },
-                            ) {
+                Box(Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(end = 22.sdp())
+                            .then(
+                                if (selectionMode || catalogLocked) Modifier
+                                else Modifier.dragContainer(dragDropState),
+                            ),
+                        contentPadding = PaddingValues(bottom = 16.sdp()),
+                        verticalArrangement = Arrangement.spacedBy(8.sdp()),
+                    ) {
+                        itemsIndexed(entries, key = { _, item -> "${item.notebookId}:${item.id}:${item.text}" }) { index, entry ->
+                            val selected = entry.id in selectedIds
+                            if (selectionMode) {
+                                WordRowBody(
+                                    entry = entry,
+                                    showMeaning = ui.hideDefinitions == (entry.id in ui.revealedIds),
+                                    wordColumnWidth = cappedWordColumn,
+                                    meaningStyle = meaningStyle,
+                                    meaningBlockHeight = meaningBlockHeight,
+                                    selectionMode = true,
+                                    selected = selected,
+                                    onSelectToggle = {
+                                        selectedIds = if (selected) {
+                                            selectedIds - entry.id
+                                        } else {
+                                            selectedIds + entry.id
+                                        }
+                                    },
+                                    onToggleMeaning = {},
+                                    onSpeak = {},
+                                )
+                            } else if (catalogLocked) {
                                 WordRowBody(
                                     entry = entry,
                                     showMeaning = ui.hideDefinitions == (entry.id in ui.revealedIds),
@@ -316,35 +416,97 @@ fun WordListScreen(
                                     selectionMode = false,
                                     selected = false,
                                     onSelectToggle = {},
-                                    modifier = if (isDragging) Modifier.shadow(8.dp) else Modifier,
-                                    onToggleMeaning = { onReveal(entry.id) },
-                                    onSpeak = { onSpeak(entry) },
+                                    onToggleMeaning = {
+                                        lastClickedEntryId = entry.id
+                                        onReveal(entry.id)
+                                    },
+                                    onSpeak = {
+                                        lastClickedEntryId = entry.id
+                                        onSpeak(entry)
+                                    },
                                 )
+                            } else {
+                            DraggableItem(dragDropState = dragDropState, index = index) { isDragging ->
+                                SwipeRevealDelete(
+                                    revealed = openSwipeId == entry.id,
+                                    enabled = !reordering,
+                                    onRevealChange = { open ->
+                                        openSwipeId = when {
+                                            open -> entry.id
+                                            openSwipeId == entry.id -> null
+                                            else -> openSwipeId
+                                        }
+                                    },
+                                    onDelete = {
+                                        openSwipeId = null
+                                        onDelete(entry.id)
+                                    },
+                                ) {
+                                    WordRowBody(
+                                        entry = entry,
+                                        showMeaning = ui.hideDefinitions == (entry.id in ui.revealedIds),
+                                        wordColumnWidth = cappedWordColumn,
+                                        meaningStyle = meaningStyle,
+                                        meaningBlockHeight = meaningBlockHeight,
+                                        selectionMode = false,
+                                        selected = false,
+                                        onSelectToggle = {},
+                                        modifier = if (isDragging) Modifier.shadow(8.dp) else Modifier,
+                                        onToggleMeaning = {
+                                            lastClickedEntryId = entry.id
+                                            onReveal(entry.id)
+                                        },
+                                        onSpeak = {
+                                            lastClickedEntryId = entry.id
+                                            onSpeak(entry)
+                                        },
+                                    )
+                                }
+                            }
                             }
                         }
-                        }
                     }
+                    AlphabetIndexBar(
+                        onSelect = { letter -> jumpToAlphabetLetter(letter) },
+                        modifier = Modifier.align(Alignment.CenterEnd),
+                    )
                 }
             }
-            if (totalCount > 0 && !selectionMode) {
-                ReciteFab(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 16.sdp(), bottom = 18.sdp()),
-                    onClick = onRecite,
-                )
-            }
-            if (selectionMode) {
-                SelectionActionBar(
-                    enabled = selectedIds.isNotEmpty(),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.sdp(), vertical = 14.sdp()),
-                    onMove = { showMoveDialog = true },
-                    onDelete = { showDeleteConfirm = true },
-                )
-            }
+        }
+        if (selectionMode) {
+            SelectionActionBar(
+                enabled = selectedIds.isNotEmpty(),
+                selectAllEnabled = entries.isNotEmpty(),
+                allSelected = entries.isNotEmpty() && selectedIds.size == entries.size,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.sdp(), vertical = 10.sdp())
+                    .windowInsetsPadding(WindowInsets.navigationBars),
+                onSelectAll = {
+                    selectedIds = if (entries.isNotEmpty() && selectedIds.size == entries.size) {
+                        emptySet()
+                    } else {
+                        entries.map { it.id }.toSet()
+                    }
+                },
+                onMove = { showMoveDialog = true },
+                onDelete = { showDeleteConfirm = true },
+            )
+        } else {
+            NotebookBottomBar(
+                hideDefinitions = ui.hideDefinitions,
+                cardEnabled = totalCount > 0,
+                onToggleHide = onToggleHide,
+                onRecite = {
+                    val clicked = lastClickedEntryId
+                        ?.takeIf { id -> entries.any { it.id == id } }
+                    val startId = clicked
+                        ?: listState.firstVisibleItemIndex
+                            .coerceIn(0, entries.lastIndex.coerceAtLeast(0))
+                            .let { entries.getOrNull(it)?.id }
+                    onRecite(startId)
+                },
+            )
         }
     }
 
@@ -411,7 +573,7 @@ fun WordListScreen(
 
     if (showMoveDialog) {
         MoveToNotebookDialog(
-            notebooks = notebooks.filter { it.id != ui.activeNotebookId },
+            notebooks = notebooks.filter { !it.isSystem && it.id != ui.activeNotebookId },
             selectedCount = selectedIds.size,
             onDismiss = { showMoveDialog = false },
             onSelect = { targetId ->
@@ -420,6 +582,34 @@ fun WordListScreen(
                 selectionMode = false
                 selectedIds = emptySet()
             },
+        )
+    }
+
+    if (showMoreMenu) {
+        NotebookMoreSheet(
+            canEdit = !catalogLocked && totalCount > 0,
+            onEdit = {
+                showMoreMenu = false
+                selectionMode = true
+                selectedIds = emptySet()
+                openSwipeId = null
+            },
+            onStats = {
+                showMoreMenu = false
+                showStatsDialog = true
+            },
+            onDismiss = { showMoreMenu = false },
+        )
+    }
+
+    if (showStatsDialog) {
+        StellarConfirmDialog(
+            title = "统计",
+            message = "「$activeNotebookName」共 $totalCount 个单词",
+            confirmText = "确定",
+            dismissText = "关闭",
+            onDismiss = { showStatsDialog = false },
+            onConfirm = { showStatsDialog = false },
         )
     }
 }
@@ -433,6 +623,9 @@ private fun NotebookSwitcher(
     onCreate: () -> Unit,
     onDeleteRequest: (Notebook) -> Unit,
 ) {
+    val chipHeight = 36.sdp()
+    val chipRadius = 18.sdp()
+    val chipShape = RoundedCornerShape(chipRadius)
     Row(
         Modifier
             .fillMaxWidth()
@@ -442,10 +635,11 @@ private fun NotebookSwitcher(
     ) {
         Row(
             Modifier
-                .clip(RoundedCornerShape(20.sdp()))
-                .border(1.dp, Stellar.Outline.copy(alpha = 0.45f), RoundedCornerShape(20.sdp()))
+                .height(chipHeight)
+                .clip(chipShape)
+                .border(1.dp, Stellar.Outline.copy(alpha = 0.45f), chipShape)
                 .clickable(onClick = onCreate)
-                .padding(horizontal = 12.sdp(), vertical = 8.sdp()),
+                .padding(horizontal = 12.sdp()),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.sdp()),
         ) {
@@ -471,25 +665,113 @@ private fun NotebookSwitcher(
         ) {
             notebooks.forEach { notebook ->
                 val selected = notebook.id == activeNotebookId
-                val canDelete = notebook.id != Notebook.DEFAULT_ID && notebooks.size > 1
-                Text(
-                    text = notebook.name,
-                    color = if (selected) Stellar.OnPrimary else Stellar.OnSurfaceVariant,
-                    fontSize = 13.ssp(),
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                val canDelete = !notebook.isSystem
+                val base = catalogChipStyle(notebook) ?: CatalogChipStyle(
+                    background = Stellar.SurfaceHigh,
+                    foreground = Stellar.OnSurfaceVariant,
+                )
+                val style = if (selected) {
+                    CatalogChipStyle(
+                        background = Stellar.Cyan,
+                        foreground = Stellar.OnPrimary,
+                        dashedBorder = null,
+                    )
+                } else {
+                    base
+                }
+                Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(20.sdp()))
-                        .background(if (selected) Stellar.CyanSoft else Stellar.SurfaceHigh)
+                        .height(chipHeight)
+                        .clip(chipShape)
+                        .background(style.background)
+                        .then(
+                            if (style.dashedBorder != null) {
+                                Modifier.drawBehind {
+                                    val stroke = 1.dp.toPx()
+                                    val inset = stroke / 2f
+                                    drawRoundRect(
+                                        color = style.dashedBorder,
+                                        topLeft = Offset(inset, inset),
+                                        size = size.copy(
+                                            width = size.width - stroke,
+                                            height = size.height - stroke,
+                                        ),
+                                        cornerRadius = CornerRadius(chipRadius.toPx()),
+                                        style = Stroke(
+                                            width = stroke,
+                                            pathEffect = PathEffect.dashPathEffect(
+                                                floatArrayOf(5.dp.toPx(), 4.dp.toPx()),
+                                            ),
+                                        ),
+                                    )
+                                }
+                            } else if (!selected && base.dashedBorder == null) {
+                                Modifier.border(1.dp, Stellar.Outline.copy(alpha = 0.35f), chipShape)
+                            } else {
+                                Modifier
+                            },
+                        )
                         .combinedClickable(
                             onClick = { onSelect(notebook.id) },
                             onLongClick = {
                                 if (canDelete) onDeleteRequest(notebook)
                             },
                         )
-                        .padding(horizontal = 14.sdp(), vertical = 8.sdp()),
-                )
+                        .padding(horizontal = 12.sdp()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.sdp()),
+                ) {
+                    Text(
+                        text = notebook.name,
+                        color = style.foreground,
+                        fontSize = 13.ssp(),
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                        maxLines = 1,
+                    )
+                    if (notebook.isSystem) {
+                        Icon(
+                            Icons.Filled.Lock,
+                            contentDescription = "系统词书不可修改",
+                            tint = style.foreground,
+                            modifier = Modifier.size(12.sdp()),
+                        )
+                    }
+                }
             }
         }
+    }
+}
+
+private data class CatalogChipStyle(
+    val background: Color,
+    val foreground: Color,
+    val dashedBorder: Color? = null,
+)
+
+private fun catalogChipStyle(notebook: Notebook): CatalogChipStyle? {
+    val slug = notebook.slug.orEmpty()
+    return when {
+        slug == Notebook.ZHONGKAO_SLUG || notebook.name.contains("中考") -> CatalogChipStyle(
+            background = Color(0xFF2C3348),
+            foreground = Color(0xFFD4D8E8),
+            dashedBorder = Color(0xB396A0C0),
+        )
+        slug == Notebook.GAOKAO_SLUG || notebook.name.contains("高考") -> CatalogChipStyle(
+            background = Color(0xFF3A2C3A),
+            foreground = Color(0xFFE4D0DE),
+            dashedBorder = Color(0xB3B894AD),
+        )
+        slug == Notebook.CET4_SLUG || notebook.name.contains("四级") -> CatalogChipStyle(
+            background = Color(0xFF243F3F),
+            foreground = Color(0xFFD5E3E2),
+            dashedBorder = Color(0xB38FAEAD),
+        )
+        slug == Notebook.CET6_SLUG || notebook.name.contains("六级") -> CatalogChipStyle(
+            background = Color(0xFF3A3529),
+            foreground = Color(0xFFD8CEB6),
+            dashedBorder = Color(0xB3B0A584),
+        )
+        else -> null
     }
 }
 
@@ -544,17 +826,23 @@ private fun MoveToNotebookDialog(
                     verticalArrangement = Arrangement.spacedBy(8.sdp()),
                 ) {
                     notebooks.forEach { notebook ->
-                        Text(
-                            text = notebook.name,
-                            color = Stellar.OnPrimary,
-                            fontSize = 13.ssp(),
-                            fontWeight = FontWeight.Bold,
+                        Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(20.sdp()))
+                                .height(36.sdp())
+                                .clip(RoundedCornerShape(18.sdp()))
                                 .background(Stellar.CyanSoft)
                                 .clickable { onSelect(notebook.id) }
-                                .padding(horizontal = 14.sdp(), vertical = 8.sdp()),
-                        )
+                                .padding(horizontal = 14.sdp()),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = notebook.name,
+                                color = Stellar.OnPrimary,
+                                fontSize = 13.ssp(),
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
             }
@@ -575,22 +863,127 @@ private fun MoveToNotebookDialog(
 }
 
 @Composable
+private fun NotebookMoreSheet(
+    canEdit: Boolean,
+    onEdit: () -> Unit,
+    onStats: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val shape = RoundedCornerShape(topStart = 22.sdp(), topEnd = 22.sdp())
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = onDismiss,
+                ),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = {},
+                    )
+                    .shadow(
+                        elevation = 20.dp,
+                        shape = shape,
+                        ambientColor = Stellar.Cyan.copy(alpha = 0.28f),
+                        spotColor = Stellar.Cyan.copy(alpha = 0.22f),
+                    )
+                    .clip(shape)
+                    .background(Stellar.SurfaceContainer.copy(alpha = 0.98f))
+                    .border(1.dp, Stellar.Cyan.copy(alpha = 0.35f), shape)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(horizontal = 20.sdp(), vertical = 16.sdp()),
+            ) {
+                Box(
+                    Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .width(36.sdp())
+                        .height(4.sdp())
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Stellar.Outline.copy(alpha = 0.55f)),
+                )
+                Spacer(Modifier.height(16.sdp()))
+                NotebookMoreAction(
+                    label = "编辑",
+                    enabled = canEdit,
+                    onClick = onEdit,
+                )
+                Spacer(Modifier.height(8.sdp()))
+                NotebookMoreAction(
+                    label = "统计",
+                    enabled = true,
+                    onClick = onStats,
+                )
+                Spacer(Modifier.height(12.sdp()))
+                Text(
+                    text = "取消",
+                    color = Stellar.OnSurfaceVariant,
+                    fontSize = 15.ssp(),
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.sdp()))
+                        .clickable(onClick = onDismiss)
+                        .padding(vertical = 14.sdp()),
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotebookMoreAction(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val fill = if (enabled) Stellar.SurfaceHigh else Stellar.SurfaceHigh.copy(alpha = 0.55f)
+    Text(
+        text = label,
+        color = if (enabled) Stellar.CyanSoft else Stellar.OnSurfaceVariant.copy(alpha = 0.45f),
+        fontSize = 17.ssp(),
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.sdp()))
+            .background(fill)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 14.sdp()),
+        textAlign = TextAlign.Center,
+    )
+}
+
+@Composable
 private fun SelectionActionBar(
     enabled: Boolean,
+    selectAllEnabled: Boolean,
+    allSelected: Boolean,
     modifier: Modifier = Modifier,
+    onSelectAll: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Row(
         modifier,
-        horizontalArrangement = Arrangement.spacedBy(10.sdp()),
+        horizontalArrangement = Arrangement.spacedBy(8.sdp()),
     ) {
         SelectionActionButton(
-            label = "删除",
-            enabled = enabled,
-            destructive = true,
+            label = if (allSelected) "取消全选" else "全选",
+            enabled = selectAllEnabled,
+            destructive = false,
             modifier = Modifier.weight(1f),
-            onClick = onDelete,
+            onClick = onSelectAll,
         )
         SelectionActionButton(
             label = "移动到…",
@@ -598,6 +991,13 @@ private fun SelectionActionBar(
             destructive = false,
             modifier = Modifier.weight(1f),
             onClick = onMove,
+        )
+        SelectionActionButton(
+            label = "删除",
+            enabled = enabled,
+            destructive = true,
+            modifier = Modifier.weight(1f),
+            onClick = onDelete,
         )
     }
 }
@@ -630,7 +1030,13 @@ private fun SelectionActionButton(
             .padding(vertical = 12.sdp()),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = textColor, fontSize = 15.ssp(), fontWeight = FontWeight.Bold)
+        Text(
+            label,
+            color = textColor,
+            fontSize = 13.ssp(),
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
     }
 }
 
@@ -705,12 +1111,10 @@ private fun SwipeRevealDelete(
 @Composable
 private fun ListTopBar(
     title: String,
-    totalCount: Int,
-    hideDefinitions: Boolean,
     selectionMode: Boolean,
     selectedCount: Int,
-    onToggleHide: () -> Unit,
-    onToggleSelectionMode: () -> Unit,
+    onBack: () -> Unit,
+    onOpenMore: () -> Unit,
     onCancelSelection: () -> Unit,
 ) {
     val line = Stellar.Cyan.copy(alpha = 0.20f)
@@ -749,25 +1153,19 @@ private fun ListTopBar(
                 fontWeight = FontWeight.Bold,
             )
         } else {
-            Row(
+            Box(
                 Modifier
                     .align(Alignment.CenterStart)
-                    .clickable(onClick = onToggleHide)
-                    .padding(vertical = 8.sdp(), horizontal = 4.sdp()),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.sdp()),
+                    .size(40.sdp())
+                    .clip(CircleShape)
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    if (hideDefinitions) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                    contentDescription = null,
-                    tint = Stellar.OnSurfaceVariant,
-                    modifier = Modifier.size(16.sdp()),
-                )
-                Text(
-                    text = if (hideDefinitions) "隐藏释义" else "显示释义",
-                    color = Stellar.OnSurfaceVariant,
-                    fontSize = 12.ssp(),
-                    fontWeight = FontWeight.Medium,
+                    Icons.Outlined.ArrowBackIosNew,
+                    contentDescription = "返回",
+                    tint = Stellar.CyanSoft,
+                    modifier = Modifier.size(18.sdp()),
                 )
             }
             Text(
@@ -779,29 +1177,20 @@ private fun ListTopBar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Row(
-                Modifier.align(Alignment.CenterEnd),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.sdp()),
+            Box(
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .size(40.sdp())
+                    .clip(CircleShape)
+                    .clickable(onClick = onOpenMore),
+                contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = "共 $totalCount 词",
-                    color = Stellar.OnSurfaceVariant,
-                    fontSize = 12.ssp(),
+                    text = "···",
+                    color = Stellar.Cyan,
+                    fontSize = 18.ssp(),
+                    fontWeight = FontWeight.Bold,
                 )
-                if (totalCount > 0) {
-                    Text(
-                        text = "多选",
-                        color = Stellar.Cyan,
-                        fontSize = 12.ssp(),
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(14.sdp()))
-                            .border(1.dp, Stellar.Cyan.copy(alpha = 0.55f), RoundedCornerShape(14.sdp()))
-                            .clickable(onClick = onToggleSelectionMode)
-                            .padding(horizontal = 10.sdp(), vertical = 5.sdp()),
-                    )
-                }
             }
         }
     }
@@ -1003,17 +1392,13 @@ private fun compactMeaningAnnotated(
 @Composable
 private fun DefinitionMask(modifier: Modifier = Modifier) {
     val palette = LocalStellar.current
-    // Mask must stay fully opaque — themed surfaces can carry alpha for glass UI.
-    val fill = if (palette.backgroundImageRes != null) {
-        Color(0xFF0B3D24)
-    } else {
-        Stellar.SurfaceHigh.copy(alpha = 1f)
-    }
-    val hatch = if (palette.backgroundImageRes != null) {
-        Color(0xFF165A36)
-    } else {
-        Stellar.Outline.copy(alpha = 1f)
-    }
+    // Tint with theme accent (same family as list word column / card accents) — not flat gray.
+    val fill = lerp(
+        palette.SurfaceContainer.copy(alpha = 1f),
+        palette.Cyan,
+        0.22f,
+    )
+    val hatch = palette.Cyan.copy(alpha = 0.38f)
     Canvas(modifier.clip(RoundedCornerShape(4.sdp()))) {
         drawRect(fill)
         val step = 14.dp.toPx()
@@ -1032,22 +1417,82 @@ private fun DefinitionMask(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ReciteFab(modifier: Modifier, onClick: () -> Unit) {
-    val fill = if (LocalStellar.current.isLight) Stellar.Cyan else Stellar.CyanSoft
-    Box(
-        modifier
-            .shadow(
-                elevation = 12.dp,
-                shape = RoundedCornerShape(22.sdp()),
-                ambientColor = Stellar.Cyan.copy(alpha = 0.45f),
-                spotColor = Stellar.Cyan.copy(alpha = 0.45f),
-            )
-            .clip(RoundedCornerShape(22.sdp()))
-            .background(fill)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.sdp(), vertical = 11.sdp()),
+private fun NotebookBottomBar(
+    hideDefinitions: Boolean,
+    cardEnabled: Boolean,
+    onToggleHide: () -> Unit,
+    onRecite: () -> Unit,
+) {
+    val line = Stellar.Cyan.copy(alpha = 0.20f)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(stellarPanelBackgroundColor())
+            .drawBehind {
+                drawLine(
+                    color = line,
+                    start = Offset(0f, 0f),
+                    end = Offset(size.width, 0f),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(top = 8.sdp(), bottom = 8.sdp()),
     ) {
-        Text("卡片模式  >", color = Stellar.OnPrimary, fontSize = 14.ssp(), fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth()) {
+            NotebookBottomAction(
+                icon = if (hideDefinitions) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                label = if (hideDefinitions) "显示释义" else "隐藏释义",
+                accent = true,
+                enabled = true,
+                onClick = onToggleHide,
+                modifier = Modifier.weight(1f),
+            )
+            NotebookBottomAction(
+                icon = Icons.Outlined.Style,
+                label = "卡片模式",
+                accent = true,
+                enabled = cardEnabled,
+                onClick = onRecite,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun NotebookBottomAction(
+    icon: ImageVector,
+    label: String,
+    accent: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val color = when {
+        !enabled -> Stellar.OnSurfaceVariant.copy(alpha = 0.4f)
+        accent -> Stellar.Cyan
+        else -> Stellar.OnSurfaceVariant
+    }
+    Column(
+        modifier = modifier
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 4.sdp()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = color,
+            modifier = Modifier.size(22.sdp()),
+        )
+        Text(
+            text = label,
+            color = color,
+            fontSize = 12.ssp(),
+            fontWeight = if (accent) FontWeight.Bold else FontWeight.Medium,
+            modifier = Modifier.padding(top = 3.sdp()),
+        )
     }
 }
 
