@@ -18,12 +18,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.zeroglab.hotwords.auth.BiometricAuth
 import com.zeroglab.hotwords.data.AppTheme
 import androidx.compose.ui.graphics.Color
 import com.zeroglab.hotwords.data.AccentStyle
 import com.zeroglab.hotwords.data.Accent
 import com.zeroglab.hotwords.data.Notebook
+import com.zeroglab.hotwords.ui.auth.BiometricUnlockScreen
 import com.zeroglab.hotwords.ui.auth.LoginScreen
 import com.zeroglab.hotwords.ui.card.CardModeScreen
 import com.zeroglab.hotwords.ui.components.MainBottomBar
@@ -54,16 +57,23 @@ fun HotWordsRoot(
     var showLogin by remember { mutableStateOf(false) }
     var loginHint by remember { mutableStateOf<String?>(null) }
     var pendingExit by remember { mutableStateOf(false) }
+    var biometricUnlocked by remember { mutableStateOf(false) }
+    var biometricError by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
+    val activity = context as? FragmentActivity
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val words by viewModel.filteredWords.collectAsStateWithLifecycle()
     val notebooks by viewModel.notebooks.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
+    val avatarBitmap by viewModel.avatarBitmap.collectAsStateWithLifecycle()
+    val avatarBusy by viewModel.avatarBusy.collectAsStateWithLifecycle()
     val login by viewModel.login.collectAsStateWithLifecycle()
     val alphabetLetterIndex by viewModel.alphabetLetterIndex.collectAsStateWithLifecycle()
     val pendingListScrollEntryId by viewModel.pendingListScrollEntryId.collectAsStateWithLifecycle()
     val activeNotebookName = viewModel.activeNotebook()?.name ?: Notebook.DEFAULT_NAME
     val activeWordCount = maxOf(viewModel.activeNotebook()?.wordCount ?: 0, words.size)
+    val needsBiometricUnlock =
+        session != null && ui.settings.biometricLogin && !biometricUnlocked
 
     fun requireLogin(hint: String): Boolean {
         if (session != null) return true
@@ -72,10 +82,72 @@ fun HotWordsRoot(
         return false
     }
 
+    fun promptBiometricUnlock() {
+        val host = activity
+        if (host == null) {
+            biometricError = "无法启动指纹验证"
+            return
+        }
+        biometricError = null
+        BiometricAuth.authenticate(
+            activity = host,
+            onSuccess = {
+                biometricUnlocked = true
+                biometricError = null
+            },
+            onError = { message -> biometricError = message },
+            onCancel = {},
+        )
+    }
+
+    fun setBiometricLoginEnabled(enabled: Boolean) {
+        if (!enabled) {
+            viewModel.updateSettings { it.copy(biometricLogin = false) }
+            return
+        }
+        val host = activity
+        if (host == null) {
+            Toast.makeText(context, "无法启动指纹验证", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val blocked = BiometricAuth.statusMessage(context)
+        if (blocked != null) {
+            Toast.makeText(context, blocked, Toast.LENGTH_LONG).show()
+            return
+        }
+        BiometricAuth.authenticate(
+            activity = host,
+            title = "开启指纹登录",
+            subtitle = "验证指纹后，下次打开应用将需要指纹解锁",
+            onSuccess = {
+                viewModel.updateSettings { it.copy(biometricLogin = true) }
+                biometricUnlocked = true
+                Toast.makeText(context, "已开启指纹登录", Toast.LENGTH_SHORT).show()
+            },
+            onError = { message ->
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            },
+        )
+    }
+
     LaunchedEffect(session) {
         if (session != null) {
+            val cameFromLogin = showLogin
             showLogin = false
             loginHint = null
+            if (cameFromLogin) {
+                biometricUnlocked = true
+                biometricError = null
+            }
+        } else {
+            biometricUnlocked = false
+            biometricError = null
+        }
+    }
+
+    LaunchedEffect(needsBiometricUnlock) {
+        if (needsBiometricUnlock) {
+            promptBiometricUnlock()
         }
     }
 
@@ -97,6 +169,7 @@ fun HotWordsRoot(
 
     BackHandler {
         when {
+            needsBiometricUnlock -> onExit()
             showLogin -> {
                 pendingExit = false
                 showLogin = false
@@ -150,6 +223,7 @@ fun HotWordsRoot(
                     code = login.code,
                     password = login.password,
                     passwordConfirm = login.passwordConfirm,
+                    mode = login.mode,
                     needPassword = login.needPassword,
                     sending = login.sending,
                     loggingIn = login.loggingIn,
@@ -164,8 +238,23 @@ fun HotWordsRoot(
                     onCodeChange = viewModel::setLoginCode,
                     onPasswordChange = viewModel::setLoginPassword,
                     onPasswordConfirmChange = viewModel::setLoginPasswordConfirm,
+                    onModeChange = viewModel::setLoginMode,
                     onSendCode = viewModel::sendLoginCode,
                     onLogin = viewModel::submitLogin,
+                )
+                return@HotWordsTheme
+            }
+            if (needsBiometricUnlock) {
+                BiometricUnlockScreen(
+                    modifier = Modifier.fillMaxSize(),
+                    phoneHint = session?.phone,
+                    error = biometricError,
+                    onUnlock = ::promptBiometricUnlock,
+                    onLogout = {
+                        biometricUnlocked = false
+                        biometricError = null
+                        viewModel.logout()
+                    },
                 )
                 return@HotWordsTheme
             }
@@ -203,6 +292,8 @@ fun HotWordsRoot(
                     notebooks = notebooks,
                     onBack = { showAppSettings = false },
                     onChange = viewModel::updateSettings,
+                    loggedIn = session != null,
+                    onBiometricLoginChange = ::setBiometricLoginEnabled,
                     onLogout = {
                         showAppSettings = false
                         viewModel.logout()
@@ -275,6 +366,8 @@ fun HotWordsRoot(
                         notebooks = notebooks,
                         onBack = { overlay = Overlay.Card },
                         onChange = viewModel::updateSettings,
+                        loggedIn = session != null,
+                        onBiometricLoginChange = ::setBiometricLoginEnabled,
                         onLogout = {
                             overlay = Overlay.Card
                             viewModel.logout()
@@ -396,7 +489,10 @@ fun HotWordsRoot(
                                 loginHint = "登录后可同步收藏与生词本"
                                 showLogin = true
                             },
-                            onLogout = viewModel::logout,
+                            onChangePassword = viewModel::changePassword,
+                            avatarBitmap = avatarBitmap,
+                            avatarBusy = avatarBusy,
+                            onUploadAvatar = viewModel::uploadAvatar,
                         )
                     }
                 }

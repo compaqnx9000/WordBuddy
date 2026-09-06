@@ -73,6 +73,30 @@ class HotWordsApi {
         )
     }
 
+    suspend fun loginWithPassword(phone: String, password: String): AuthResult =
+        withContext(Dispatchers.IO) {
+            parseAuth(
+                request(
+                    "POST",
+                    "/auth/login",
+                    auth = null,
+                    body = JSONObject().put("phone", phone).put("password", password),
+                ),
+            )
+        }
+
+    suspend fun changePassword(token: String, oldPassword: String, newPassword: String) =
+        withContext(Dispatchers.IO) {
+            request(
+                "POST",
+                "/auth/change-password",
+                auth = token,
+                body = JSONObject()
+                    .put("oldPassword", oldPassword)
+                    .put("newPassword", newPassword),
+            )
+        }
+
     suspend fun register(phone: String, code: String, password: String): AuthResult =
         withContext(Dispatchers.IO) {
             parseAuth(
@@ -89,17 +113,61 @@ class HotWordsApi {
         }
 
     private fun parseAuth(root: JSONObject): AuthResult {
-        if (root.optBoolean("isNewUser")) return AuthResult(session = null, isNewUser = true)
+        val isNewUser = root.optBoolean("isNewUser")
+        if (!root.has("token") || root.isNull("token")) {
+            return AuthResult(session = null, isNewUser = isNewUser)
+        }
         val user = root.getJSONObject("user")
+        val avatarUrl = optNullableString(root, "avatarUrl")
+            ?: optNullableString(user, "avatarUrl")
         return AuthResult(
             session = UserSession(
                 token = root.getString("token"),
                 userId = user.getLong("id"),
                 phone = user.getString("phone"),
                 vocabNotebookId = root.getLong("vocabNotebookId"),
+                avatarUrl = avatarUrl,
             ),
-            isNewUser = false,
+            isNewUser = isNewUser,
         )
+    }
+
+    suspend fun uploadAvatar(token: String, jpegBytes: ByteArray): String =
+        withContext(Dispatchers.IO) {
+            val encoded = android.util.Base64.encodeToString(jpegBytes, android.util.Base64.NO_WRAP)
+            val root = request(
+                "POST",
+                "/me/avatar",
+                auth = token,
+                body = JSONObject().put("imageBase64", encoded),
+            )
+            root.optString("avatarUrl").ifBlank { error("上传失败") }
+        }
+
+    suspend fun fetchAvatarUrl(token: String): String? = withContext(Dispatchers.IO) {
+        val root = request("GET", "/me", auth = token)
+        val user = root.optJSONObject("user")
+        optNullableString(root, "avatarUrl")
+            ?: user?.let { optNullableString(it, "avatarUrl") }
+    }
+
+    suspend fun fetchAvatarBytes(avatarUrl: String): ByteArray = withContext(Dispatchers.IO) {
+        val path = avatarUrl.substringBefore('?')
+        val stamp = System.currentTimeMillis()
+        val url = if (path.startsWith("http")) "$path?t=$stamp" else "${baseUrl.trimEnd('/')}$path?t=$stamp"
+        val conn = java.net.URI(url).toURL().openConnection() as HttpURLConnection
+        try {
+            conn.connectTimeout = 8000
+            conn.readTimeout = 15000
+            conn.instanceFollowRedirects = true
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val body = stream?.use { it.readBytes() } ?: ByteArray(0)
+            if (code !in 200..299 || body.isEmpty()) error("头像加载失败")
+            body
+        } finally {
+            conn.disconnect()
+        }
     }
 
     suspend fun listNotebooks(token: String): List<Notebook> = withContext(Dispatchers.IO) {

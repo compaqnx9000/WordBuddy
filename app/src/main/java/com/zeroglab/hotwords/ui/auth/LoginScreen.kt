@@ -45,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -59,6 +60,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.zeroglab.hotwords.R
+import com.zeroglab.hotwords.ui.LoginMode
 import com.zeroglab.hotwords.ui.design.sdp
 import com.zeroglab.hotwords.ui.design.ssp
 import com.zeroglab.hotwords.ui.lookup.Stellar
@@ -71,6 +73,7 @@ fun LoginScreen(
     code: String,
     password: String,
     passwordConfirm: String,
+    mode: LoginMode,
     needPassword: Boolean,
     sending: Boolean,
     loggingIn: Boolean,
@@ -80,12 +83,14 @@ fun LoginScreen(
     onCodeChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
     onPasswordConfirmChange: (String) -> Unit,
+    onModeChange: (LoginMode) -> Unit,
     onSendCode: () -> Unit,
     onLogin: () -> Unit,
     modifier: Modifier = Modifier,
     hint: String? = null,
     onBack: (() -> Unit)? = null,
 ) {
+    val smsMode = mode == LoginMode.SMS
     val canSend = countdownSec <= 0 && !sending && phone.length == 11
     Column(
         modifier
@@ -125,7 +130,7 @@ fun LoginScreen(
         }
         BrandMark()
         Spacer(Modifier.height(28.sdp()))
-        if (!hint.isNullOrBlank()) {
+        if (!hint.isNullOrBlank() && !needPassword) {
             Text(
                 text = hint,
                 color = Stellar.CyanSoft,
@@ -150,11 +155,22 @@ fun LoginScreen(
             )
             Spacer(Modifier.height(6.sdp()))
             Text(
-                text = if (needPassword) "验证通过后设置密码，之后可用同一手机号登录" else "验证码登录，未注册将自动创建账号",
+                text = when {
+                    needPassword -> "验证通过后设置密码，之后可用手机号+密码登录"
+                    smsMode -> "验证码登录，新手机号验证后需设置密码"
+                    else -> "使用已设置的密码登录"
+                },
                 color = Stellar.OnSurfaceVariant,
                 fontSize = 12.ssp(),
             )
-            Spacer(Modifier.height(18.sdp()))
+            Spacer(Modifier.height(16.sdp()))
+            if (!needPassword) {
+                LoginModeTabs(
+                    mode = mode,
+                    onModeChange = onModeChange,
+                )
+                Spacer(Modifier.height(16.sdp()))
+            }
             LoginField(
                 value = phone,
                 onValueChange = { onPhoneChange(it.filter(Char::isDigit).take(11)) },
@@ -164,39 +180,7 @@ fun LoginScreen(
                 imeAction = ImeAction.Next,
             )
             Spacer(Modifier.height(12.sdp()))
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.sdp()),
-            ) {
-                LoginField(
-                    value = code,
-                    onValueChange = { onCodeChange(it.filter(Char::isDigit).take(6)) },
-                    placeholder = "验证码",
-                    leading = Icons.Outlined.Sms,
-                    keyboardType = KeyboardType.Number,
-                    imeAction = if (needPassword) ImeAction.Next else ImeAction.Done,
-                    onImeAction = { if (!needPassword) onLogin() },
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = when {
-                        sending -> "发送中"
-                        countdownSec > 0 -> "${countdownSec}s"
-                        else -> "获取验证码"
-                    },
-                    color = if (canSend) Stellar.OnPrimary else Stellar.OnSurfaceVariant,
-                    fontSize = 12.ssp(),
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(16.sdp()))
-                        .background(if (canSend) Stellar.Cyan else Stellar.SurfaceHigh)
-                        .clickable(enabled = canSend, onClick = onSendCode)
-                        .padding(horizontal = 12.sdp(), vertical = 16.sdp()),
-                )
-            }
             if (needPassword) {
-                Spacer(Modifier.height(12.sdp()))
                 LoginField(
                     value = password,
                     onValueChange = onPasswordChange,
@@ -211,6 +195,49 @@ fun LoginScreen(
                     value = passwordConfirm,
                     onValueChange = onPasswordConfirmChange,
                     placeholder = "再输入一次密码",
+                    leading = Icons.Outlined.Lock,
+                    keyboardType = KeyboardType.Password,
+                    password = true,
+                    imeAction = ImeAction.Done,
+                    onImeAction = onLogin,
+                )
+            } else if (smsMode) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.sdp()),
+                ) {
+                    LoginField(
+                        value = code,
+                        onValueChange = { onCodeChange(it.filter(Char::isDigit).take(6)) },
+                        placeholder = "验证码",
+                        leading = Icons.Outlined.Sms,
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done,
+                        onImeAction = onLogin,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = when {
+                            sending -> "发送中"
+                            countdownSec > 0 -> "${countdownSec}s"
+                            else -> "获取验证码"
+                        },
+                        color = if (canSend) Stellar.OnPrimary else Stellar.OnSurfaceVariant,
+                        fontSize = 12.ssp(),
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.sdp()))
+                            .background(if (canSend) Stellar.Cyan else Stellar.SurfaceHigh)
+                            .clickable(enabled = canSend, onClick = onSendCode)
+                            .padding(horizontal = 12.sdp(), vertical = 16.sdp()),
+                    )
+                }
+            } else {
+                LoginField(
+                    value = password,
+                    onValueChange = onPasswordChange,
+                    placeholder = "密码（至少 6 位）",
                     leading = Icons.Outlined.Lock,
                     keyboardType = KeyboardType.Password,
                     password = true,
@@ -251,13 +278,72 @@ fun LoginScreen(
         }
         Spacer(Modifier.height(18.sdp()))
         Text(
-            text = "开发阶段验证码未接入短信，任意 6 位数字即可。",
+            text = when {
+                needPassword -> "请牢记密码，之后可选择「密码登录」。"
+                smsMode -> "验证码将发送到您的手机，请注意查收。"
+                else -> "若尚未设置密码，请先用验证码登录。"
+            },
             color = Stellar.OnSurfaceVariant.copy(alpha = 0.7f),
             fontSize = 12.ssp(),
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(28.sdp()))
+    }
+}
+
+@Composable
+private fun LoginModeTabs(
+    mode: LoginMode,
+    onModeChange: (LoginMode) -> Unit,
+) {
+    val shape = RoundedCornerShape(14.sdp())
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Stellar.SurfaceHigh)
+            .border(1.dp, Stellar.Outline.copy(alpha = 0.35f), shape)
+            .padding(4.sdp()),
+        horizontalArrangement = Arrangement.spacedBy(4.sdp()),
+    ) {
+        LoginModeTab(
+            label = "验证码登录",
+            selected = mode == LoginMode.SMS,
+            onClick = { onModeChange(LoginMode.SMS) },
+            modifier = Modifier.weight(1f),
+        )
+        LoginModeTab(
+            label = "密码登录",
+            selected = mode == LoginMode.PASSWORD,
+            onClick = { onModeChange(LoginMode.PASSWORD) },
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun LoginModeTab(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(11.sdp())
+    Box(
+        modifier
+            .clip(shape)
+            .background(if (selected) Stellar.Cyan.copy(alpha = 0.28f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.sdp()),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Stellar.CyanSoft else Stellar.OnSurfaceVariant,
+            fontSize = 13.ssp(),
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+        )
     }
 }
 

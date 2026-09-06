@@ -7,6 +7,7 @@ data class UserSession(
     val userId: Long,
     val phone: String,
     val vocabNotebookId: Long,
+    val avatarUrl: String? = null,
 )
 
 class SessionStore(context: Context) {
@@ -17,8 +18,9 @@ class SessionStore(context: Context) {
         val phone = prefs.getString(KEY_PHONE, null)?.trim().orEmpty()
         val userId = prefs.getLong(KEY_USER_ID, 0L)
         val vocabId = prefs.getLong(KEY_VOCAB_ID, 0L)
+        val avatarUrl = prefs.getString(KEY_AVATAR, null)?.trim()?.takeIf { it.isNotEmpty() }
         if (token.isEmpty() || userId <= 0L) return null
-        return UserSession(token, userId, phone, vocabId)
+        return UserSession(token, userId, phone, vocabId, avatarUrl)
     }
 
     fun save(session: UserSession) {
@@ -27,6 +29,7 @@ class SessionStore(context: Context) {
             .putLong(KEY_USER_ID, session.userId)
             .putString(KEY_PHONE, session.phone)
             .putLong(KEY_VOCAB_ID, session.vocabNotebookId)
+            .putString(KEY_AVATAR, session.avatarUrl.orEmpty())
             .apply()
     }
 
@@ -40,5 +43,6 @@ class SessionStore(context: Context) {
         private const val KEY_USER_ID = "user_id"
         private const val KEY_PHONE = "phone"
         private const val KEY_VOCAB_ID = "vocab_notebook_id"
+        private const val KEY_AVATAR = "avatar_url"
     }
 }

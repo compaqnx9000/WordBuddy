@@ -3,7 +3,10 @@ package com.zeroglab.hotwords.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URLEncoder
@@ -13,12 +16,31 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 object ImageCodec {
-    fun fromUri(context: Context, uri: Uri): ByteArray {
-        val bitmap = context.contentResolver.openInputStream(uri)?.use { input ->
-            BitmapFactory.decodeStream(input)
-        } ?: error("无法读取图片")
-        return encodeJpeg(scale(bitmap, 1024)).also {
-            if (!bitmap.isRecycled) bitmap.recycle()
+    fun fromUri(context: Context, uri: Uri, maxEdge: Int = 1024): ByteArray {
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: error("无法读取图片")
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            ?: error("无法读取图片")
+        val bitmap = applyExifOrientation(bytes, decoded)
+        return encodeJpeg(scale(bitmap, maxEdge))
+    }
+
+    private fun applyExifOrientation(bytes: ByteArray, bitmap: Bitmap): Bitmap {
+        val orientation = runCatching {
+            ExifInterface(ByteArrayInputStream(bytes)).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL,
+            )
+        }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+        val degrees = when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+            else -> return bitmap
+        }
+        val matrix = Matrix().apply { postRotate(degrees) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true).also {
+            if (it !== bitmap && !bitmap.isRecycled) bitmap.recycle()
         }
     }
 

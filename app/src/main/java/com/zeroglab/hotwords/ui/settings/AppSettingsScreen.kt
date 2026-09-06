@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.ArrowBackIosNew
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material3.HorizontalDivider
@@ -39,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.zeroglab.hotwords.ui.components.StellarConfirmDialog
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Tune
@@ -78,26 +78,13 @@ fun AppSettingsScreen(
     onChange: ((StudySettings) -> StudySettings) -> Unit,
     onLogout: () -> Unit = {},
     onSwitchAccount: () -> Unit = {},
+    loggedIn: Boolean = false,
+    onBiometricLoginChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
     title: String = "设置",
 ) {
-    var showHelpDialog by remember { mutableStateOf(false) }
-    var showAboutDialog by remember { mutableStateOf(false) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
 
-    if (showHelpDialog) {
-        StellarConfirmDialog(
-            title = "帮助与反馈",
-            message = "使用中遇到问题，可通过应用商店评论反馈，或联系开发团队。\n\n我们会持续改进查词、收藏与背诵体验。",
-            confirmText = "知道了",
-            dismissText = "",
-            onDismiss = { showHelpDialog = false },
-            onConfirm = { showHelpDialog = false },
-        )
-    }
-    if (showAboutDialog) {
-        AboutWordBuddyDialog(onDismiss = { showAboutDialog = false })
-    }
     if (showLogoutConfirm) {
         StellarConfirmDialog(
             title = "退出登录",
@@ -171,25 +158,16 @@ fun AppSettingsScreen(
                     autoPronounce = settings.speakOnPageChange,
                     dailyReminder = settings.dailyReminder,
                     aiImageAutoGen = settings.aiImageAutoGen,
+                    biometricLogin = settings.biometricLogin,
+                    showBiometricLogin = loggedIn,
                     notebooks = notebooks,
                     defaultNotebookId = settings.defaultNotebookId,
                     onAutoPronounce = { enabled -> onChange { it.copy(speakOnPageChange = enabled) } },
                     onDailyReminder = { enabled -> onChange { it.copy(dailyReminder = enabled) } },
                     onAiImageAutoGen = { enabled -> onChange { it.copy(aiImageAutoGen = enabled) } },
+                    onBiometricLogin = onBiometricLoginChange,
                     onDefaultNotebook = { id -> onChange { it.copy(defaultNotebookId = id) } },
                 )
-
-                SettingsLinkGroup {
-                    SettingsLinkRow(
-                        title = "帮助与反馈",
-                        onClick = { showHelpDialog = true },
-                    )
-                    SettingsGroupDivider()
-                    SettingsLinkRow(
-                        title = "关于词搭子",
-                        onClick = { showAboutDialog = true },
-                    )
-                }
 
                 SettingsActionGroup {
                     SettingsActionRow(
@@ -255,17 +233,6 @@ private fun SettingsTopBar(title: String, onBack: () -> Unit) {
 }
 
 @Composable
-private fun SettingsLinkGroup(content: @Composable () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .stellarGlass()
-            .padding(vertical = 2.sdp()),
-        content = { content() },
-    )
-}
-
-@Composable
 private fun SettingsActionGroup(content: @Composable () -> Unit) {
     Column(
         Modifier
@@ -282,30 +249,6 @@ private fun SettingsGroupDivider() {
         thickness = 0.5.dp,
         color = Stellar.Outline.copy(alpha = 0.45f),
     )
-}
-
-@Composable
-private fun SettingsLinkRow(title: String, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.sdp(), vertical = 16.sdp()),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = title,
-            color = Stellar.OnSurface,
-            fontSize = 16.ssp(),
-            modifier = Modifier.weight(1f),
-        )
-        Icon(
-            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-            contentDescription = null,
-            tint = Stellar.OnSurfaceVariant.copy(alpha = 0.45f),
-            modifier = Modifier.size(20.sdp()),
-        )
-    }
 }
 
 @Composable
@@ -449,11 +392,14 @@ private fun PreferencesCard(
     autoPronounce: Boolean,
     dailyReminder: Boolean,
     aiImageAutoGen: Boolean,
+    biometricLogin: Boolean,
+    showBiometricLogin: Boolean,
     notebooks: List<Notebook>,
     defaultNotebookId: Long,
     onAutoPronounce: (Boolean) -> Unit,
     onDailyReminder: (Boolean) -> Unit,
     onAiImageAutoGen: (Boolean) -> Unit,
+    onBiometricLogin: (Boolean) -> Unit,
     onDefaultNotebook: (Long) -> Unit,
 ) {
     Column(
@@ -506,6 +452,17 @@ private fun PreferencesCard(
             accentOnHover = Stellar.Pink,
             onChecked = onAiImageAutoGen,
         )
+        if (showBiometricLogin) {
+            PreferenceDivider()
+            PreferenceToggle(
+                icon = Icons.Filled.Fingerprint,
+                title = "指纹登录",
+                subtitle = "打开应用时用指纹解锁账号",
+                checked = biometricLogin,
+                accentOnHover = Stellar.Cyan,
+                onChecked = onBiometricLogin,
+            )
+        }
         PreferenceDivider()
         DefaultNotebookPicker(
             notebooks = notebooks,

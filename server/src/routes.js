@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Router } from 'express'
 import { query } from './db.js'
 import {
@@ -7,11 +10,16 @@ import {
   hashPassword,
   normalizePassword,
   normalizePhone,
+  recordLoginEvent,
+  recordPasswordEvent,
   signToken,
+  verifyPassword,
 } from './auth.js'
 import { newLoginCode, sendCode, skipVerify } from './sms.js'
 
 export const router = Router()
+
+const uploadsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../uploads')
 
 const PAGE_SIZE_MAX = 200
 
@@ -77,12 +85,18 @@ router.post('/auth/send-code', async (req, res) => {
     return
   }
   const code = newLoginCode()
-  await query(
-    `INSERT INTO sms_codes (phone, code, expires_at)
-     VALUES ($1, $2, now() + interval '10 minutes')`,
-    [phone, code],
-  )
-  await sendCode(phone, code)
+  try {
+    await query(
+      `INSERT INTO sms_codes (phone, code, expires_at)
+       VALUES ($1, $2, now() + interval '10 minutes')`,
+      [phone, code],
+    )
+    await sendCode(phone, code)
+  } catch (error) {
+    console.error('[auth/send-code]', error)
+    res.status(502).json({ error: error.message || '短信发送失败，请稍后重试' })
+    return
+  }
   const payload = { ok: true, expiresInSec: 600 }
   if (skipVerify()) payload.debugCode = code
   res.json(payload)
@@ -106,36 +120,83 @@ async function consumeSms(smsId) {
   if (smsId) await query('UPDATE sms_codes SET consumed_at = now() WHERE id = $1', [smsId])
 }
 
-async function finishLogin(res, user) {
+async function finishLogin(req, res, user, method) {
   const vocabNotebookId = await ensureUserNotebook(user.id)
+  await recordLoginEvent(req, {
+    userId: user.id,
+    phone: user.phone,
+    method,
+    success: true,
+  })
+  const avatarUrl =
+    user.avatar_url ||
+    (await query('SELECT avatar_url FROM users WHERE id = $1', [user.id])).rows[0]?.avatar_url ||
+    null
   res.json({
     isNewUser: false,
     token: signToken(user),
-    user: { id: Number(user.id), phone: user.phone },
+    user: { id: Number(user.id), phone: user.phone, avatarUrl },
     vocabNotebookId: Number(vocabNotebookId),
+    avatarUrl,
   })
 }
 
 router.post('/auth/login', async (req, res) => {
   const phone = normalizePhone(req.body?.phone)
-  const code = String(req.body?.code || '').trim()
   if (!phone) {
     res.status(400).json({ error: '请输入正确的手机号' })
     return
   }
+
+  const password = String(req.body?.password || '')
+  const code = String(req.body?.code || '').trim()
+
+  // Phone + password login (existing accounts that already set a password).
+  if (password && !code) {
+    const normalized = normalizePassword(password)
+    if (!normalized) {
+      res.status(400).json({ error: '密码需要 6 到 32 位' })
+      return
+    }
+    const user = (
+      await query('SELECT id, phone, password_hash FROM users WHERE phone = $1', [phone])
+    ).rows[0]
+    if (!user) {
+      await recordLoginEvent(req, { phone, method: 'password', success: false })
+      res.status(400).json({ error: '账号不存在，请先用验证码登录' })
+      return
+    }
+    if (!user.password_hash) {
+      await recordLoginEvent(req, { userId: user.id, phone, method: 'password', success: false })
+      res.status(400).json({ error: '尚未设置密码，请使用验证码登录' })
+      return
+    }
+    if (!verifyPassword(normalized, user.password_hash)) {
+      await recordLoginEvent(req, { userId: user.id, phone, method: 'password', success: false })
+      res.status(400).json({ error: '手机号或密码错误' })
+      return
+    }
+    await finishLogin(req, res, user, 'password')
+    return
+  }
+
+  // Phone + SMS: existing users log in; new users must set a password via /auth/register.
   const checked = await verifySmsCode(phone, code)
   if (!checked.ok) {
     res.status(400).json({ error: checked.error })
     return
   }
 
-  const user = (await query('SELECT id, phone FROM users WHERE phone = $1', [phone])).rows[0]
-  if (!user) {
+  const user = (
+    await query('SELECT id, phone, password_hash FROM users WHERE phone = $1', [phone])
+  ).rows[0]
+  if (!user || !user.password_hash) {
+    // Keep the SMS code unconsumed so /auth/register can verify it again.
     res.json({ isNewUser: true })
     return
   }
   await consumeSms(checked.smsId)
-  await finishLogin(res, user)
+  await finishLogin(req, res, user, 'sms')
 })
 
 router.post('/auth/register', async (req, res) => {
@@ -156,28 +217,97 @@ router.post('/auth/register', async (req, res) => {
     return
   }
 
-  const existing = (await query('SELECT id, phone FROM users WHERE phone = $1', [phone])).rows[0]
+  const passwordHash = hashPassword(password)
+  const existing = (
+    await query('SELECT id, phone FROM users WHERE phone = $1', [phone])
+  ).rows[0]
   if (existing) {
+    await query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, existing.id])
+    await recordPasswordEvent(req, existing.id, 'set_after_sms')
     await consumeSms(checked.smsId)
-    await finishLogin(res, existing)
+    await finishLogin(req, res, existing, 'register')
     return
   }
   const user = (
     await query('INSERT INTO users (phone, password_hash) VALUES ($1, $2) RETURNING id, phone', [
       phone,
-      hashPassword(password),
+      passwordHash,
     ])
   ).rows[0]
+  await recordPasswordEvent(req, user.id, 'register')
   await consumeSms(checked.smsId)
-  await finishLogin(res, user)
+  await finishLogin(req, res, user, 'register')
 })
 
 router.get('/me', authRequired, async (req, res) => {
   const vocabNotebookId = await ensureUserNotebook(req.user.id)
+  const row = (await query('SELECT phone, avatar_url FROM users WHERE id = $1', [req.user.id])).rows[0]
   res.json({
-    user: { id: req.user.id, phone: req.user.phone },
+    user: {
+      id: req.user.id,
+      phone: row?.phone || req.user.phone,
+      avatarUrl: row?.avatar_url || null,
+    },
     vocabNotebookId: Number(vocabNotebookId),
+    avatarUrl: row?.avatar_url || null,
   })
+})
+
+router.post('/me/avatar', authRequired, async (req, res) => {
+  const raw = String(req.body?.imageBase64 || '').replace(/^data:image\/\w+;base64,/, '')
+  if (!raw) {
+    res.status(400).json({ error: '请选择一张图片' })
+    return
+  }
+  let buf
+  try {
+    buf = Buffer.from(raw, 'base64')
+  } catch {
+    res.status(400).json({ error: '图片数据无效' })
+    return
+  }
+  if (buf.length < 80 || buf.length > 1_800_000) {
+    res.status(400).json({ error: '图片太大或已损坏' })
+    return
+  }
+  const dir = path.join(uploadsRoot, 'avatars')
+  fs.mkdirSync(dir, { recursive: true })
+  const fileName = `${req.user.id}.jpg`
+  fs.writeFileSync(path.join(dir, fileName), buf)
+  const avatarUrl = `/uploads/avatars/${fileName}`
+  await query('UPDATE users SET avatar_url = $1 WHERE id = $2', [avatarUrl, req.user.id])
+  res.json({ avatarUrl, updatedAtMillis: Date.now() })
+})
+
+router.post('/auth/change-password', authRequired, async (req, res) => {
+  const oldPassword = normalizePassword(req.body?.oldPassword)
+  const newPassword = normalizePassword(req.body?.newPassword)
+  if (!oldPassword) {
+    res.status(400).json({ error: '请输入当前密码' })
+    return
+  }
+  if (!newPassword) {
+    res.status(400).json({ error: '新密码需要 6 到 32 位' })
+    return
+  }
+  if (oldPassword === newPassword) {
+    res.status(400).json({ error: '新密码不能与当前密码相同' })
+    return
+  }
+  const user = (
+    await query('SELECT id, phone, password_hash FROM users WHERE id = $1', [req.user.id])
+  ).rows[0]
+  if (!user) {
+    res.status(404).json({ error: '用户不存在' })
+    return
+  }
+  if (!user.password_hash || !verifyPassword(oldPassword, user.password_hash)) {
+    res.status(400).json({ error: '当前密码不正确' })
+    return
+  }
+  await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashPassword(newPassword), user.id])
+  await recordPasswordEvent(req, user.id, 'change')
+  res.json({ ok: true })
 })
 
 /** Public catalog list (中考 / 高考 / CET-4 / CET-6) — no login required. */

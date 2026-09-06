@@ -1,22 +1,48 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
 
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+}
+
 android {
     namespace = "com.zeroglab.hotwords"
-    compileSdk = 37
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.zeroglab.hotwords"
         minSdk = 26
-        targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        targetSdk = 34
+        versionCode = 2
+        versionName = "0.1.1"
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+        }
         // Release / physical builds talk to the Aliyun API.
         buildConfigField("String", "API_BASE_URL", "\"http://39.96.67.128:8787\"")
         buildConfigField("String", "API_FALLBACK_URL", "\"http://39.96.67.128:8787\"")
+    }
+
+    signingConfigs {
+        create("release") {
+            val store = keystoreProperties.getProperty("storeFile")
+            if (!store.isNullOrBlank()) {
+                storeFile = rootProject.file(store)
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
     }
 
     buildTypes {
@@ -27,10 +53,17 @@ android {
         }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 
@@ -51,6 +84,7 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.biometric)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

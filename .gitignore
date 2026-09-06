@@ -1,6 +1,10 @@
 *.iml
 .gradle
+.gradle-release/
 /local.properties
+/keystore.properties
+/keystore/*.jks
+/keystore/*.keystore
 /.idea
 .DS_Store
 /build
@@ -18,11 +22,15 @@
 /outputs/
 h5/node_modules/
 server/node_modules/
+server/uploads/avatars/*.jpg
+server/uploads/avatars/*.jpeg
+server/uploads/avatars/*.png
 h5/dist/
 tmp_dict/
 .env
 .env.*
 /tmp_dict/
 tmp_apk/
+tmp_sync/
 tmp_ui/
 scripts/__pycache__/

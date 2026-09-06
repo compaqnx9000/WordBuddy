@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>词搭子 · 管理后台</title>
+  <style>
+    :root {
+      --bg: #07140f;
+      --panel: #0d2219;
+      --panel-2: #123024;
+      --line: rgba(110, 231, 183, 0.18);
+      --cyan: #6ee7b7;
+      --cyan-soft: #b8f5d6;
+      --text: #e8fff3;
+      --muted: #8aa89a;
+      --danger: #fb7185;
+      --warn: #fbbf24;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    a { color: var(--cyan); }
+    button, input, select, textarea { font: inherit; }
+    .hidden { display: none !important; }
+    #login {
+      min-height: 100vh; display: grid; place-items: center; padding: 24px;
+      background: radial-gradient(circle at 50% 0%, #163c2c 0%, var(--bg) 55%);
+    }
+    .card {
+      width: min(420px, 100%); background: var(--panel); border: 1px solid var(--line);
+      border-radius: 18px; padding: 28px;
+    }
+    h1 { margin: 0 0 6px; font-size: 24px; color: var(--cyan-soft); }
+    .sub { color: var(--muted); margin-bottom: 20px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
+    input, select, textarea {
+      width: 100%; background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+      border-radius: 10px; padding: 10px 12px; outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--cyan); }
+    .btn {
+      border: 0; border-radius: 10px; padding: 10px 14px; cursor: pointer;
+      background: var(--cyan); color: #062016; font-weight: 700;
+    }
+    .btn.ghost { background: var(--panel-2); color: var(--cyan-soft); border: 1px solid var(--line); }
+    .btn.danger { background: #be123c; color: #fff; }
+    .btn.small { padding: 6px 10px; font-size: 12px; }
+    .error { color: var(--danger); min-height: 20px; margin-top: 10px; }
+    #app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+    aside {
+      background: #081810; border-right: 1px solid var(--line); padding: 20px 14px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    aside .brand { color: var(--cyan-soft); font-weight: 800; font-size: 18px; margin: 4px 8px 16px; }
+    .nav { background: transparent; color: var(--muted); text-align: left; border: 0; border-radius: 10px; padding: 10px 12px; cursor: pointer; }
+    .nav.active, .nav:hover { background: var(--panel-2); color: var(--cyan-soft); }
+    main { padding: 22px 26px 40px; }
+    .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+    .stat b { display: block; font-size: 26px; color: var(--cyan); }
+    .stat span { color: var(--muted); font-size: 13px; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 12px; overflow: hidden; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; vertical-align: middle; }
+    th { color: var(--muted); font-weight: 600; background: #0a1c14; }
+    tr:hover td { background: rgba(110, 231, 183, 0.04); }
+    .avatar {
+      width: 64px; height: 64px; border-radius: 12px; object-fit: contain;
+      border: 1px solid var(--line); background: #081810; display: block;
+      cursor: pointer;
+    }
+    .avatar.empty {
+      display: grid; place-items: center; color: var(--muted); font-size: 11px; cursor: default;
+    }
+    .avatar.lg {
+      width: 168px; height: 168px; border-radius: 18px; object-fit: contain;
+      background: #081810;
+    }
+    .user-head { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 8px; }
+    .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; color: var(--muted); }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--panel-2); color: var(--cyan-soft); }
+    .tag.bad { color: var(--danger); }
+    .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: grid; place-items: center; padding: 20px; z-index: 20; }
+    .modal { width: min(720px, 100%); max-height: 90vh; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px; }
+    pre { white-space: pre-wrap; word-break: break-all; color: var(--cyan-soft); font-size: 12px; }
+    @media (max-width: 800px) {
+      #app { grid-template-columns: 1fr; }
+      aside { flex-direction: row; flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <div id="login">
+    <div class="card">
+      <h1>词搭子管理后台</h1>
+      <div class="sub">超级管理员登录</div>
+      <label>账号</label>
+      <input id="loginUser" autocomplete="username" />
+      <label>密码</label>
+      <input id="loginPass" type="password" autocomplete="current-password" />
+      <div class="error" id="loginErr"></div>
+      <button class="btn" style="width:100%;margin-top:8px" onclick="doLogin()">进入后台</button>
+    </div>
+  </div>
+
+  <div id="app" class="hidden">
+    <aside>
+      <div class="brand">词搭子 Admin</div>
+      <button class="nav active" data-page="overview" onclick="go('overview')">总览</button>
+      <button class="nav" data-page="users" onclick="go('users')">用户</button>
+      <button class="nav" data-page="logins" onclick="go('logins')">登录记录</button>
+      <button class="nav" data-page="sms" onclick="go('sms')">短信记录</button>
+      <button class="nav" data-page="notebooks" onclick="go('notebooks')">词书 / 生词本</button>
+      <button class="nav" data-page="audit" onclick="go('audit')">操作日志</button>
+      <div style="flex:1"></div>
+      <div id="who" class="sub" style="margin:8px"></div>
+      <button class="btn ghost" onclick="logout()">退出</button>
+    </aside>
+    <main>
+      <div class="top">
+        <h1 id="title">总览</h1>
+        <div id="hint" class="sub"></div>
+      </div>
+      <div id="content"></div>
+    </main>
+  </div>
+
+  <div id="modalRoot"></div>
+
+<script>
+const titles = {
+  overview: ['总览', '注册用户、登录、词书与短信概况'],
+  users: ['用户', '头像、注册、登录与改密，可删用户或重置密码'],
+  logins: ['登录记录', '验证码 / 密码登录，成功与失败'],
+  sms: ['短信记录', '验证码发送与是否已核销（不展示明文验证码）'],
+  notebooks: ['词书 / 生词本', '系统词书可下架与改词；用户生词本可查看删除'],
+  audit: ['操作日志', '超级管理员在后台做过的事'],
+};
+
+const state = { page: 'overview', pageNo: 1, q: '', kind: '', notebookId: null };
+
+function token() { return localStorage.getItem('hw_admin_token') || ''; }
+function authHeaders() {
+  return { Authorization: 'Bearer ' + token(), 'Content-Type': 'application/json' };
+}
+async function api(path, opts = {}) {
+  const res = await fetch('/admin/api' + path, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { logout(); throw new Error(data.error || '未登录'); }
+  if (!res.ok) throw new Error(data.error || '请求失败');
+  return data;
+}
+function fmt(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function methodLabel(m) {
+  return ({ sms: '验证码', password: '密码', register: '注册设密', admin_reset: '管理员重置', set_after_sms: '验证后设密' }[m] || m || '—');
+}
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function avatarCell(url, large) {
+  if (!url) return `<span class="avatar empty${large ? ' lg' : ''}">无</span>`;
+  const path = String(url).split('?')[0];
+  const src = path + '?t=' + Date.now();
+  return `<img class="avatar${large ? ' lg' : ''}" src="${esc(src)}" alt="头像" onclick="window.open('${esc(path)}','_blank')" title="查看原图" />`;
+}
+
+async function doLogin() {
+  document.getElementById('loginErr').textContent = '';
+  try {
+    const data = await fetch('/admin/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('loginUser').value,
+        password: document.getElementById('loginPass').value,
+      }),
+    }).then(async (r) => {
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || '登录失败');
+      return j;
+    });
+    localStorage.setItem('hw_admin_token', data.token);
+    showApp(data.admin);
+  } catch (e) {
+    document.getElementById('loginErr').textContent = e.message;
+  }
+}
+
+function logout() {
+  localStorage.removeItem('hw_admin_token');
+  document.getElementById('app').classList.add('hidden');
+  document.getElementById('login').classList.remove('hidden');
+}
+
+async function showApp(admin) {
+  document.getElementById('login').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  if (!admin) {
+    try { admin = (await api('/me')).admin; } catch { return; }
+  }
+  document.getElementById('who').textContent = '管理员 · ' + admin.username;
+  go(state.page);
+}
+
+function go(page, extra = {}) {
+  state.page = page;
+  state.pageNo = extra.page || 1;
+  if (extra.q != null) state.q = extra.q;
+  if (extra.kind != null) state.kind = extra.kind;
+  if (extra.notebookId != null) state.notebookId = extra.notebookId;
+  document.querySelectorAll('.nav').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
+  document.getElementById('title').textContent = titles[page][0];
+  document.getElementById('hint').textContent = titles[page][1];
+  render();
+}
+
+function pager(total) {
+  const pages = Math.max(1, Math.ceil(total / 20));
+  return `<div class="pager">
+    <button class="btn ghost small" ${state.pageNo<=1?'disabled':''} onclick="go(state.page,{page:${state.pageNo-1}})">上一页</button>
+    <span>第 ${state.pageNo} / ${pages} 页 · 共 ${total} 条</span>
+    <button class="btn ghost small" ${state.pageNo>=pages?'disabled':''} onclick="go(state.page,{page:${state.pageNo+1}})">下一页</button>
+  </div>`;
+}
+
+async function render() {
+  const el = document.getElementById('content');
+  el.innerHTML = '加载中…';
+  try {
+    if (state.page === 'overview') {
+      const d = await api('/overview');
+      el.innerHTML = `
+        <div class="stats">
+          <div class="stat"><b>${d.stats.userCount}</b><span>注册用户</span></div>
+          <div class="stat"><b>${d.stats.login7d}</b><span>近 7 天登录</span></div>
+          <div class="stat"><b>${d.stats.wordCount}</b><span>词条总数</span></div>
+          <div class="stat"><b>${d.stats.catalogCount}</b><span>系统词书</span></div>
+          <div class="stat"><b>${d.stats.userNotebookCount}</b><span>用户生词本</span></div>
+          <div class="stat"><b>${d.stats.sms24h}</b><span>近 24 小时短信</span></div>
+        </div>
+        <h3>最近注册</h3>
+        ${userTable(d.recentUsers)}`;
+    } else if (state.page === 'users') {
+      const d = await api(`/users?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
+      el.innerHTML = `
+        <div class="toolbar">
+          <input style="max-width:240px" placeholder="搜索手机号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('users',{q:this.value,page:1})" />
+          <button class="btn" onclick="go('users',{q:document.querySelector('main input').value,page:1})">搜索</button>
+        </div>
+        ${userTable(d.items, true)}
+        ${pager(d.total)}`;
+    } else if (state.page === 'logins') {
+      const d = await api(`/logins?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
+      el.innerHTML = `
+        <div class="toolbar">
+          <input style="max-width:240px" placeholder="手机号 / 方式 / IP" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('logins',{q:this.value,page:1})" />
+          <button class="btn" onclick="go('logins',{q:document.querySelector('main input').value,page:1})">搜索</button>
+        </div>
+        <table><thead><tr><th>时间</th><th>手机号</th><th>方式</th><th>结果</th><th>IP</th></tr></thead>
+        <tbody>${d.items.map(r => `<tr>
+          <td>${fmt(r.createdAt)}</td><td>${esc(r.phone||'—')}</td>
+          <td>${methodLabel(r.method)}</td>
+          <td><span class="tag ${r.success?'':'bad'}">${r.success?'成功':'失败'}</span></td>
+          <td>${esc(r.ip||'—')}</td>
+        </tr>`).join('')}</tbody></table>
+        ${pager(d.total)}`;
+    } else if (state.page === 'sms') {
+      const d = await api(`/sms?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
+      el.innerHTML = `
+        <div class="toolbar">
+          <input style="max-width:240px" placeholder="搜索手机号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('sms',{q:this.value,page:1})" />
+          <button class="btn" onclick="go('sms',{q:document.querySelector('main input').value,page:1})">搜索</button>
+        </div>
+        <table><thead><tr><th>发送时间</th><th>手机号</th><th>过期</th><th>核销</th></tr></thead>
+        <tbody>${d.items.map(r => `<tr>
+          <td>${fmt(r.createdAt)}</td><td>${esc(r.phone)}</td>
+          <td>${fmt(r.expiresAt)}</td>
+          <td><span class="tag ${r.consumed?'':'bad'}">${r.consumed?('已用 '+fmt(r.consumedAt)):'未使用'}</span></td>
+        </tr>`).join('')}</tbody></table>
+        ${pager(d.total)}`;
+    } else if (state.page === 'notebooks') {
+      if (state.notebookId) return renderWords(el);
+      const d = await api(`/notebooks?page=${state.pageNo}&kind=${encodeURIComponent(state.kind)}&q=${encodeURIComponent(state.q)}`);
+      el.innerHTML = `
+        <div class="toolbar">
+          <select onchange="go('notebooks',{kind:this.value,page:1})">
+            <option value="" ${!state.kind?'selected':''}>全部</option>
+            <option value="catalog" ${state.kind==='catalog'?'selected':''}>系统词书</option>
+            <option value="user" ${state.kind==='user'?'selected':''}>用户生词本</option>
+          </select>
+          <input style="max-width:240px" placeholder="名称 / slug / 手机号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('notebooks',{q:this.value,page:1})" />
+          <button class="btn" onclick="go('notebooks',{q:document.querySelector('main input').value,page:1})">搜索</button>
+        </div>
+        <table><thead><tr><th>ID</th><th>名称</th><th>类型</th><th>归属</th><th>词数</th><th>状态</th><th>创建</th><th></th></tr></thead>
+        <tbody>${d.items.map(n => `<tr>
+          <td>${n.id}</td>
+          <td>${esc(n.name)}${n.slug?`<div class="sub">${esc(n.slug)}</div>`:''}</td>
+          <td>${n.kind==='catalog'?'系统词书':'生词本'}</td>
+          <td>${n.ownerPhone?esc(n.ownerPhone):'—'}</td>
+          <td>${n.wordCount}</td>
+          <td><span class="tag ${n.published?'':'bad'}">${n.published?'已发布':'已下架'}</span></td>
+          <td>${fmt(n.createdAt)}</td>
+          <td>
+            <button class="btn small" onclick="go('notebooks',{notebookId:${n.id},page:1})">词条</button>
+            ${n.kind==='catalog'
+              ? `<button class="btn ghost small" onclick="toggleBook(${n.id},${n.published})">${n.published?'下架':'上架'}</button>`
+              : `<button class="btn danger small" onclick="delBook(${n.id})">删除</button>`}
+          </td>
+        </tr>`).join('')}</tbody></table>
+        ${pager(d.total)}`;
+    } else if (state.page === 'audit') {
+      const d = await api(`/audit?page=${state.pageNo}`);
+      el.innerHTML = `
+        <table><thead><tr><th>时间</th><th>管理员</th><th>动作</th><th>对象</th><th>详情</th><th>IP</th></tr></thead>
+        <tbody>${d.items.map(r => `<tr>
+          <td>${fmt(r.createdAt)}</td><td>${esc(r.username||'—')}</td>
+          <td>${esc(r.action)}</td>
+          <td>${esc(r.targetType||'')} ${esc(r.targetId||'')}</td>
+          <td><pre>${esc(JSON.stringify(r.detail||{}))}</pre></td>
+          <td>${esc(r.ip||'—')}</td>
+        </tr>`).join('')}</tbody></table>
+        ${pager(d.total)}`;
+    }
+  } catch (e) {
+    el.innerHTML = `<div class="error">${esc(e.message)}</div>`;
+  }
+}
+
+function userTable(items, actions) {
+  return `<table><thead><tr>
+    <th>头像</th><th>ID</th><th>手机号</th><th>注册时间</th><th>最近登录</th><th>登录方式</th>
+    <th>改密时间</th><th>登录次数</th><th>生词本</th><th>生词</th>${actions?'<th></th>':''}
+  </tr></thead><tbody>${items.map(u => `<tr>
+    <td>${avatarCell(u.avatarUrl)}</td>
+    <td>${u.id}</td><td>${esc(u.phone)}</td><td>${fmt(u.createdAt)}</td>
+    <td>${fmt(u.lastLoginAt)}</td><td>${methodLabel(u.lastLoginMethod)}</td>
+    <td>${fmt(u.passwordChangedAt)}</td><td>${u.loginCount}</td>
+    <td>${u.notebookCount ?? '—'}</td><td>${u.wordCount ?? '—'}</td>
+    ${actions?`<td>
+      <button class="btn small" onclick="openUser(${u.id})">详情</button>
+      <button class="btn danger small" onclick="delUser(${u.id},'${esc(u.phone)}')">删除</button>
+    </td>`:''}
+  </tr>`).join('')}</tbody></table>`;
+}
+
+async function renderWords(el) {
+  const d = await api(`/notebooks/${state.notebookId}/words?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
+  el.innerHTML = `
+    <div class="toolbar">
+      <button class="btn ghost" onclick="go('notebooks',{notebookId:null,page:1})">← 返回词书</button>
+      <strong>${esc(d.notebook.name)}</strong>
+      <input style="max-width:200px" placeholder="搜单词" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('notebooks',{q:this.value,page:1,notebookId:state.notebookId})" />
+      <button class="btn" onclick="go('notebooks',{q:document.querySelector('main input').value,page:1,notebookId:state.notebookId})">搜索</button>
+      <button class="btn ghost" onclick="addWord()">新增词条</button>
+    </div>
+    <table><thead><tr><th>ID</th><th>单词</th><th>音标</th><th>释义</th><th>加入时间</th><th></th></tr></thead>
+    <tbody>${d.items.map(w => `<tr>
+      <td>${w.id}</td>
+      <td>${esc(w.text)}</td>
+      <td>${esc(w.ipaUk||w.ipaUs||'—')}</td>
+      <td>${esc((w.definitions||[]).map(x => (x.pos||'')+' '+(x.meaning||'')).join('；').slice(0,80))}</td>
+      <td>${fmt(w.addedAt)}</td>
+      <td>
+        <button class="btn small" onclick='editWord(${JSON.stringify(w).replace(/'/g, "&#39;")})'>编辑</button>
+        <button class="btn danger small" onclick="delWord(${w.id})">删除</button>
+      </td>
+    </tr>`).join('')}</tbody></table>
+    ${pager(d.total)}`;
+}
+
+async function openUser(id) {
+  const d = await api('/users/' + id);
+  const u = d.user;
+  showModal(`<div class="user-head">
+      ${avatarCell(u.avatarUrl, true)}
+      <div>
+        <h2 style="margin:0">${esc(u.phone)}</h2>
+        <p class="sub" style="margin:8px 0 0">注册 ${fmt(u.createdAt)} · 最近登录 ${fmt(u.lastLoginAt)} · 改密 ${fmt(u.passwordChangedAt)}</p>
+      </div>
+    </div>
+    <div class="toolbar">
+      <input id="newPhone" placeholder="改手机号" value="${esc(u.phone)}" style="max-width:180px" />
+      <input id="newPass" type="password" placeholder="重置密码（可空）" style="max-width:180px" />
+      <button class="btn" onclick="saveUser(${u.id})">保存</button>
+      <button class="btn danger" onclick="delUser(${u.id},'${esc(u.phone)}')">删除用户</button>
+    </div>
+    <h3>生词本</h3>
+    <table><thead><tr><th>名称</th><th>词数</th><th>创建</th><th></th></tr></thead>
+    <tbody>${d.notebooks.map(n => `<tr>
+      <td>${esc(n.name)}</td><td>${n.wordCount}</td><td>${fmt(n.createdAt)}</td>
+      <td><button class="btn small" onclick="closeModal();go('notebooks',{notebookId:${n.id},page:1})">看词</button></td>
+    </tr>`).join('') || '<tr><td colspan="4">无</td></tr>'}</tbody></table>
+    <h3>登录记录</h3>
+    <table><thead><tr><th>时间</th><th>方式</th><th>结果</th><th>IP</th></tr></thead>
+    <tbody>${d.logins.map(r => `<tr><td>${fmt(r.createdAt)}</td><td>${methodLabel(r.method)}</td>
+      <td>${r.success?'成功':'失败'}</td><td>${esc(r.ip||'')}</td></tr>`).join('') || '<tr><td colspan="4">无</td></tr>'}</tbody></table>
+    <h3>改密记录</h3>
+    <table><thead><tr><th>时间</th><th>原因</th><th>IP</th></tr></thead>
+    <tbody>${d.passwordEvents.map(r => `<tr><td>${fmt(r.createdAt)}</td><td>${methodLabel(r.reason)}</td><td>${esc(r.ip||'')}</td></tr>`).join('') || '<tr><td colspan="3">无</td></tr>'}</tbody></table>
+    <h3>短信</h3>
+    <table><thead><tr><th>发送</th><th>核销</th></tr></thead>
+    <tbody>${d.sms.map(r => `<tr><td>${fmt(r.createdAt)}</td><td>${r.consumed?fmt(r.consumedAt):'未使用'}</td></tr>`).join('') || '<tr><td colspan="2">无</td></tr>'}</tbody></table>
+    <div style="margin-top:16px"><button class="btn ghost" onclick="closeModal()">关闭</button></div>`);
+}
+
+async function saveUser(id) {
+  try {
+    const body = { phone: document.getElementById('newPhone').value };
+    const pw = document.getElementById('newPass').value;
+    if (pw) body.password = pw;
+    await api('/users/' + id, { method: 'PATCH', body: JSON.stringify(body) });
+    closeModal(); go('users');
+  } catch (e) { alert(e.message); }
+}
+async function delUser(id, phone) {
+  if (!confirm('确定删除用户 ' + phone + ' ？其生词本和生词会一并删除。')) return;
+  try { await api('/users/' + id, { method: 'DELETE' }); closeModal(); go('users'); }
+  catch (e) { alert(e.message); }
+}
+async function toggleBook(id, published) {
+  try { await api('/notebooks/' + id, { method: 'PATCH', body: JSON.stringify({ published: !published }) }); go('notebooks'); }
+  catch (e) { alert(e.message); }
+}
+async function delBook(id) {
+  if (!confirm('确定删除这个生词本？词条会一并删除。')) return;
+  try { await api('/notebooks/' + id, { method: 'DELETE' }); go('notebooks'); }
+  catch (e) { alert(e.message); }
+}
+async function delWord(id) {
+  if (!confirm('确定删除该词条？')) return;
+  try { await api('/words/' + id, { method: 'DELETE' }); go('notebooks', { notebookId: state.notebookId }); }
+  catch (e) { alert(e.message); }
+}
+function addWord() {
+  showModal(`<h2>新增词条</h2>
+    <label>单词</label><input id="wText" />
+    <label>英音</label><input id="wUk" />
+    <label>美音</label><input id="wUs" />
+    <label>释义 JSON，例如 [{"pos":"n.","meaning":"苹果"}]</label>
+    <textarea id="wDef" rows="4">[]</textarea>
+    <div class="toolbar" style="margin-top:14px">
+      <button class="btn" onclick="saveNewWord()">保存</button>
+      <button class="btn ghost" onclick="closeModal()">取消</button>
+    </div>`);
+}
+async function saveNewWord() {
+  try {
+    await api('/notebooks/' + state.notebookId + '/words', {
+      method: 'POST',
+      body: JSON.stringify({
+        text: document.getElementById('wText').value,
+        ipaUk: document.getElementById('wUk').value,
+        ipaUs: document.getElementById('wUs').value,
+        definitions: JSON.parse(document.getElementById('wDef').value || '[]'),
+      }),
+    });
+    closeModal(); go('notebooks', { notebookId: state.notebookId });
+  } catch (e) { alert(e.message); }
+}
+function editWord(w) {
+  showModal(`<h2>编辑 ${esc(w.text)}</h2>
+    <label>单词</label><input id="wText" value="${esc(w.text)}" />
+    <label>英音</label><input id="wUk" value="${esc(w.ipaUk||'')}" />
+    <label>美音</label><input id="wUs" value="${esc(w.ipaUs||'')}" />
+    <label>释义 JSON</label>
+    <textarea id="wDef" rows="6">${esc(JSON.stringify(w.definitions||[], null, 2))}</textarea>
+    <div class="toolbar" style="margin-top:14px">
+      <button class="btn" onclick="saveEditWord(${w.id})">保存</button>
+      <button class="btn ghost" onclick="closeModal()">取消</button>
+    </div>`);
+}
+async function saveEditWord(id) {
+  try {
+    await api('/words/' + id, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        text: document.getElementById('wText').value,
+        ipaUk: document.getElementById('wUk').value,
+        ipaUs: document.getElementById('wUs').value,
+        definitions: JSON.parse(document.getElementById('wDef').value || '[]'),
+      }),
+    });
+    closeModal(); go('notebooks', { notebookId: state.notebookId });
+  } catch (e) { alert(e.message); }
+}
+function showModal(html) {
+  document.getElementById('modalRoot').innerHTML = `<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`;
+}
+function closeModal() { document.getElementById('modalRoot').innerHTML = ''; }
+
+document.getElementById('loginPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+if (token()) showApp();
+</script>
+</body>
+</html>

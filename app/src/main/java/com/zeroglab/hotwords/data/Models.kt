@@ -147,6 +147,8 @@ data class StudySettings(
     val appTheme: AppTheme = AppTheme.Dark,
     val accentStyle: AccentStyle = AccentStyle.CyberNeon,
     val defaultNotebookId: Long = Notebook.DEFAULT_ID,
+    /** When true and logged in, app requires fingerprint/biometric unlock on launch. */
+    val biometricLogin: Boolean = false,
 )
 
 data class LookupResult(

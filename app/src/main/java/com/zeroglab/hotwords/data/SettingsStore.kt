@@ -29,6 +29,7 @@ class SettingsStore(context: Context) {
             appTheme = runCatching { AppTheme.valueOf(themeName) }.getOrDefault(AppTheme.Dark),
             accentStyle = runCatching { AccentStyle.valueOf(accentStyleName) }.getOrDefault(AccentStyle.CyberNeon),
             defaultNotebookId = prefs.getLong(KEY_DEFAULT_NOTEBOOK_ID, Notebook.DEFAULT_ID),
+            biometricLogin = prefs.getBoolean(KEY_BIOMETRIC_LOGIN, false),
         )
     }
 
@@ -45,6 +46,7 @@ class SettingsStore(context: Context) {
             .putString(KEY_APP_THEME, settings.appTheme.name)
             .putString(KEY_ACCENT_STYLE, settings.accentStyle.name)
             .putLong(KEY_DEFAULT_NOTEBOOK_ID, settings.defaultNotebookId)
+            .putBoolean(KEY_BIOMETRIC_LOGIN, settings.biometricLogin)
             .apply()
     }
 
@@ -70,5 +72,6 @@ class SettingsStore(context: Context) {
         const val KEY_ACCENT_STYLE = "accent_style"
         const val KEY_DEFAULT_NOTEBOOK_ID = "default_notebook_id"
         const val KEY_ACTIVE_NOTEBOOK_ID = "active_notebook_id"
+        const val KEY_BIOMETRIC_LOGIN = "biometric_login"
     }
 }

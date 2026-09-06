@@ -1,6 +1,8 @@
 package com.zeroglab.hotwords.ui
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -95,11 +97,17 @@ data class VocabUiState(
 private const val DEV_LOGIN_PHONE = "13611283451"
 private const val DEV_LOGIN_CODE = "888888"
 
+enum class LoginMode {
+    SMS,
+    PASSWORD,
+}
+
 data class LoginUi(
     val phone: String = DEV_LOGIN_PHONE,
     val code: String = DEV_LOGIN_CODE,
     val password: String = "",
     val passwordConfirm: String = "",
+    val mode: LoginMode = LoginMode.SMS,
     val needPassword: Boolean = false,
     val sending: Boolean = false,
     val loggingIn: Boolean = false,
@@ -123,6 +131,10 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     val session: StateFlow<UserSession?> = _session.asStateFlow()
     private val _login = MutableStateFlow(LoginUi())
     val login: StateFlow<LoginUi> = _login.asStateFlow()
+    private val _avatarBitmap = MutableStateFlow<Bitmap?>(null)
+    val avatarBitmap: StateFlow<Bitmap?> = _avatarBitmap.asStateFlow()
+    private val _avatarBusy = MutableStateFlow(false)
+    val avatarBusy: StateFlow<Boolean> = _avatarBusy.asStateFlow()
     private var pageJob: Job? = null
     private var letterIndexJob: Job? = null
     private var catalogLetterIndexJob: Job? = null
@@ -190,6 +202,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             activeNotebookId = startNotebook,
         )
         if (session != null) {
+            loadAvatarBitmap()
             viewModelScope.launch { bootstrapSession() }
         } else {
             viewModelScope.launch { bootstrapGuestCatalogs() }
@@ -226,6 +239,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     withContext(Dispatchers.IO) { repo.openCachedNotebook(fallback.id) }
                 }
             }
+        syncAvatarFromServer()
     }
 
     private suspend fun bootstrapGuestCatalogs() {
@@ -1816,6 +1830,10 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         _login.update { it.copy(passwordConfirm = value, error = null) }
     }
 
+    fun setLoginMode(mode: LoginMode) {
+        _login.update { it.copy(mode = mode, needPassword = false, error = null) }
+    }
+
     fun sendLoginCode() {
         val phone = _login.value.phone
         if (phone.length != 11) {
@@ -1840,6 +1858,10 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
 
     fun submitLogin() {
         val state = _login.value
+        if (state.phone.length != 11) {
+            _login.update { it.copy(error = "请输入11位手机号") }
+            return
+        }
         if (state.needPassword) {
             when {
                 state.password.length < 6 -> {
@@ -1850,21 +1872,42 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     _login.update { it.copy(error = "两次密码不一致") }
                     return
                 }
+                state.code.length != 6 -> {
+                    _login.update { it.copy(error = "请输入6位验证码") }
+                    return
+                }
+            }
+        } else {
+            when (state.mode) {
+                LoginMode.SMS -> {
+                    if (state.code.length != 6) {
+                        _login.update { it.copy(error = "请输入6位验证码") }
+                        return
+                    }
+                }
+                LoginMode.PASSWORD -> {
+                    if (state.password.length < 6) {
+                        _login.update { it.copy(error = "密码至少 6 位") }
+                        return
+                    }
+                }
             }
         }
         viewModelScope.launch {
             _login.update { it.copy(loggingIn = true, error = null) }
             runCatching {
-                if (state.needPassword) {
-                    api.register(state.phone, state.code, state.password)
-                } else {
-                    api.login(state.phone, state.code)
+                when {
+                    state.needPassword -> api.register(state.phone, state.code, state.password)
+                    state.mode == LoginMode.PASSWORD -> api.loginWithPassword(state.phone, state.password)
+                    else -> api.login(state.phone, state.code)
                 }
             }.onSuccess { result ->
                 if (result.isNewUser) {
                     _login.update {
                         it.copy(
                             needPassword = true,
+                            password = "",
+                            passwordConfirm = "",
                             loggingIn = false,
                             error = null,
                         )
@@ -1890,12 +1933,100 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 settings = it.settings.copy(defaultNotebookId = session.vocabNotebookId),
             )
         }
+        loadAvatarBitmap()
         viewModelScope.launch { bootstrapSession() }
+    }
+
+    fun uploadAvatar(uri: Uri, onResult: (Result<Unit>) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        _avatarBusy.value = true
+        viewModelScope.launch {
+            runCatching {
+                val bytes = withContext(Dispatchers.IO) {
+                    ImageCodec.fromUri(getApplication(), uri, maxEdge = 512)
+                }
+                val url = api.uploadAvatar(token, bytes)
+                val updated = _session.value?.copy(avatarUrl = url) ?: error("未登录")
+                sessionStore.save(updated)
+                _session.value = updated
+                _avatarBitmap.value = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }
+                .onSuccess { onResult(Result.success(Unit)) }
+                .onFailure { onResult(Result.failure(it)) }
+            _avatarBusy.value = false
+        }
+    }
+
+    private suspend fun syncAvatarFromServer() {
+        val current = _session.value ?: return
+        val remoteUrl = runCatching { api.fetchAvatarUrl(current.token) }.getOrNull()
+        if (!remoteUrl.isNullOrBlank() && remoteUrl != current.avatarUrl) {
+            val updated = current.copy(avatarUrl = remoteUrl)
+            sessionStore.save(updated)
+            _session.value = updated
+        }
+        loadAvatarBitmap()
+    }
+
+    private fun loadAvatarBitmap() {
+        val url = _session.value?.avatarUrl
+        if (url.isNullOrBlank()) {
+            _avatarBitmap.value = null
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.fetchAvatarBytes(url) }
+                .onSuccess { bytes ->
+                    _avatarBitmap.value = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                }
+        }
+    }
+
+    fun changePassword(
+        oldPassword: String,
+        newPassword: String,
+        confirmPassword: String,
+        onResult: (Result<Unit>) -> Unit,
+    ) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        when {
+            oldPassword.length < 6 -> {
+                onResult(Result.failure(IllegalArgumentException("请输入当前密码")))
+                return
+            }
+            newPassword.length < 6 -> {
+                onResult(Result.failure(IllegalArgumentException("新密码至少 6 位")))
+                return
+            }
+            newPassword != confirmPassword -> {
+                onResult(Result.failure(IllegalArgumentException("两次新密码不一致")))
+                return
+            }
+            oldPassword == newPassword -> {
+                onResult(Result.failure(IllegalArgumentException("新密码不能与当前密码相同")))
+                return
+            }
+        }
+        viewModelScope.launch {
+            runCatching { api.changePassword(token, oldPassword, newPassword) }
+                .onSuccess { onResult(Result.success(Unit)) }
+                .onFailure { onResult(Result.failure(it)) }
+        }
     }
 
     fun logout() {
         sessionStore.clear()
         _session.value = null
+        _avatarBitmap.value = null
+        _avatarBusy.value = false
         repo.wipeCache()
         headsReady.clear()
         headsCache.clear()

@@ -2,6 +2,11 @@ CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
     phone TEXT NOT NULL UNIQUE,
     password_hash TEXT,
+    last_login_at TIMESTAMPTZ,
+    last_login_method TEXT,
+    password_changed_at TIMESTAMPTZ,
+    login_count INTEGER NOT NULL DEFAULT 0,
+    avatar_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -54,3 +59,50 @@ CREATE UNIQUE INDEX IF NOT EXISTS words_notebook_word
 
 CREATE INDEX IF NOT EXISTS words_notebook_sort
     ON words (notebook_id, sort_order, id);
+
+CREATE TABLE IF NOT EXISTS login_events (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users (id) ON DELETE SET NULL,
+    phone TEXT,
+    method TEXT NOT NULL,
+    success BOOLEAN NOT NULL DEFAULT TRUE,
+    ip TEXT,
+    user_agent TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS login_events_created
+    ON login_events (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS login_events_user
+    ON login_events (user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS password_events (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users (id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    ip TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS admins (
+    id BIGSERIAL PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_login_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS admin_audit (
+    id BIGSERIAL PRIMARY KEY,
+    admin_id BIGINT REFERENCES admins (id) ON DELETE SET NULL,
+    action TEXT NOT NULL,
+    target_type TEXT,
+    target_id TEXT,
+    detail JSONB,
+    ip TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS admin_audit_created
+    ON admin_audit (created_at DESC);

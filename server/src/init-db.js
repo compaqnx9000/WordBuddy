@@ -38,6 +38,11 @@ async function main() {
   const sql = fs.readFileSync(path.join(root, 'schema.sql'), 'utf8')
   await client.query(sql)
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT')
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ')
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_method TEXT')
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ')
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count INTEGER NOT NULL DEFAULT 0')
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT')
   console.log('Schema applied')
   await client.end()
 }
