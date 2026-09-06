@@ -1001,10 +1001,15 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             _alphabetLetterIndex.value = heads.letterIndex
             headsAppendJob?.cancel()
             headsAppendJob = viewModelScope.launch {
-                if (BuiltInWordbookSeeder.isBundledId(notebookId)) {
-                    applyBundledProgressive(notebookId)
-                } else {
-                    applyHeadsProgressive(notebookId, heads)
+                when {
+                    BuiltInWordbookSeeder.isBundledId(notebookId) ->
+                        applyBundledProgressive(notebookId)
+                    // Server catalogs (CET4/CET6) still have packaged definitions in the APK.
+                    // Prefer those so phones without a reliable API hydrate still show meanings.
+                    notebook?.slug != null &&
+                        BuiltInWordbookSeeder.specForSlug(notebook.slug) != null ->
+                        applyPackagedCatalogProgressive(notebookId, notebook.slug!!, heads)
+                    else -> applyHeadsProgressive(notebookId, heads)
                 }
             }
         }
@@ -1017,20 +1022,70 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         val packed = withContext(Dispatchers.IO) {
             BuiltInWordbookSeeder.load(getApplication(), notebookId)
         } ?: return
-        val entries = packed.entries
-        val total = entries.size
-        val previewCount = minOf(HEADS_PREVIEW_COUNT, total)
+        applyFullEntriesProgressive(notebookId, packed.entries)
+    }
+
+    /**
+     * Align packaged full rows onto server head ids (same alphabetical order),
+     * so CET4/CET6 keep server ids but show offline definitions.
+     */
+    private suspend fun applyPackagedCatalogProgressive(
+        notebookId: Long,
+        slug: String,
+        heads: WordHeads,
+    ) {
+        if (_ui.value.activeNotebookId != notebookId) return
+        val packed = withContext(Dispatchers.IO) {
+            BuiltInWordbookSeeder.loadBySlug(getApplication(), slug)
+        }
+        if (packed == null) {
+            applyHeadsProgressive(notebookId, heads)
+            return
+        }
+        val byText = withContext(Dispatchers.Default) {
+            packed.entries.associateBy { it.text.trim().lowercase() }
+        }
+        val aligned = withContext(Dispatchers.Default) {
+            heads.items.mapIndexed { index, head ->
+                val key = head.text.trim().lowercase()
+                val full = byText[key] ?: packed.entries.getOrNull(index)
+                if (full != null) {
+                    full.copy(
+                        id = head.id,
+                        notebookId = notebookId,
+                        text = head.text,
+                        isPhrase = head.isPhrase,
+                        ipaUk = head.ipaUk ?: full.ipaUk,
+                        ipaUs = head.ipaUs ?: full.ipaUs,
+                        sortOrder = head.sortOrder,
+                    )
+                } else {
+                    head.toStub(notebookId)
+                }
+            }
+        }
+        applyFullEntriesProgressive(notebookId, aligned, totalOverride = heads.total)
+    }
+
+    private suspend fun applyFullEntriesProgressive(
+        notebookId: Long,
+        entries: List<VocabEntry>,
+        totalOverride: Int? = null,
+    ) {
+        if (_ui.value.activeNotebookId != notebookId) return
+        val total = totalOverride ?: entries.size
+        val previewCount = minOf(HEADS_PREVIEW_COUNT, entries.size)
         if (_ui.value.activeNotebookId != notebookId) return
         repo.applyHeads(notebookId, entries.subList(0, previewCount), total)
         studyDeckFiltered = null
         _ui.update { it.copy(listLoading = false) }
-        if (previewCount >= total) return
+        if (previewCount >= entries.size) return
         yield()
         delay(16)
         var from = previewCount
-        while (from < total) {
+        while (from < entries.size) {
             if (_ui.value.activeNotebookId != notebookId) return
-            val end = minOf(from + HEADS_CHUNK, total)
+            val end = minOf(from + HEADS_CHUNK, entries.size)
             repo.appendHeadStubs(notebookId, entries.subList(from, end), total)
             studyDeckFiltered = null
             from = end
@@ -1195,11 +1250,24 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             else -> repo.items.value.size
         }
         if (start >= packed.entries.size) return false
-        val slice = packed.entries.subList(start, minOf(start + PAGE_LIMIT, packed.entries.size))
+        val end = minOf(start + PAGE_LIMIT, packed.entries.size)
+        val stubs = repo.items.value
+        // Remap packaged ids onto the active stub ids (server ids), matching by index then text.
+        val byText = stubs.associateBy { it.text.trim().lowercase() }
+        val slice = packed.entries.subList(start, end).mapIndexed { offset, entry ->
+            val abs = start + offset
+            val stub = stubs.getOrNull(abs)
+                ?: byText[entry.text.trim().lowercase()]
+            entry.copy(
+                id = stub?.id ?: entry.id,
+                notebookId = notebookId,
+                sortOrder = stub?.sortOrder ?: entry.sortOrder,
+            )
+        }
         val page = WordPage(
-            items = slice.map { it.copy(notebookId = notebookId) },
+            items = slice,
             total = packed.entries.size,
-            nextCursor = if (start + slice.size < packed.entries.size) "${start + slice.size}" else null,
+            nextCursor = if (end < packed.entries.size) "$end" else null,
             fromIndex = start,
         )
         withContext(Dispatchers.IO) {

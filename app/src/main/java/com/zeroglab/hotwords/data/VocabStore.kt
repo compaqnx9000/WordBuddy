@@ -664,18 +664,31 @@ class VocabRepository(context: Context) {
     fun mergeDetails(notebookId: Long, page: WordPage) {
         if (activeNotebookId != notebookId || page.items.isEmpty()) return
         val byId = page.items.associateBy { it.id }
+        val byText = page.items.associateBy { it.text.trim().lowercase() }
         val current = _items.value
         if (current.isEmpty()) {
             applyNextPage(notebookId, page)
             return
         }
         var changed = false
-        val next = current.map { row ->
-            val fresh = byId[row.id] ?: return@map row
-            if (fresh.definitions.isEmpty() && row.definitions.isNotEmpty()) row
-            else {
+        val next = current.mapIndexed { index, row ->
+            val fresh = byId[row.id]
+                ?: byText[row.text.trim().lowercase()]
+                ?: page.items.getOrNull(index - listWindowStart)?.takeIf {
+                    it.text.equals(row.text, ignoreCase = true)
+                }
+                ?: return@mapIndexed row
+            if (fresh.definitions.isEmpty() && row.definitions.isNotEmpty()) {
+                row
+            } else {
                 changed = true
-                fresh
+                // Keep the list-row id/order even when details came from packaged assets.
+                fresh.copy(
+                    id = row.id,
+                    notebookId = notebookId,
+                    sortOrder = row.sortOrder,
+                    text = row.text,
+                )
             }
         }
         if (changed) _items.value = next
