@@ -1,5 +1,6 @@
 package com.zeroglab.hotwords.data
 
+import android.os.Build
 import com.zeroglab.hotwords.BuildConfig
 import java.net.HttpURLConnection
 import java.nio.charset.StandardCharsets
@@ -12,6 +13,16 @@ data class AuthResult(
     val session: UserSession?,
     val isNewUser: Boolean = false,
 )
+
+data class AppUpdateInfo(
+    val versionCode: Int,
+    val versionName: String,
+    val apkPath: String,
+    val force: Boolean = false,
+    val notes: String = "",
+) {
+    val hasUpdate: Boolean get() = versionCode > BuildConfig.VERSION_CODE
+}
 
 data class WordPage(
     val items: List<VocabEntry>,
@@ -60,6 +71,18 @@ class HotWordsApi {
     suspend fun sendCode(phone: String): String? = withContext(Dispatchers.IO) {
         val root = request("POST", "/auth/send-code", auth = null, body = JSONObject().put("phone", phone))
         if (root.has("debugCode") && !root.isNull("debugCode")) root.optString("debugCode") else null
+    }
+
+    suspend fun checkAppUpdate(): AppUpdateInfo = withContext(Dispatchers.IO) {
+        val root = request("GET", "/app/version.json", auth = null)
+        val path = root.optString("apkPath").ifBlank { "/app/HotWords-release.apk" }
+        AppUpdateInfo(
+            versionCode = root.optInt("versionCode"),
+            versionName = root.optString("versionName").ifBlank { "未知" },
+            apkPath = if (path.startsWith("http")) path else "$baseUrl$path",
+            force = root.optBoolean("force"),
+            notes = root.optString("notes").trim(),
+        )
     }
 
     suspend fun login(phone: String, code: String): AuthResult = withContext(Dispatchers.IO) {
@@ -120,6 +143,11 @@ class HotWordsApi {
         val user = root.getJSONObject("user")
         val avatarUrl = optNullableString(root, "avatarUrl")
             ?: optNullableString(user, "avatarUrl")
+        val level = when {
+            user.has("level") && !user.isNull("level") -> user.optInt("level", 0)
+            root.has("level") && !root.isNull("level") -> root.optInt("level", 0)
+            else -> 0
+        }
         return AuthResult(
             session = UserSession(
                 token = root.getString("token"),
@@ -127,6 +155,7 @@ class HotWordsApi {
                 phone = user.getString("phone"),
                 vocabNotebookId = root.getLong("vocabNotebookId"),
                 avatarUrl = avatarUrl,
+                level = level.coerceIn(0, 7),
             ),
             isNewUser = isNewUser,
         )
@@ -144,11 +173,28 @@ class HotWordsApi {
             root.optString("avatarUrl").ifBlank { error("上传失败") }
         }
 
-    suspend fun fetchAvatarUrl(token: String): String? = withContext(Dispatchers.IO) {
+    suspend fun fetchMe(token: String): UserSession? = withContext(Dispatchers.IO) {
         val root = request("GET", "/me", auth = token)
-        val user = root.optJSONObject("user")
-        optNullableString(root, "avatarUrl")
-            ?: user?.let { optNullableString(it, "avatarUrl") }
+        val user = root.optJSONObject("user") ?: return@withContext null
+        val avatarUrl = optNullableString(root, "avatarUrl")
+            ?: optNullableString(user, "avatarUrl")
+        val level = when {
+            user.has("level") && !user.isNull("level") -> user.optInt("level", 0)
+            root.has("level") && !root.isNull("level") -> root.optInt("level", 0)
+            else -> 0
+        }.coerceIn(0, 7)
+        UserSession(
+            token = token,
+            userId = user.optLong("id"),
+            phone = user.optString("phone"),
+            vocabNotebookId = root.optLong("vocabNotebookId"),
+            avatarUrl = avatarUrl,
+            level = level,
+        )
+    }
+
+    suspend fun fetchAvatarUrl(token: String): String? = withContext(Dispatchers.IO) {
+        fetchMe(token)?.avatarUrl
     }
 
     suspend fun fetchAvatarBytes(avatarUrl: String): ByteArray = withContext(Dispatchers.IO) {
@@ -394,6 +440,7 @@ class HotWordsApi {
             conn.connectTimeout = 8000
             conn.readTimeout = 15000
             conn.setRequestProperty("Accept", "application/json")
+            applyDeviceHeaders(conn)
             if (!auth.isNullOrBlank()) conn.setRequestProperty("Authorization", "Bearer $auth")
             if (body != null) {
                 conn.doOutput = true
@@ -411,6 +458,31 @@ class HotWordsApi {
         } finally {
             conn.disconnect()
         }
+    }
+
+    private fun applyDeviceHeaders(conn: HttpURLConnection) {
+        val brand = Build.BRAND.orEmpty().ifBlank { Build.MANUFACTURER.orEmpty() }
+        val manufacturer = Build.MANUFACTURER.orEmpty()
+        val model = Build.MODEL.orEmpty()
+        val product = Build.PRODUCT.orEmpty()
+        val osVersion = Build.VERSION.RELEASE.orEmpty()
+        val labelParts = listOfNotNull(
+            brand.takeIf { it.isNotBlank() },
+            model.takeIf { it.isNotBlank() && !it.equals(brand, ignoreCase = true) },
+        )
+        val deviceName = labelParts.joinToString(" ").ifBlank { model.ifBlank { "Android" } }
+        conn.setRequestProperty(
+            "User-Agent",
+            "HotWords/${BuildConfig.VERSION_NAME} (Android $osVersion; $deviceName; brand/$brand; model/$model; manufacturer/$manufacturer)",
+        )
+        conn.setRequestProperty("X-Device-Platform", "Android")
+        conn.setRequestProperty("X-Device-Brand", brand)
+        conn.setRequestProperty("X-Device-Manufacturer", manufacturer)
+        conn.setRequestProperty("X-Device-Model", model)
+        if (product.isNotBlank()) conn.setRequestProperty("X-Device-Product", product)
+        if (osVersion.isNotBlank()) conn.setRequestProperty("X-Device-Os-Version", osVersion)
+        conn.setRequestProperty("X-Device-Sdk", Build.VERSION.SDK_INT.toString())
+        conn.setRequestProperty("X-App-Version", BuildConfig.VERSION_NAME)
     }
 
     private fun parseNotebook(obj: JSONObject): Notebook {

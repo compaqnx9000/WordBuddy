@@ -1,6 +1,7 @@
 package com.zeroglab.hotwords.ui.profile
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -37,11 +38,13 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.HelpOutline
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -71,9 +74,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import java.io.File
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zeroglab.hotwords.BuildConfig
+import com.zeroglab.hotwords.data.HotWordsApi
 import com.zeroglab.hotwords.data.NotebookImportResult
 import com.zeroglab.hotwords.ui.components.StellarConfirmDialog
 import com.zeroglab.hotwords.ui.components.WordBuddyAvatarIcon
@@ -97,6 +102,7 @@ fun ProfileScreen(
     onExportContent: () -> String,
     onImportContent: suspend (String) -> NotebookImportResult,
     phone: String? = null,
+    level: Int = 1,
     onLogin: () -> Unit = {},
     onChangePassword: (
         oldPassword: String,
@@ -111,6 +117,7 @@ fun ProfileScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val api = remember { HotWordsApi() }
     var showHelp by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     var showChangePassword by remember { mutableStateOf(false) }
@@ -118,7 +125,54 @@ fun ProfileScreen(
     var changePasswordBusy by remember { mutableStateOf(false) }
     var changePasswordError by remember { mutableStateOf<String?>(null) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var updateTitle by remember { mutableStateOf<String?>(null) }
+    var updateMessage by remember { mutableStateOf("") }
+    var updateConfirm by remember { mutableStateOf("知道了") }
+    var updateDismiss by remember { mutableStateOf("") }
+    var pendingDownloadUrl by remember { mutableStateOf<String?>(null) }
     val loggedIn = !phone.isNullOrBlank()
+
+    fun checkForUpdate() {
+        if (checkingUpdate) return
+        checkingUpdate = true
+        Toast.makeText(context, "正在检测更新…", Toast.LENGTH_SHORT).show()
+        scope.launch {
+            runCatching { api.checkAppUpdate() }
+                .onSuccess { info ->
+                    if (info.hasUpdate) {
+                        updateTitle = "发现新版本"
+                        updateConfirm = "去下载"
+                        updateDismiss = "稍后"
+                        pendingDownloadUrl = info.apkPath
+                        updateMessage = buildString {
+                            append("当前版本 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）\n")
+                            append("最新版本 ${info.versionName}（${info.versionCode}）\n\n")
+                            if (info.notes.isNotBlank()) {
+                                append(info.notes)
+                                append("\n\n")
+                            }
+                            append("下载后请允许安装未知来源应用。")
+                        }
+                    } else {
+                        updateTitle = "检测更新"
+                        updateConfirm = "知道了"
+                        updateDismiss = ""
+                        pendingDownloadUrl = null
+                        updateMessage =
+                            "当前版本 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）\n\n已是最新版本。"
+                    }
+                }
+                .onFailure { error ->
+                    Toast.makeText(
+                        context,
+                        error.message?.ifBlank { "检测更新失败" } ?: "检测更新失败",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            checkingUpdate = false
+        }
+    }
 
     fun handlePickedAvatar(uri: Uri) {
         onUploadAvatar(uri) { result ->
@@ -218,6 +272,32 @@ fun ProfileScreen(
     if (showAbout) {
         AboutWordBuddyDialog(onDismiss = { showAbout = false })
     }
+    updateTitle?.let { title ->
+        StellarConfirmDialog(
+            title = title,
+            message = updateMessage,
+            confirmText = updateConfirm,
+            dismissText = updateDismiss,
+            onDismiss = {
+                updateTitle = null
+                pendingDownloadUrl = null
+            },
+            onConfirm = {
+                val url = pendingDownloadUrl
+                updateTitle = null
+                pendingDownloadUrl = null
+                if (!url.isNullOrBlank()) {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }.onFailure {
+                        Toast.makeText(context, "无法打开下载链接", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+        )
+    }
     if (showChangePassword) {
         ChangePasswordDialog(
             busy = changePasswordBusy,
@@ -280,6 +360,7 @@ fun ProfileScreen(
             ProfileHeroCard(
                 userName = userName,
                 phone = phone,
+                level = level,
                 wordCount = wordCount,
                 avatarBitmap = avatarBitmap,
                 avatarBusy = avatarBusy,
@@ -315,7 +396,7 @@ fun ProfileScreen(
                 }
             }
 
-            // 原有内容保留：导出 / 导入 / 帮助
+            // 原有内容保留：导出 / 导入 / 帮助 / 关于 / 更新
             ProfileMenuCard {
                 ProfileMenuRow(
                     icon = Icons.Outlined.FileUpload,
@@ -339,27 +420,33 @@ fun ProfileScreen(
                     title = "帮助与反馈",
                     onClick = { showHelp = true },
                 )
+                ProfileMenuDivider()
+                ProfileMenuRow(
+                    icon = Icons.Outlined.Info,
+                    iconTint = Stellar.Cyan,
+                    title = "关于词搭子",
+                    trailing = "v${BuildConfig.VERSION_NAME}",
+                    onClick = { showAbout = true },
+                )
+                ProfileMenuDivider()
+                ProfileMenuRow(
+                    icon = Icons.Outlined.SystemUpdate,
+                    iconTint = Stellar.Pink,
+                    title = if (checkingUpdate) "检测更新中…" else "检测更新",
+                    trailing = "在线升级",
+                    onClick = { checkForUpdate() },
+                )
             }
 
-            Column(
-                Modifier
+            Text(
+                text = "版本 ${BuildConfig.VERSION_NAME}",
+                color = Stellar.OnSurfaceVariant.copy(alpha = 0.65f),
+                fontSize = 12.ssp(),
+                textAlign = TextAlign.Center,
+                modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 8.sdp(), bottom = 8.sdp()),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.sdp()),
-            ) {
-                Text(
-                    text = "关于词搭子",
-                    color = Stellar.Cyan,
-                    fontSize = 13.ssp(),
-                    modifier = Modifier.clickable { showAbout = true },
-                )
-                Text(
-                    text = "版本 ${BuildConfig.VERSION_NAME}",
-                    color = Stellar.OnSurfaceVariant.copy(alpha = 0.65f),
-                    fontSize = 12.ssp(),
-                )
-            }
+            )
         }
     }
 }
@@ -387,6 +474,7 @@ private fun ProfileTopBar() {
 private fun ProfileHeroCard(
     userName: String,
     phone: String?,
+    level: Int,
     wordCount: Int,
     avatarBitmap: Bitmap?,
     avatarBusy: Boolean,
@@ -522,15 +610,36 @@ private fun ProfileHeroCard(
                 }
             }
 
-            Text(
-                text = userName,
-                color = Stellar.OnSurface,
-                fontSize = 22.ssp(),
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.offset(y = (-22).sdp()),
-            )
+            Row(
+                Modifier
+                    .offset(y = (-22).sdp())
+                    .padding(horizontal = 8.sdp()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.sdp()),
+            ) {
+                Text(
+                    text = userName,
+                    color = Stellar.OnSurface,
+                    fontSize = 22.ssp(),
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (!phone.isNullOrBlank()) {
+                    Text(
+                        text = "Lv.$level",
+                        color = Stellar.Cyan,
+                        fontSize = 12.ssp(),
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(Stellar.Cyan.copy(alpha = 0.16f))
+                            .border(1.dp, Stellar.Cyan.copy(alpha = 0.45f), RoundedCornerShape(999.dp))
+                            .padding(horizontal = 10.sdp(), vertical = 4.sdp()),
+                    )
+                }
+            }
             Text(
                 text = phone?.let { "@$it" } ?: "@未登录",
                 color = Stellar.Cyan,

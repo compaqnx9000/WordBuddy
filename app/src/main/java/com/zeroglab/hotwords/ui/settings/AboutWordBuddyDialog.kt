@@ -1,5 +1,8 @@
 package com.zeroglab.hotwords.ui.settings
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,12 +33,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -44,6 +49,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.zeroglab.hotwords.BuildConfig
 import com.zeroglab.hotwords.R
+import com.zeroglab.hotwords.data.HotWordsApi
 import com.zeroglab.hotwords.ui.components.StellarConfirmDialog
 import com.zeroglab.hotwords.ui.design.sdp
 import com.zeroglab.hotwords.ui.design.ssp
@@ -52,21 +58,86 @@ import com.zeroglab.hotwords.ui.lookup.stellarGlass
 import com.zeroglab.hotwords.ui.lookup.stellarPanelBackgroundColor
 import com.zeroglab.hotwords.ui.lookup.stellarScreenBackground
 import java.util.Calendar
+import kotlinx.coroutines.launch
 
 @Composable
 fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val api = remember { HotWordsApi() }
     var detailTitle by remember { mutableStateOf<String?>(null) }
     var detailMessage by remember { mutableStateOf("") }
+    var detailConfirm by remember { mutableStateOf("知道了") }
+    var detailDismiss by remember { mutableStateOf("") }
+    var pendingDownloadUrl by remember { mutableStateOf<String?>(null) }
+    var checkingUpdate by remember { mutableStateOf(false) }
 
     detailTitle?.let { title ->
         StellarConfirmDialog(
             title = title,
             message = detailMessage,
-            confirmText = "知道了",
-            dismissText = "",
-            onDismiss = { detailTitle = null },
-            onConfirm = { detailTitle = null },
+            confirmText = detailConfirm,
+            dismissText = detailDismiss,
+            onDismiss = {
+                detailTitle = null
+                pendingDownloadUrl = null
+            },
+            onConfirm = {
+                val url = pendingDownloadUrl
+                detailTitle = null
+                pendingDownloadUrl = null
+                if (!url.isNullOrBlank()) {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }.onFailure {
+                        Toast.makeText(context, "无法打开下载链接", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
         )
+    }
+
+    fun checkForUpdate() {
+        if (checkingUpdate) return
+        checkingUpdate = true
+        Toast.makeText(context, "正在检测更新…", Toast.LENGTH_SHORT).show()
+        scope.launch {
+            runCatching { api.checkAppUpdate() }
+                .onSuccess { info ->
+                    if (info.hasUpdate) {
+                        detailTitle = "发现新版本"
+                        detailConfirm = "去下载"
+                        detailDismiss = "稍后"
+                        pendingDownloadUrl = info.apkPath
+                        detailMessage = buildString {
+                            append("当前版本 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）\n")
+                            append("最新版本 ${info.versionName}（${info.versionCode}）\n\n")
+                            if (info.notes.isNotBlank()) {
+                                append(info.notes)
+                                append("\n\n")
+                            }
+                            append("下载后请允许安装未知来源应用。")
+                        }
+                    } else {
+                        detailTitle = "检测更新"
+                        detailConfirm = "知道了"
+                        detailDismiss = ""
+                        pendingDownloadUrl = null
+                        detailMessage =
+                            "当前版本 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）\n\n已是最新版本。"
+                    }
+                }
+                .onFailure { error ->
+                    Toast.makeText(
+                        context,
+                        error.message?.ifBlank { "检测更新失败" } ?: "检测更新失败",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            checkingUpdate = false
+        }
     }
 
     Dialog(
@@ -105,6 +176,9 @@ fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
                         title = "功能介绍",
                         onClick = {
                             detailTitle = "功能介绍"
+                            detailConfirm = "知道了"
+                            detailDismiss = ""
+                            pendingDownloadUrl = null
                             detailMessage =
                                 "词搭子帮你查词、收藏、卡片背诵。\n\n" +
                                     "· 首页快速查词，查看音标、释义与例句\n" +
@@ -118,18 +192,17 @@ fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
                         title = "投诉",
                         onClick = {
                             detailTitle = "投诉"
+                            detailConfirm = "知道了"
+                            detailDismiss = ""
+                            pendingDownloadUrl = null
                             detailMessage =
                                 "如遇内容错误、体验问题或违规信息，请通过「帮助与反馈」联系我们，或发送邮件至 support@zeroglab.com。\n\n我们会尽快核实处理。"
                         },
                     )
                     AboutMenuDivider()
                     AboutMenuRow(
-                        title = "版本更新",
-                        onClick = {
-                            detailTitle = "版本更新"
-                            detailMessage =
-                                "当前版本 ${BuildConfig.VERSION_NAME}\n\n已是最新版本。后续更新将通过应用商店推送。"
-                        },
+                        title = if (checkingUpdate) "检测更新中…" else "检测更新",
+                        onClick = ::checkForUpdate,
                     )
                 }
 
@@ -137,16 +210,25 @@ fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
                 AboutLegalFooter(
                     onOpenAgreement = {
                         detailTitle = "软件许可及服务协议"
+                        detailConfirm = "知道了"
+                        detailDismiss = ""
+                        pendingDownloadUrl = null
                         detailMessage =
                             "使用词搭子即表示你同意遵守本软件的使用规范。请勿将本应用用于违法用途。词库与查词服务可能依赖第三方数据源，结果仅供学习参考。"
                     },
                     onOpenPrivacySummary = {
                         detailTitle = "隐私保护指引摘要"
+                        detailConfirm = "知道了"
+                        detailDismiss = ""
+                        pendingDownloadUrl = null
                         detailMessage =
                             "我们仅收集账号登录与学习所需的最少信息（如手机号、词库数据）。不会出售你的个人信息。详细说明见《隐私保护指引》。"
                     },
                     onOpenPrivacy = {
                         detailTitle = "隐私保护指引"
+                        detailConfirm = "知道了"
+                        detailDismiss = ""
+                        pendingDownloadUrl = null
                         detailMessage =
                             "词搭子会本地缓存部分词条以便离线浏览，并在登录后将你的生词本同步至服务器。你可以随时退出登录清除本机缓存。\n\n如需删除账号数据，请联系 support@zeroglab.com。"
                     },

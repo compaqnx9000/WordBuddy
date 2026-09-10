@@ -73,7 +73,11 @@ fun HotWordsRoot(
     val activeNotebookName = viewModel.activeNotebook()?.name ?: Notebook.DEFAULT_NAME
     val activeWordCount = maxOf(viewModel.activeNotebook()?.wordCount ?: 0, words.size)
     val needsBiometricUnlock =
-        session != null && ui.settings.biometricLogin && !biometricUnlocked
+        session != null &&
+            ui.settings.biometricLogin &&
+            !biometricUnlocked &&
+            // Password / SMS login already proved identity; only gate restored sessions.
+            !showLogin
 
     fun requireLogin(hint: String): Boolean {
         if (session != null) return true
@@ -117,12 +121,12 @@ fun HotWordsRoot(
         }
         BiometricAuth.authenticate(
             activity = host,
-            title = "开启指纹登录",
-            subtitle = "验证指纹后，下次打开应用将需要指纹解锁",
+            title = "开启指纹解锁",
+            subtitle = "验证指纹后，下次打开应用将需要指纹解锁（账号密码登录成功后不会再要求）",
             onSuccess = {
                 viewModel.updateSettings { it.copy(biometricLogin = true) }
                 biometricUnlocked = true
-                Toast.makeText(context, "已开启指纹登录", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "已开启指纹解锁", Toast.LENGTH_SHORT).show()
             },
             onError = { message ->
                 Toast.makeText(context, message, Toast.LENGTH_LONG).show()
@@ -133,12 +137,13 @@ fun HotWordsRoot(
     LaunchedEffect(session) {
         if (session != null) {
             val cameFromLogin = showLogin
-            showLogin = false
-            loginHint = null
             if (cameFromLogin) {
+                // Interactive login (password / SMS) counts as unlocked for this process.
                 biometricUnlocked = true
                 biometricError = null
             }
+            showLogin = false
+            loginHint = null
         } else {
             biometricUnlocked = false
             biometricError = null
@@ -485,6 +490,7 @@ fun HotWordsRoot(
                             onExportContent = viewModel::exportNotebookJson,
                             onImportContent = viewModel::importNotebookJson,
                             phone = session?.phone,
+                            level = session?.level ?: 0,
                             onLogin = {
                                 loginHint = "登录后可同步收藏与生词本"
                                 showLogin = true

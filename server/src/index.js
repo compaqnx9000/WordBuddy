@@ -19,6 +19,7 @@ if (!process.env.JWT_SECRET) {
 
 const app = express()
 fs.mkdirSync(path.resolve(root, '../uploads/avatars'), { recursive: true })
+fs.mkdirSync(path.resolve(root, '../public/app'), { recursive: true })
 app.use(cors())
 app.use(express.json({ limit: '4mb' }))
 app.use(
@@ -28,6 +29,22 @@ app.use(
     maxAge: 0,
     setHeaders(res) {
       res.setHeader('Cache-Control', 'no-store')
+    },
+  }),
+)
+// App update channel: /app/version.json + APK downloads
+app.use(
+  '/app',
+  express.static(path.resolve(root, '../public/app'), {
+    etag: true,
+    maxAge: '5m',
+    setHeaders(res, filePath) {
+      if (filePath.endsWith('.json')) {
+        res.setHeader('Cache-Control', 'no-cache')
+      } else if (filePath.endsWith('.apk')) {
+        res.setHeader('Content-Type', 'application/vnd.android.package-archive')
+        res.setHeader('Cache-Control', 'public, max-age=300')
+      }
     },
   }),
 )

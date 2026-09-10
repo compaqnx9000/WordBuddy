@@ -10,6 +10,7 @@ import {
   signAdminToken,
   verifyPassword,
 } from './auth.js'
+import { mapDeviceRow } from './device.js'
 
 export const adminRouter = Router()
 
@@ -51,6 +52,30 @@ function mapUser(row) {
     loginCount: Number(row.login_count || 0),
     notebookCount: Number(row.notebook_count || 0),
     wordCount: Number(row.word_count || 0),
+    lastDeviceLabel: row.last_device_label || null,
+    lastDevicePlatform: row.last_device_platform || null,
+    lastIp: row.last_ip || null,
+    lastIpLocation: row.last_ip_location || null,
+    deviceCount: Number(row.device_count || 0),
+    level: Math.min(7, Math.max(0, Number.isFinite(Number(row.user_level)) ? Number(row.user_level) : 0)),
+  }
+}
+
+function mapLogin(row) {
+  return {
+    id: Number(row.id),
+    userId: row.user_id ? Number(row.user_id) : null,
+    phone: row.phone || null,
+    method: row.method,
+    success: Boolean(row.success),
+    ip: row.ip,
+    ipLocation: row.ip_location || null,
+    userAgent: row.user_agent,
+    devicePlatform: row.device_platform || null,
+    deviceBrand: row.device_brand || null,
+    deviceModel: row.device_model || null,
+    deviceLabel: row.device_label || null,
+    createdAt: iso(row.created_at),
   }
 }
 
@@ -136,7 +161,9 @@ adminRouter.get('/overview', adminRequired, async (_req, res) => {
   ])
   const recentUsers = await query(
     `SELECT id, phone, avatar_url, created_at, last_login_at, login_count,
-            (password_hash IS NOT NULL) AS has_password
+            last_device_label, last_device_platform, last_ip, last_ip_location, user_level,
+            (password_hash IS NOT NULL) AS has_password,
+            (SELECT count(*)::int FROM user_devices d WHERE d.user_id = users.id) AS device_count
      FROM users ORDER BY created_at DESC LIMIT 8`,
   )
   res.json({
@@ -170,11 +197,13 @@ adminRouter.get('/users', adminRequired, async (req, res) => {
     `
     SELECT u.id, u.phone, u.avatar_url, u.created_at, u.last_login_at, u.last_login_method,
            u.password_changed_at, u.login_count,
+           u.last_device_label, u.last_device_platform, u.last_ip, u.last_ip_location, u.user_level,
            (u.password_hash IS NOT NULL) AS has_password,
            (SELECT count(*)::int FROM notebooks n WHERE n.owner_user_id = u.id) AS notebook_count,
            (SELECT count(*)::int FROM words w
              JOIN notebooks n ON n.id = w.notebook_id
-            WHERE n.owner_user_id = u.id) AS word_count
+            WHERE n.owner_user_id = u.id) AS word_count,
+           (SELECT count(*)::int FROM user_devices d WHERE d.user_id = u.id) AS device_count
     FROM users u
     WHERE ${where}
     ORDER BY u.created_at DESC
@@ -191,7 +220,9 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
     await query(
       `SELECT id, phone, avatar_url, created_at, last_login_at, last_login_method,
               password_changed_at, login_count,
-              (password_hash IS NOT NULL) AS has_password
+              last_device_label, last_device_platform, last_ip, last_ip_location, user_level,
+              (password_hash IS NOT NULL) AS has_password,
+              (SELECT count(*)::int FROM user_devices d WHERE d.user_id = users.id) AS device_count
        FROM users WHERE id = $1`,
       [id],
     )
@@ -200,7 +231,7 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
     res.status(404).json({ error: '用户不存在' })
     return
   }
-  const [notebooks, logins, passwords, sms] = await Promise.all([
+  const [notebooks, logins, passwords, sms, devices] = await Promise.all([
     query(
       `SELECT n.id, n.kind, n.slug, n.name, n.published, n.sort_order, n.owner_user_id, n.created_at,
               (SELECT count(*)::int FROM words w WHERE w.notebook_id = n.id) AS word_count
@@ -209,7 +240,8 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
       [id],
     ),
     query(
-      `SELECT id, method, success, ip, user_agent, created_at
+      `SELECT id, user_id, phone, method, success, ip, user_agent,
+              device_platform, device_brand, device_model, device_label, ip_location, created_at
        FROM login_events WHERE user_id = $1
        ORDER BY created_at DESC LIMIT 50`,
       [id],
@@ -227,18 +259,19 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
        ORDER BY created_at DESC LIMIT 30`,
       [user.phone],
     ),
+    query(
+      `SELECT id, platform, brand, model, label, os_version, app_version,
+              last_ip, last_ip_location, first_seen_at, last_seen_at, login_count
+       FROM user_devices WHERE user_id = $1
+       ORDER BY last_seen_at DESC, id DESC`,
+      [id],
+    ),
   ])
   res.json({
     user: mapUser(user),
     notebooks: notebooks.rows.map(mapNotebook),
-    logins: logins.rows.map((row) => ({
-      id: Number(row.id),
-      method: row.method,
-      success: Boolean(row.success),
-      ip: row.ip,
-      userAgent: row.user_agent,
-      createdAt: iso(row.created_at),
-    })),
+    devices: devices.rows.map(mapDeviceRow),
+    logins: logins.rows.map(mapLogin),
     passwordEvents: passwords.rows.map((row) => ({
       id: Number(row.id),
       reason: row.reason,
@@ -264,12 +297,18 @@ adminRouter.patch('/users/:id', adminRequired, async (req, res) => {
   }
   const nextPhone = req.body?.phone != null ? normalizePhone(req.body.phone) : null
   const nextPassword = req.body?.password ? normalizePassword(req.body.password) : null
+  const hasLevel = req.body?.level != null && req.body?.level !== ''
+  const nextLevel = hasLevel ? Number(req.body.level) : null
   if (req.body?.phone && !nextPhone) {
     res.status(400).json({ error: '手机号不正确' })
     return
   }
   if (req.body?.password && !nextPassword) {
     res.status(400).json({ error: '密码需要 6 到 32 位' })
+    return
+  }
+  if (hasLevel && (!Number.isFinite(nextLevel) || nextLevel < 0 || nextLevel > 7 || !Number.isInteger(nextLevel))) {
+    res.status(400).json({ error: '用户等级需为 0–7' })
     return
   }
   if (nextPhone && nextPhone !== user.phone) {
@@ -279,15 +318,21 @@ adminRouter.patch('/users/:id', adminRequired, async (req, res) => {
     await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashPassword(nextPassword), id])
     await recordPasswordEvent(req, id, 'admin_reset')
   }
+  if (hasLevel) {
+    await query('UPDATE users SET user_level = $1 WHERE id = $2', [nextLevel, id])
+  }
   await audit(req, 'update_user', 'user', id, {
     phone: Boolean(nextPhone),
     resetPassword: Boolean(nextPassword),
+    level: hasLevel ? nextLevel : undefined,
   })
   const fresh = (
     await query(
       `SELECT id, phone, avatar_url, created_at, last_login_at, last_login_method,
               password_changed_at, login_count,
-              (password_hash IS NOT NULL) AS has_password
+              last_device_label, last_device_platform, last_ip, last_ip_location, user_level,
+              (password_hash IS NOT NULL) AS has_password,
+              (SELECT count(*)::int FROM user_devices d WHERE d.user_id = users.id) AS device_count
        FROM users WHERE id = $1`,
       [id],
     )
@@ -314,7 +359,8 @@ adminRouter.get('/logins', adminRequired, async (req, res) => {
   let where = 'TRUE'
   if (q) {
     params.push(`%${q}%`)
-    where = '(e.phone ILIKE $1 OR e.method ILIKE $1 OR e.ip ILIKE $1)'
+    where =
+      '(e.phone ILIKE $1 OR e.method ILIKE $1 OR e.ip ILIKE $1 OR e.device_label ILIKE $1 OR e.ip_location ILIKE $1 OR e.device_platform ILIKE $1)'
   }
   const total = (
     await query(`SELECT count(*)::int AS n FROM login_events e WHERE ${where}`, params)
@@ -322,7 +368,8 @@ adminRouter.get('/logins', adminRequired, async (req, res) => {
   params.push(pageSize, offset)
   const result = await query(
     `
-    SELECT e.id, e.user_id, e.phone, e.method, e.success, e.ip, e.user_agent, e.created_at
+    SELECT e.id, e.user_id, e.phone, e.method, e.success, e.ip, e.user_agent,
+           e.device_platform, e.device_brand, e.device_model, e.device_label, e.ip_location, e.created_at
     FROM login_events e
     WHERE ${where}
     ORDER BY e.created_at DESC
@@ -331,16 +378,7 @@ adminRouter.get('/logins', adminRequired, async (req, res) => {
     params,
   )
   res.json({
-    items: result.rows.map((row) => ({
-      id: Number(row.id),
-      userId: row.user_id ? Number(row.user_id) : null,
-      phone: row.phone,
-      method: row.method,
-      success: Boolean(row.success),
-      ip: row.ip,
-      userAgent: row.user_agent,
-      createdAt: iso(row.created_at),
-    })),
+    items: result.rows.map(mapLogin),
     total,
     page,
     pageSize,

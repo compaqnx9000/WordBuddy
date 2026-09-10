@@ -1,6 +1,7 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import jwt from 'jsonwebtoken'
 import { query } from './db.js'
+import { extractDeviceInfo, normalizeIp, resolveIpLocation } from './device.js'
 
 const TOKEN_TTL = '30d'
 
@@ -96,20 +97,30 @@ export function clientIp(req) {
   const forwarded = String(req.headers['x-forwarded-for'] || '')
     .split(',')[0]
     .trim()
-  return forwarded || req.socket?.remoteAddress || ''
+  return normalizeIp(forwarded || req.socket?.remoteAddress || '')
 }
 
 export async function recordLoginEvent(req, { userId = null, phone, method, success }) {
+  const device = extractDeviceInfo(req)
+  const ip = clientIp(req)
+  const ipLocation = await resolveIpLocation(ip)
   await query(
-    `INSERT INTO login_events (user_id, phone, method, success, ip, user_agent)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
+    `INSERT INTO login_events (
+       user_id, phone, method, success, ip, user_agent,
+       device_platform, device_brand, device_model, device_label, ip_location
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
     [
       userId,
       phone || null,
       method,
       Boolean(success),
-      clientIp(req),
-      String(req.headers['user-agent'] || '').slice(0, 400),
+      ip || null,
+      device.userAgent || null,
+      device.platform,
+      device.brand,
+      device.model,
+      device.label,
+      ipLocation,
     ],
   )
   if (success && userId) {
@@ -117,9 +128,43 @@ export async function recordLoginEvent(req, { userId = null, phone, method, succ
       `UPDATE users
        SET last_login_at = now(),
            last_login_method = $2,
-           login_count = login_count + 1
+           login_count = login_count + 1,
+           last_device_label = $3,
+           last_device_platform = $4,
+           last_ip = $5,
+           last_ip_location = $6
        WHERE id = $1`,
-      [userId, method],
+      [userId, method, device.label, device.platform, ip || null, ipLocation],
+    )
+    await query(
+      `INSERT INTO user_devices (
+         user_id, device_key, platform, brand, model, label,
+         os_version, app_version, last_ip, last_ip_location,
+         first_seen_at, last_seen_at, login_count
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), now(), 1)
+       ON CONFLICT (user_id, device_key) DO UPDATE SET
+         platform = EXCLUDED.platform,
+         brand = EXCLUDED.brand,
+         model = EXCLUDED.model,
+         label = EXCLUDED.label,
+         os_version = COALESCE(EXCLUDED.os_version, user_devices.os_version),
+         app_version = COALESCE(EXCLUDED.app_version, user_devices.app_version),
+         last_ip = EXCLUDED.last_ip,
+         last_ip_location = EXCLUDED.last_ip_location,
+         last_seen_at = now(),
+         login_count = user_devices.login_count + 1`,
+      [
+        userId,
+        device.deviceKey,
+        device.platform,
+        device.brand,
+        device.model,
+        device.label,
+        device.osVersion,
+        device.appVersion,
+        ip || null,
+        ipLocation,
+      ],
     )
   }
 }

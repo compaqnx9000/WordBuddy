@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -24,12 +25,113 @@
             android:name=".MainActivity"
             android:exported="true"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.HotWords">
+            android:theme="@style/Theme.HotWords" />
+
+        <!-- Launcher icons by user level (only one alias enabled at a time). -->
+        <activity-alias
+            android:name=".LauncherLevel0"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherLevel1"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_level_1"
+            android:roundIcon="@mipmap/ic_level_1"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherLevel2"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_level_2"
+            android:roundIcon="@mipmap/ic_level_2"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherLevel3"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_level_2"
+            android:roundIcon="@mipmap/ic_level_2"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherLevel4"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_level_2"
+            android:roundIcon="@mipmap/ic_level_2"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherLevel5"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_level_2"
+            android:roundIcon="@mipmap/ic_level_2"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherLevel6"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_level_2"
+            android:roundIcon="@mipmap/ic_level_2"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherLevel7"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_level_2"
+            android:roundIcon="@mipmap/ic_level_2"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <provider
             android:name="androidx.core.content.FileProvider"

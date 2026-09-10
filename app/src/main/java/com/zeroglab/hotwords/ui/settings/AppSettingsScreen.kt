@@ -456,8 +456,8 @@ private fun PreferencesCard(
             PreferenceDivider()
             PreferenceToggle(
                 icon = Icons.Filled.Fingerprint,
-                title = "指纹登录",
-                subtitle = "打开应用时用指纹解锁账号",
+                title = "指纹解锁",
+                subtitle = "下次打开应用时验证指纹；密码/验证码登录后不会再要求",
                 checked = biometricLogin,
                 accentOnHover = Stellar.Cyan,
                 onChecked = onBiometricLogin,

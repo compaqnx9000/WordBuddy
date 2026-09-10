@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.zeroglab.hotwords.LauncherIcons
 import com.zeroglab.hotwords.audio.TtsPlayer
 import com.zeroglab.hotwords.data.AiImageClient
 import com.zeroglab.hotwords.data.BuiltInWordbookSeeder
@@ -202,9 +203,11 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             activeNotebookId = startNotebook,
         )
         if (session != null) {
+            LauncherIcons.apply(getApplication(), session.level)
             loadAvatarBitmap()
             viewModelScope.launch { bootstrapSession() }
         } else {
+            LauncherIcons.apply(getApplication(), 0)
             viewModelScope.launch { bootstrapGuestCatalogs() }
         }
     }
@@ -239,7 +242,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     withContext(Dispatchers.IO) { repo.openCachedNotebook(fallback.id) }
                 }
             }
-        syncAvatarFromServer()
+        syncProfileFromServer()
     }
 
     private suspend fun bootstrapGuestCatalogs() {
@@ -1926,6 +1929,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private fun enterSession(session: UserSession) {
         sessionStore.save(session)
         _session.value = session
+        LauncherIcons.apply(getApplication(), session.level)
         settingsStore.saveActiveNotebookId(session.vocabNotebookId)
         _ui.update {
             it.copy(
@@ -1961,14 +1965,21 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun syncAvatarFromServer() {
+    private suspend fun syncProfileFromServer() {
         val current = _session.value ?: return
-        val remoteUrl = runCatching { api.fetchAvatarUrl(current.token) }.getOrNull()
-        if (!remoteUrl.isNullOrBlank() && remoteUrl != current.avatarUrl) {
-            val updated = current.copy(avatarUrl = remoteUrl)
-            sessionStore.save(updated)
-            _session.value = updated
+        val remote = runCatching { api.fetchMe(current.token) }.getOrNull() ?: return
+        val merged = current.copy(
+            phone = remote.phone.ifBlank { current.phone },
+            avatarUrl = remote.avatarUrl ?: current.avatarUrl,
+            level = remote.level,
+            vocabNotebookId = remote.vocabNotebookId.takeIf { it > 0L } ?: current.vocabNotebookId,
+            userId = remote.userId.takeIf { it > 0L } ?: current.userId,
+        )
+        if (merged != current) {
+            sessionStore.save(merged)
+            _session.value = merged
         }
+        LauncherIcons.apply(getApplication(), merged.level)
         loadAvatarBitmap()
     }
 
@@ -2027,6 +2038,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         _session.value = null
         _avatarBitmap.value = null
         _avatarBusy.value = false
+        LauncherIcons.apply(getApplication(), 0)
         repo.wipeCache()
         headsReady.clear()
         headsCache.clear()

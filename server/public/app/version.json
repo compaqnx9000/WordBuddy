@@ -1,0 +1,8 @@
+{
+  "versionCode": 8,
+  "versionName": "0.17",
+  "apkPath": "/app/HotWords-release.apk",
+  "force": false,
+  "notes": "支持 Lv.0（原图标）；1–7 使用等级图标；修复等级图标圆角透明被压成白底的问题。",
+  "releasedAt": "2026-09-10T15:20:00.000Z"
+}

@@ -64,14 +64,14 @@ fun BiometricUnlockScreen(
         ) {
             Icon(
                 Icons.Outlined.Fingerprint,
-                contentDescription = "指纹登录",
+                contentDescription = "指纹解锁",
                 tint = Stellar.Cyan,
                 modifier = Modifier.size(44.sdp()),
             )
         }
         Spacer(Modifier.height(24.sdp()))
         Text(
-            text = "指纹登录",
+            text = "指纹解锁",
             color = Stellar.CyanSoft,
             fontSize = 24.ssp(),
             fontWeight = FontWeight.Bold,

@@ -82,7 +82,7 @@
     .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--panel-2); color: var(--cyan-soft); }
     .tag.bad { color: var(--danger); }
     .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: grid; place-items: center; padding: 20px; z-index: 20; }
-    .modal { width: min(720px, 100%); max-height: 90vh; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px; }
+    .modal { width: min(980px, 100%); max-height: 90vh; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px; }
     pre { white-space: pre-wrap; word-break: break-all; color: var(--cyan-soft); font-size: 12px; }
     @media (max-width: 800px) {
       #app { grid-template-columns: 1fr; }
@@ -262,12 +262,13 @@ async function render() {
           <input style="max-width:240px" placeholder="手机号 / 方式 / IP" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('logins',{q:this.value,page:1})" />
           <button class="btn" onclick="go('logins',{q:document.querySelector('main input').value,page:1})">搜索</button>
         </div>
-        <table><thead><tr><th>时间</th><th>手机号</th><th>方式</th><th>结果</th><th>IP</th></tr></thead>
+        <table><thead><tr><th>时间</th><th>手机号</th><th>方式</th><th>结果</th><th>设备</th><th>IP / 归属地</th></tr></thead>
         <tbody>${d.items.map(r => `<tr>
           <td>${fmt(r.createdAt)}</td><td>${esc(r.phone||'—')}</td>
           <td>${methodLabel(r.method)}</td>
           <td><span class="tag ${r.success?'':'bad'}">${r.success?'成功':'失败'}</span></td>
-          <td>${esc(r.ip||'—')}</td>
+          <td>${esc(r.deviceLabel || r.devicePlatform || '—')}${r.deviceModel && r.deviceLabel && !String(r.deviceLabel).includes(r.deviceModel) ? `<div class="sub">${esc(r.deviceModel)}</div>` : ''}</td>
+          <td>${esc(r.ip||'—')}${r.ipLocation?`<div class="sub">${esc(r.ipLocation)}</div>`:''}</td>
         </tr>`).join('')}</tbody></table>
         ${pager(d.total)}`;
     } else if (state.page === 'sms') {
@@ -334,13 +335,18 @@ async function render() {
 
 function userTable(items, actions) {
   return `<table><thead><tr>
-    <th>头像</th><th>ID</th><th>手机号</th><th>注册时间</th><th>最近登录</th><th>登录方式</th>
-    <th>改密时间</th><th>登录次数</th><th>生词本</th><th>生词</th>${actions?'<th></th>':''}
+    <th>头像</th><th>ID</th><th>手机号</th><th>等级</th><th>注册时间</th><th>最近登录</th><th>最近设备</th><th>归属地</th><th>设备数</th>
+    <th>登录次数</th><th>生词本</th><th>生词</th>${actions?'<th></th>':''}
   </tr></thead><tbody>${items.map(u => `<tr>
     <td>${avatarCell(u.avatarUrl)}</td>
-    <td>${u.id}</td><td>${esc(u.phone)}</td><td>${fmt(u.createdAt)}</td>
-    <td>${fmt(u.lastLoginAt)}</td><td>${methodLabel(u.lastLoginMethod)}</td>
-    <td>${fmt(u.passwordChangedAt)}</td><td>${u.loginCount}</td>
+    <td>${u.id}</td><td>${esc(u.phone)}</td>
+    <td><span class="tag">Lv.${u.level ?? 0}</span></td>
+    <td>${fmt(u.createdAt)}</td>
+    <td>${fmt(u.lastLoginAt)}<div class="sub">${methodLabel(u.lastLoginMethod)}</div></td>
+    <td>${esc(u.lastDeviceLabel || '—')}${u.lastDevicePlatform?`<div class="sub">${esc(u.lastDevicePlatform)}</div>`:''}</td>
+    <td>${esc(u.lastIpLocation || '—')}${u.lastIp?`<div class="sub">${esc(u.lastIp)}</div>`:''}</td>
+    <td>${u.deviceCount ?? 0}</td>
+    <td>${u.loginCount}</td>
     <td>${u.notebookCount ?? '—'}</td><td>${u.wordCount ?? '—'}</td>
     ${actions?`<td>
       <button class="btn small" onclick="openUser(${u.id})">详情</button>
@@ -377,19 +383,37 @@ async function renderWords(el) {
 async function openUser(id) {
   const d = await api('/users/' + id);
   const u = d.user;
+  const lastDeviceId = (d.devices && d.devices[0]) ? d.devices[0].id : null;
   showModal(`<div class="user-head">
       ${avatarCell(u.avatarUrl, true)}
       <div>
-        <h2 style="margin:0">${esc(u.phone)}</h2>
+        <h2 style="margin:0">${esc(u.phone)} <span class="tag">Lv.${u.level ?? 0}</span></h2>
         <p class="sub" style="margin:8px 0 0">注册 ${fmt(u.createdAt)} · 最近登录 ${fmt(u.lastLoginAt)} · 改密 ${fmt(u.passwordChangedAt)}</p>
+        <p class="sub" style="margin:6px 0 0">最近设备：${esc(u.lastDeviceLabel || '—')} · ${esc(u.lastIpLocation || '归属地未知')}${u.lastIp ? ' · ' + esc(u.lastIp) : ''}</p>
       </div>
     </div>
     <div class="toolbar">
       <input id="newPhone" placeholder="改手机号" value="${esc(u.phone)}" style="max-width:180px" />
+      <label class="sub" style="display:flex;align-items:center;gap:6px">等级
+        <select id="newLevel" style="max-width:100px">
+          ${[0,1,2,3,4,5,6,7].map(lv => `<option value="${lv}" ${(u.level??0)===lv?'selected':''}>Lv.${lv}</option>`).join('')}
+        </select>
+      </label>
       <input id="newPass" type="password" placeholder="重置密码（可空）" style="max-width:180px" />
       <button class="btn" onclick="saveUser(${u.id})">保存</button>
       <button class="btn danger" onclick="delUser(${u.id},'${esc(u.phone)}')">删除用户</button>
     </div>
+    <h3>使用过的设备</h3>
+    <table><thead><tr><th>设备</th><th>平台</th><th>最近 IP / 归属地</th><th>首次出现</th><th>最近使用</th><th>登录次数</th><th></th></tr></thead>
+    <tbody>${(d.devices||[]).map(dev => `<tr>
+      <td>${esc(dev.label)}${dev.model?`<div class="sub">${esc([dev.brand,dev.model].filter(Boolean).join(' '))}</div>`:''}</td>
+      <td>${esc(dev.platform||'—')}${dev.osVersion?`<div class="sub">${esc(dev.osVersion)}</div>`:''}</td>
+      <td>${esc(dev.lastIp||'—')}${dev.lastIpLocation?`<div class="sub">${esc(dev.lastIpLocation)}</div>`:''}</td>
+      <td>${fmt(dev.firstSeenAt)}</td>
+      <td>${fmt(dev.lastSeenAt)}</td>
+      <td>${dev.loginCount}</td>
+      <td>${lastDeviceId===dev.id?'<span class="tag">最近登录</span>':''}</td>
+    </tr>`).join('') || '<tr><td colspan="7">暂无设备记录（用户下次登录后会出现）</td></tr>'}</tbody></table>
     <h3>生词本</h3>
     <table><thead><tr><th>名称</th><th>词数</th><th>创建</th><th></th></tr></thead>
     <tbody>${d.notebooks.map(n => `<tr>
@@ -397,9 +421,11 @@ async function openUser(id) {
       <td><button class="btn small" onclick="closeModal();go('notebooks',{notebookId:${n.id},page:1})">看词</button></td>
     </tr>`).join('') || '<tr><td colspan="4">无</td></tr>'}</tbody></table>
     <h3>登录记录</h3>
-    <table><thead><tr><th>时间</th><th>方式</th><th>结果</th><th>IP</th></tr></thead>
+    <table><thead><tr><th>时间</th><th>方式</th><th>结果</th><th>设备</th><th>IP / 归属地</th></tr></thead>
     <tbody>${d.logins.map(r => `<tr><td>${fmt(r.createdAt)}</td><td>${methodLabel(r.method)}</td>
-      <td>${r.success?'成功':'失败'}</td><td>${esc(r.ip||'')}</td></tr>`).join('') || '<tr><td colspan="4">无</td></tr>'}</tbody></table>
+      <td>${r.success?'成功':'失败'}</td>
+      <td>${esc(r.deviceLabel || '—')}</td>
+      <td>${esc(r.ip||'')}${r.ipLocation?`<div class="sub">${esc(r.ipLocation)}</div>`:''}</td></tr>`).join('') || '<tr><td colspan="5">无</td></tr>'}</tbody></table>
     <h3>改密记录</h3>
     <table><thead><tr><th>时间</th><th>原因</th><th>IP</th></tr></thead>
     <tbody>${d.passwordEvents.map(r => `<tr><td>${fmt(r.createdAt)}</td><td>${methodLabel(r.reason)}</td><td>${esc(r.ip||'')}</td></tr>`).join('') || '<tr><td colspan="3">无</td></tr>'}</tbody></table>
@@ -411,7 +437,10 @@ async function openUser(id) {
 
 async function saveUser(id) {
   try {
-    const body = { phone: document.getElementById('newPhone').value };
+    const body = {
+      phone: document.getElementById('newPhone').value,
+      level: Number(document.getElementById('newLevel').value),
+    };
     const pw = document.getElementById('newPass').value;
     if (pw) body.password = pw;
     await api('/users/' + id, { method: 'PATCH', body: JSON.stringify(body) });

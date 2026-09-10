@@ -7,6 +7,11 @@ CREATE TABLE IF NOT EXISTS users (
     password_changed_at TIMESTAMPTZ,
     login_count INTEGER NOT NULL DEFAULT 0,
     avatar_url TEXT,
+    last_device_label TEXT,
+    last_device_platform TEXT,
+    last_ip TEXT,
+    last_ip_location TEXT,
+    user_level INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -68,6 +73,11 @@ CREATE TABLE IF NOT EXISTS login_events (
     success BOOLEAN NOT NULL DEFAULT TRUE,
     ip TEXT,
     user_agent TEXT,
+    device_platform TEXT,
+    device_brand TEXT,
+    device_model TEXT,
+    device_label TEXT,
+    ip_location TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -76,6 +86,27 @@ CREATE INDEX IF NOT EXISTS login_events_created
 
 CREATE INDEX IF NOT EXISTS login_events_user
     ON login_events (user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_devices (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    device_key TEXT NOT NULL,
+    platform TEXT,
+    brand TEXT,
+    model TEXT,
+    label TEXT NOT NULL,
+    os_version TEXT,
+    app_version TEXT,
+    last_ip TEXT,
+    last_ip_location TEXT,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    login_count INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (user_id, device_key)
+);
+
+CREATE INDEX IF NOT EXISTS user_devices_user_seen
+    ON user_devices (user_id, last_seen_at DESC);
 
 CREATE TABLE IF NOT EXISTS password_events (
     id BIGSERIAL PRIMARY KEY,

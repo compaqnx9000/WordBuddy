@@ -11,6 +11,8 @@
 5. `npm run dev`（监听 `0.0.0.0:8787`，手机同一 Wi-Fi 可访问）
 6. 管理后台：浏览器打开 `http://127.0.0.1:8787/admin`，账号见 `.env` 的 `ADMIN_USERNAME` / `ADMIN_PASSWORD`
 
+登录时会记录设备（平台/品牌/型号）与 IP 归属地；用户详情可看全部设备及最近登录设备。
+
 开发登录：`SMS_PROVIDER=stub` 且 `SMS_SKIP_VERIFY=true`，任意 6 位验证码即可。
 
 正式短信（阿里云）：

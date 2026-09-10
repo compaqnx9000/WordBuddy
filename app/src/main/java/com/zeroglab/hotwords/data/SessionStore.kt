@@ -1,6 +1,7 @@
 package com.zeroglab.hotwords.data
 
 import android.content.Context
+import com.zeroglab.hotwords.LauncherIcons
 
 data class UserSession(
     val token: String,
@@ -8,6 +9,7 @@ data class UserSession(
     val phone: String,
     val vocabNotebookId: Long,
     val avatarUrl: String? = null,
+    val level: Int = 0,
 )
 
 class SessionStore(context: Context) {
@@ -19,8 +21,9 @@ class SessionStore(context: Context) {
         val userId = prefs.getLong(KEY_USER_ID, 0L)
         val vocabId = prefs.getLong(KEY_VOCAB_ID, 0L)
         val avatarUrl = prefs.getString(KEY_AVATAR, null)?.trim()?.takeIf { it.isNotEmpty() }
+        val level = prefs.getInt(KEY_LEVEL, 0).let(LauncherIcons::clamp)
         if (token.isEmpty() || userId <= 0L) return null
-        return UserSession(token, userId, phone, vocabId, avatarUrl)
+        return UserSession(token, userId, phone, vocabId, avatarUrl, level)
     }
 
     fun save(session: UserSession) {
@@ -30,6 +33,7 @@ class SessionStore(context: Context) {
             .putString(KEY_PHONE, session.phone)
             .putLong(KEY_VOCAB_ID, session.vocabNotebookId)
             .putString(KEY_AVATAR, session.avatarUrl.orEmpty())
+            .putInt(KEY_LEVEL, LauncherIcons.clamp(session.level))
             .apply()
     }
 
@@ -44,5 +48,6 @@ class SessionStore(context: Context) {
         private const val KEY_PHONE = "phone"
         private const val KEY_VOCAB_ID = "vocab_notebook_id"
         private const val KEY_AVATAR = "avatar_url"
+        private const val KEY_LEVEL = "user_level"
     }
 }

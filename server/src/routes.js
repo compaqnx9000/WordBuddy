@@ -78,6 +78,35 @@ router.get('/health', (_req, res) => {
   res.json({ ok: true })
 })
 
+function readAppVersion() {
+  const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/app/version.json')
+  if (!fs.existsSync(file)) return null
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+/** Compatibility alias for older clients that probe /version */
+router.get('/version', (_req, res) => {
+  const data = readAppVersion()
+  if (!data) {
+    res.status(404).json({ error: '尚未配置应用版本' })
+    return
+  }
+  res.json(data)
+})
+
+router.get('/app/version', (_req, res) => {
+  const data = readAppVersion()
+  if (!data) {
+    res.status(404).json({ error: '尚未配置应用版本' })
+    return
+  }
+  res.json(data)
+})
+
 router.post('/auth/send-code', async (req, res) => {
   const phone = normalizePhone(req.body?.phone)
   if (!phone) {
@@ -128,16 +157,18 @@ async function finishLogin(req, res, user, method) {
     method,
     success: true,
   })
-  const avatarUrl =
-    user.avatar_url ||
-    (await query('SELECT avatar_url FROM users WHERE id = $1', [user.id])).rows[0]?.avatar_url ||
-    null
+  const profile = (
+    await query('SELECT avatar_url, user_level FROM users WHERE id = $1', [user.id])
+  ).rows[0]
+  const avatarUrl = user.avatar_url || profile?.avatar_url || null
+  const level = Math.min(7, Math.max(0, Number.isFinite(Number(user.user_level ?? profile?.user_level)) ? Number(user.user_level ?? profile?.user_level) : 0))
   res.json({
     isNewUser: false,
     token: signToken(user),
-    user: { id: Number(user.id), phone: user.phone, avatarUrl },
+    user: { id: Number(user.id), phone: user.phone, avatarUrl, level },
     vocabNotebookId: Number(vocabNotebookId),
     avatarUrl,
+    level,
   })
 }
 
@@ -159,7 +190,7 @@ router.post('/auth/login', async (req, res) => {
       return
     }
     const user = (
-      await query('SELECT id, phone, password_hash FROM users WHERE phone = $1', [phone])
+      await query('SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE phone = $1', [phone])
     ).rows[0]
     if (!user) {
       await recordLoginEvent(req, { phone, method: 'password', success: false })
@@ -188,7 +219,7 @@ router.post('/auth/login', async (req, res) => {
   }
 
   const user = (
-    await query('SELECT id, phone, password_hash FROM users WHERE phone = $1', [phone])
+    await query('SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE phone = $1', [phone])
   ).rows[0]
   if (!user || !user.password_hash) {
     // Keep the SMS code unconsumed so /auth/register can verify it again.
@@ -241,15 +272,20 @@ router.post('/auth/register', async (req, res) => {
 
 router.get('/me', authRequired, async (req, res) => {
   const vocabNotebookId = await ensureUserNotebook(req.user.id)
-  const row = (await query('SELECT phone, avatar_url FROM users WHERE id = $1', [req.user.id])).rows[0]
+  const row = (
+    await query('SELECT id, phone, avatar_url, user_level FROM users WHERE id = $1', [req.user.id])
+  ).rows[0]
+  const level = Math.min(7, Math.max(0, Number.isFinite(Number(row?.user_level)) ? Number(row.user_level) : 0))
   res.json({
     user: {
-      id: req.user.id,
+      id: Number(row?.id || req.user.id),
       phone: row?.phone || req.user.phone,
       avatarUrl: row?.avatar_url || null,
+      level,
     },
     vocabNotebookId: Number(vocabNotebookId),
     avatarUrl: row?.avatar_url || null,
+    level,
   })
 })
 
