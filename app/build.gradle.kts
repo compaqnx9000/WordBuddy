@@ -20,8 +20,8 @@ android {
         applicationId = "com.zeroglab.hotwords"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "0.17"
+        versionCode = 11
+        versionName = "0.20"
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }

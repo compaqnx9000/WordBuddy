@@ -414,9 +414,9 @@ router.post('/notebooks', authRequired, async (req, res) => {
     res.status(400).json({ error: '已有同名生词本' })
     return
   }
-  const maxSort = (
+  const nextSort = (
     await query(
-      `SELECT coalesce(max(sort_order), 0) AS n
+      `SELECT coalesce(min(sort_order), 0) - 1 AS n
        FROM notebooks WHERE kind = 'user' AND owner_user_id = $1`,
       [req.user.id],
     )
@@ -425,7 +425,7 @@ router.post('/notebooks', authRequired, async (req, res) => {
     `INSERT INTO notebooks (kind, owner_user_id, name, sort_order)
      VALUES ('user', $1, $2, $3)
      RETURNING id, kind, slug, name, sort_order, created_at`,
-    [req.user.id, name, maxSort + 1],
+    [req.user.id, name, nextSort],
   )
   res.status(201).json({ item: mapNotebook({ ...inserted.rows[0], word_count: 0 }) })
 })

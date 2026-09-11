@@ -466,11 +466,12 @@ class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db",
     }
 
     private fun nextNotebookOrder(): Int {
+        // Put newly created personal notebooks at the front of the chip row.
         readableDatabase.rawQuery(
-            "SELECT COALESCE(MAX(sort_order), -1) FROM $NOTEBOOK_TABLE",
+            "SELECT COALESCE(MIN(sort_order), 0) FROM $NOTEBOOK_TABLE",
             null,
         ).use { cursor ->
-            return if (cursor.moveToFirst()) cursor.getInt(0) + 1 else 0
+            return if (cursor.moveToFirst()) cursor.getInt(0) - 1 else 0
         }
     }
 
@@ -569,7 +570,8 @@ class VocabRepository(context: Context) {
 
     fun publishNotebooks(books: List<Notebook>) {
         db.replaceNotebooks(books)
-        _notebooks.value = db.listNotebooks()
+        // Prefer the caller's order (already remapped sortOrder); avoid reshuffling surprises.
+        _notebooks.value = books
     }
 
     fun openCachedNotebook(notebookId: Long) {

@@ -268,17 +268,28 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val catalogIds = catalogs.map { it.id }.toSet()
         val catalogSlugs = catalogs.mapNotNull { it.slug }.toSet()
+        // Personal notebooks always lead the chip row (newest first), including newly created ones.
         val users = existing.filter { book ->
             !book.isSystem && book.id !in catalogIds && book.slug !in catalogSlugs
-        }
+        }.sortedWith(
+            compareByDescending<Notebook> { it.createdAtMillis }
+                .thenByDescending { it.id },
+        )
         val bundled = BuiltInWordbookSeeder.missingNotebooks(catalogs).map { built ->
             existing.firstOrNull { it.slug == built.slug } ?: built
         }
-        val merged = (users + catalogs + bundled).sortedWith(
-            compareBy<Notebook> { if (it.isSystem) 1 else 0 }
-                .thenBy { it.sortOrder }
-                .thenBy { it.id },
-        )
+        val catalogBySlug = LinkedHashMap<String, Notebook>()
+        for (book in catalogs + bundled) {
+            val slug = book.slug ?: continue
+            catalogBySlug.putIfAbsent(slug, book)
+        }
+        val orderedCatalogs = CATALOG_CHIP_ORDER.mapNotNull { catalogBySlug.remove(it) } +
+            catalogBySlug.values.sortedWith(compareBy({ it.sortOrder }, { it.id }))
+        // Rewrite sortOrder to display index so SQLite ORDER BY sort_order keeps this chip order
+        // (server/local sort_order alone can interleave user books with catalogs).
+        val merged = (users + orderedCatalogs).mapIndexed { index, book ->
+            book.copy(sortOrder = index)
+        }
         withContext(Dispatchers.IO) { repo.publishNotebooks(merged) }
         prefetchCatalogHeads(merged.filter { it.isSystem })
     }
@@ -2084,6 +2095,15 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         const val HEADS_CHUNK = 400
         /** If the letter is farther than this many unloaded rows, jump via fromIndex. */
         const val SEEK_JUMP_GAP = 80
+        /** System catalog chip order after personal notebooks. */
+        val CATALOG_CHIP_ORDER = listOf(
+            Notebook.ZHONGKAO_SLUG,
+            Notebook.GAOKAO_SLUG,
+            Notebook.CET4_SLUG,
+            Notebook.CET6_SLUG,
+            "toefl",
+            "ielts",
+        )
     }
 
     override fun onCleared() {

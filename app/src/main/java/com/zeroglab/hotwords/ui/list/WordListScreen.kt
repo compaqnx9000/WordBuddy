@@ -627,6 +627,7 @@ private fun NotebookSwitcher(
     val chipHeight = 36.sdp()
     val chipRadius = 18.sdp()
     val chipShape = RoundedCornerShape(chipRadius)
+    val orderedNotebooks = remember(notebooks) { orderNotebookChips(notebooks) }
     Row(
         Modifier
             .fillMaxWidth()
@@ -664,7 +665,7 @@ private fun NotebookSwitcher(
             horizontalArrangement = Arrangement.spacedBy(8.sdp()),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            notebooks.forEach { notebook ->
+            orderedNotebooks.forEach { notebook ->
                 val selected = notebook.id == activeNotebookId
                 val canDelete = !notebook.isSystem
                 val base = catalogChipStyle(notebook) ?: CatalogChipStyle(
@@ -741,6 +742,30 @@ private fun NotebookSwitcher(
             }
         }
     }
+}
+
+/** Personal notebooks first (newest first), then system catalogs in fixed exam order. */
+private fun orderNotebookChips(notebooks: List<Notebook>): List<Notebook> {
+    val catalogOrder = listOf(
+        Notebook.ZHONGKAO_SLUG,
+        Notebook.GAOKAO_SLUG,
+        Notebook.CET4_SLUG,
+        Notebook.CET6_SLUG,
+        "toefl",
+        "ielts",
+    )
+    val users = notebooks.filter { !it.isSystem }.sortedWith(
+        compareByDescending<Notebook> { it.createdAtMillis }
+            .thenByDescending { it.id },
+    )
+    val catalogBySlug = LinkedHashMap<String, Notebook>()
+    for (book in notebooks.filter { it.isSystem }) {
+        val slug = book.slug ?: continue
+        catalogBySlug.putIfAbsent(slug, book)
+    }
+    val orderedCatalogs = catalogOrder.mapNotNull { catalogBySlug.remove(it) } +
+        catalogBySlug.values.sortedWith(compareBy({ it.sortOrder }, { it.id }))
+    return users + orderedCatalogs
 }
 
 private data class CatalogChipStyle(
