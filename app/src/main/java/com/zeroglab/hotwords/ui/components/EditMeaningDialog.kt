@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -144,72 +145,84 @@ private fun StellarEditMeaningDialog(
                     lineHeight = 22.ssp(),
                 )
 
-                Column(
+                Row(
                     Modifier
                         .weight(1f, fill = false)
-                        .padding(top = 16.sdp())
-                        .verticalColumnScrollbar(bodyScroll, color = scrollbarColor)
-                        .verticalScroll(bodyScroll),
+                        .padding(top = 16.sdp()),
                 ) {
-                    if (originals.isNotEmpty()) {
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .verticalScroll(bodyScroll)
+                            .padding(end = 10.sdp()),
+                    ) {
+                        if (originals.isNotEmpty()) {
+                            Text(
+                                text = "词典释义",
+                                color = Stellar.OnSurfaceVariant,
+                                fontSize = 13.ssp(),
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Spacer(Modifier.height(8.sdp()))
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(fieldShape)
+                                    .background(Stellar.Surface)
+                                    .border(1.dp, Stellar.Outline.copy(alpha = 0.55f), fieldShape)
+                                    .padding(14.sdp()),
+                            ) {
+                                originals.forEachIndexed { index, def ->
+                                    if (index > 0) Spacer(Modifier.height(12.sdp()))
+                                    StellarDefinitionRow(def)
+                                }
+                            }
+                            Spacer(Modifier.height(18.sdp()))
+                        }
+
                         Text(
-                            text = "词典释义",
-                            color = Stellar.OnSurfaceVariant,
+                            text = "我的补充",
+                            color = Stellar.Pink,
                             fontSize = 13.ssp(),
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = FontWeight.SemiBold,
                         )
                         Spacer(Modifier.height(8.sdp()))
-                        Column(
-                            Modifier
+                        BasicTextField(
+                            value = userText,
+                            onValueChange = { userText = it },
+                            textStyle = TextStyle(
+                                color = Stellar.OnSurface,
+                                fontSize = 15.ssp(),
+                                lineHeight = 22.ssp(),
+                            ),
+                            cursorBrush = SolidColor(accent),
+                            decorationBox = { inner ->
+                                Box {
+                                    if (userText.isEmpty()) {
+                                        Text(
+                                            text = "输入你的补充笔记...",
+                                            color = Stellar.OnSurfaceVariant.copy(alpha = 0.45f),
+                                            fontSize = 15.ssp(),
+                                        )
+                                    }
+                                    inner()
+                                }
+                            },
+                            modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 120.sdp(), max = 220.sdp())
                                 .clip(fieldShape)
                                 .background(Stellar.Surface)
-                                .border(1.dp, Stellar.Outline.copy(alpha = 0.55f), fieldShape)
+                                .border(1.dp, Stellar.Pink.copy(alpha = 0.35f), fieldShape)
                                 .padding(14.sdp()),
-                        ) {
-                            originals.forEachIndexed { index, def ->
-                                if (index > 0) Spacer(Modifier.height(12.sdp()))
-                                StellarDefinitionRow(def)
-                            }
-                        }
-                        Spacer(Modifier.height(18.sdp()))
+                        )
                     }
-
-                    Text(
-                        text = "我的补充",
-                        color = Stellar.Pink,
-                        fontSize = 13.ssp(),
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(8.sdp()))
-                    BasicTextField(
-                        value = userText,
-                        onValueChange = { userText = it },
-                        textStyle = TextStyle(
-                            color = Stellar.OnSurface,
-                            fontSize = 15.ssp(),
-                            lineHeight = 22.ssp(),
-                        ),
-                        cursorBrush = SolidColor(accent),
-                        decorationBox = { inner ->
-                            Box {
-                                if (userText.isEmpty()) {
-                                    Text(
-                                        text = "输入你的补充笔记...",
-                                        color = Stellar.OnSurfaceVariant.copy(alpha = 0.45f),
-                                        fontSize = 15.ssp(),
-                                    )
-                                }
-                                inner()
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 120.sdp(), max = 220.sdp())
-                            .clip(fieldShape)
-                            .background(Stellar.Surface)
-                            .border(1.dp, Stellar.Pink.copy(alpha = 0.35f), fieldShape)
-                            .padding(14.sdp()),
+                    // Scrollbar sits in its own right gutter, outside the field borders.
+                    Box(
+                        Modifier
+                            .width(6.sdp())
+                            .fillMaxHeight()
+                            .verticalColumnScrollbar(bodyScroll, width = 3.dp, color = scrollbarColor),
                     )
                 }
 
@@ -292,15 +305,20 @@ private fun Modifier.verticalColumnScrollbar(
     drawContent()
     val viewport = size.height
     val content = state.maxValue.toFloat() + viewport
-    if (content <= viewport || state.maxValue <= 0) return@drawWithContent
-    val barHeight = (viewport / content) * viewport
+    if (content <= viewport || state.maxValue <= 0 || size.width <= 0f || viewport <= 0f) {
+        return@drawWithContent
+    }
+    val barWidth = width.toPx().coerceAtMost(size.width)
+    val barHeight = ((viewport / content) * viewport).coerceAtLeast(barWidth * 4)
     val scrollRange = (viewport - barHeight).coerceAtLeast(0f)
     val barY = (state.value.toFloat() / state.maxValue) * scrollRange
+    // Center the thumb in the gutter track.
+    val barX = ((size.width - barWidth) / 2f).coerceAtLeast(0f)
     drawRoundRect(
         color = color,
-        topLeft = Offset(size.width - width.toPx(), barY),
-        size = Size(width.toPx(), barHeight.coerceAtLeast(width.toPx() * 4)),
-        cornerRadius = CornerRadius(width.toPx()),
+        topLeft = Offset(barX, barY),
+        size = Size(barWidth, barHeight),
+        cornerRadius = CornerRadius(barWidth),
     )
 }
 

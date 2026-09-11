@@ -187,7 +187,8 @@ fun AlphabetIndexBar(
         if (current != null) {
             val bubbleSize = 56.sdp()
             val bubblePx = with(density) { bubbleSize.toPx() }
-            val bubbleShiftX = with(density) { 36.sdp().roundToPx() }
+            // Keep the preview clear of the thumb on the alphabet rail.
+            val bubbleShiftX = with(density) { 72.sdp().roundToPx() }
             val y = (fingerY - bubblePx / 2f)
                 .coerceIn(0f, (heightPx - bubblePx).coerceAtLeast(0f))
             Box(

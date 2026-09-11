@@ -20,12 +20,12 @@ android {
         applicationId = "com.zeroglab.hotwords"
         minSdk = 26
         targetSdk = 34
-        versionCode = 11
-        versionName = "0.20"
+        versionCode = 15
+        versionName = "0.24"
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
-        // Release / physical builds talk to the Aliyun API.
+        // Domain https://wordbuddy.cc is blocked until ICP 备案; use server IP for now.
         buildConfigField("String", "API_BASE_URL", "\"http://39.96.67.128:8787\"")
         buildConfigField("String", "API_FALLBACK_URL", "\"http://39.96.67.128:8787\"")
     }
@@ -47,9 +47,9 @@ android {
 
     buildTypes {
         debug {
-            // Emulator reaches this machine via 10.0.2.2 (local catalogs include 中考).
+            // Emulator → host machine; physical debug builds fall back to cloud API.
             buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8787\"")
-            buildConfigField("String", "API_FALLBACK_URL", "\"http://192.168.1.3:8787\"")
+            buildConfigField("String", "API_FALLBACK_URL", "\"http://39.96.67.128:8787\"")
         }
         release {
             isMinifyEnabled = false

@@ -516,10 +516,20 @@ class HotWordsApi {
         val hint = when {
             message.contains("Connection reset", ignoreCase = true) ||
                 message.contains("failed to connect", ignoreCase = true) ||
-                message.contains("ECONNREFUSED", ignoreCase = true) ->
-                "无法连接服务器，请确认后端已启动（server 目录执行 npm start），并已运行 adb reverse tcp:8787 tcp:8787"
-            message.contains("timeout", ignoreCase = true) ->
-                "连接服务器超时，请检查网络或后端是否正常运行"
+                message.contains("ECONNREFUSED", ignoreCase = true) ||
+                message.contains("Unable to resolve host", ignoreCase = true) ||
+                message.contains("UnknownHost", ignoreCase = true) ->
+                if (BuildConfig.DEBUG) {
+                    "无法连接服务器。模拟器请确认本机后端已启动，并执行 adb reverse tcp:8787 tcp:8787；真机 Debug 会自动尝试云端。"
+                } else {
+                    "无法连接服务器，请检查手机网络后重试"
+                }
+            message.contains("timeout", ignoreCase = true) ||
+                message.contains("timed out", ignoreCase = true) ->
+                "连接服务器超时，请检查网络后重试"
+            message.contains("SSL", ignoreCase = true) ||
+                message.contains("CertPath", ignoreCase = true) ->
+                "安全连接失败，请稍后重试或检查系统时间"
             else -> message.ifBlank { "无法连接服务器" }
         }
         return ApiException(hint)

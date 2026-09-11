@@ -10,6 +10,8 @@
 4. `npm run db:seed`（导入中考 / 高考 / 四级 / 六级 enrichment）
 5. `npm run dev`（监听 `0.0.0.0:8787`，手机同一 Wi-Fi 可访问）
 6. 管理后台：浏览器打开 `http://127.0.0.1:8787/admin`，账号见 `.env` 的 `ADMIN_USERNAME` / `ADMIN_PASSWORD`
+7. 线上 API：`http://39.96.67.128:8787`（域名 `wordbuddy.cc` 需完成 ICP 备案后，阿里云才放行 80/443）
+8. 管理后台：`http://39.96.67.128:8787/admin`（备案前勿依赖 `https://wordbuddy.cc`）
 
 登录时会记录设备（平台/品牌/型号）与 IP 归属地；用户详情可看全部设备及最近登录设备。
 
@@ -22,4 +24,4 @@
 4. `SMS_PROVIDER=aliyun`，`SMS_SKIP_VERIFY=false`
 5. 重启 `npm run dev` / `npm start`
 
-App 默认连 `http://192.168.1.3:8787`（见 `app/build.gradle.kts` 的 `API_BASE_URL`）。IP 变了改这一处再打包。
+App Debug 默认连本机 `http://10.0.2.2:8787`；Release 连 `https://wordbuddy.cc`（见 `app/build.gradle.kts` 的 `API_BASE_URL`）。
