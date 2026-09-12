@@ -627,12 +627,17 @@ class VocabRepository(context: Context) {
         } else {
             emptyMap()
         }
+        val cachedInDb = db.listByNotebook(notebookId).associateBy { it.id }
         _items.value = heads.map { head ->
-            val old = existing[head.id]
-            if (old != null && old.definitions.isNotEmpty()) {
-                old.copy(
-                    text = head.text,
-                    isPhrase = head.isPhrase,
+            val old = existing[head.id] ?: cachedInDb[head.id]
+            if (old != null) {
+                head.copy(
+                    definitions = if (old.definitions.isNotEmpty()) old.definitions else head.definitions,
+                    examples = if (old.examples.isNotEmpty()) old.examples else head.examples,
+                    imageBlob = old.imageBlob ?: head.imageBlob,
+                    nearWords = if (old.nearWords.isNotEmpty()) old.nearWords else head.nearWords,
+                    synonyms = if (old.synonyms.isNotEmpty()) old.synonyms else head.synonyms,
+                    antonyms = if (old.antonyms.isNotEmpty()) old.antonyms else head.antonyms,
                     ipaUk = head.ipaUk ?: old.ipaUk,
                     ipaUs = head.ipaUs ?: old.ipaUs,
                     sortOrder = head.sortOrder,
@@ -653,9 +658,27 @@ class VocabRepository(context: Context) {
     fun appendHeadStubs(notebookId: Long, more: List<VocabEntry>, total: Int) {
         if (activeNotebookId != notebookId || more.isEmpty()) return
         val seen = _items.value.mapTo(HashSet()) { it.id }
-        val appended = more.filter { seen.add(it.id) }
-        if (appended.isEmpty()) return
-        _items.value = _items.value + appended
+        val toAppend = more.filter { seen.add(it.id) }
+        if (toAppend.isEmpty()) return
+        val cachedInDb = db.listByNotebook(notebookId).associateBy { it.id }
+        val merged = toAppend.map { head ->
+            val cached = cachedInDb[head.id]
+            if (cached != null) {
+                head.copy(
+                    definitions = if (cached.definitions.isNotEmpty()) cached.definitions else head.definitions,
+                    examples = if (cached.examples.isNotEmpty()) cached.examples else head.examples,
+                    imageBlob = cached.imageBlob ?: head.imageBlob,
+                    nearWords = if (cached.nearWords.isNotEmpty()) cached.nearWords else head.nearWords,
+                    synonyms = if (cached.synonyms.isNotEmpty()) cached.synonyms else head.synonyms,
+                    antonyms = if (cached.antonyms.isNotEmpty()) cached.antonyms else head.antonyms,
+                    ipaUk = head.ipaUk ?: cached.ipaUk,
+                    ipaUs = head.ipaUs ?: cached.ipaUs,
+                )
+            } else {
+                head
+            }
+        }
+        _items.value = _items.value + merged
         val count = maxOf(total, _items.value.size)
         db.setWordCount(notebookId, count)
         nextCursor = _items.value.lastOrNull()?.let { "${it.sortOrder}:${it.id}" }
@@ -690,6 +713,7 @@ class VocabRepository(context: Context) {
                     notebookId = notebookId,
                     sortOrder = row.sortOrder,
                     text = row.text,
+                    imageBlob = row.imageBlob ?: fresh.imageBlob,
                 )
             }
         }
@@ -723,19 +747,24 @@ class VocabRepository(context: Context) {
 
     private fun refresh() {
         if (activeNotebookId > 0L) {
-            _items.value = db.listByNotebook(activeNotebookId)
+            val isSystem = _notebooks.value.firstOrNull { it.id == activeNotebookId }?.isSystem == true
+            if (!isSystem) {
+                _items.value = db.listByNotebook(activeNotebookId)
+            }
         }
         _notebooks.value = db.listNotebooks()
     }
 
-    fun peekWord(notebookId: Long, word: String): VocabEntry? = db.findByWord(notebookId, word)
+    fun peekWord(notebookId: Long, word: String): VocabEntry? =
+        _items.value.firstOrNull { it.notebookId == notebookId && it.text.equals(word, ignoreCase = true) }
+            ?: db.findByWord(notebookId, word)
 
     suspend fun getByWord(notebookId: Long, word: String): VocabEntry? = withContext(Dispatchers.IO) {
-        db.findByWord(notebookId, word)
+        peekWord(notebookId, word)
     }
 
     suspend fun getById(id: Long): VocabEntry? = withContext(Dispatchers.IO) {
-        db.findById(id)
+        _items.value.firstOrNull { it.id == id } ?: db.findById(id)
     }
 
     suspend fun cacheEntry(entry: VocabEntry) = withContext(Dispatchers.IO) {
@@ -748,35 +777,57 @@ class VocabRepository(context: Context) {
             )
             db.setWordCount(entry.notebookId, count)
         }
-        refresh()
+        if (activeNotebookId == entry.notebookId) {
+            if (_items.value.any { it.id == entry.id }) {
+                _items.value = _items.value.map { if (it.id == entry.id) entry else it }
+            } else if (_notebooks.value.firstOrNull { it.id == activeNotebookId }?.isSystem != true) {
+                _items.value = db.listByNotebook(activeNotebookId)
+            }
+        }
+        _notebooks.value = db.listNotebooks()
     }
 
     suspend fun insert(entry: VocabEntry): Long = withContext(Dispatchers.IO) {
         val id = db.insert(entry)
-        refresh()
+        val inserted = db.findById(id) ?: entry.copy(id = id)
+        if (activeNotebookId == entry.notebookId) {
+            if (_notebooks.value.firstOrNull { it.id == activeNotebookId }?.isSystem != true) {
+                _items.value = db.listByNotebook(activeNotebookId)
+            } else {
+                _items.value = listOf(inserted) + _items.value
+            }
+        }
+        _notebooks.value = db.listNotebooks()
         id
     }
 
     suspend fun delete(id: Long) = withContext(Dispatchers.IO) {
-        val existing = db.findById(id)
+        val existing = _items.value.firstOrNull { it.id == id } ?: db.findById(id)
         db.delete(id)
         if (existing != null) {
             val count = db.countWordsInNotebook(existing.notebookId)
             val reported = _notebooks.value.firstOrNull { it.id == existing.notebookId }?.wordCount ?: count
             db.setWordCount(existing.notebookId, minOf(count, (reported - 1).coerceAtLeast(0)))
+            if (_items.value.any { it.id == id }) {
+                _items.value = _items.value.filter { it.id != id }
+            }
         }
-        refresh()
+        _notebooks.value = db.listNotebooks()
     }
 
     suspend fun createNotebook(name: String): Long = withContext(Dispatchers.IO) {
         val id = db.createNotebook(name)
-        refresh()
+        _notebooks.value = db.listNotebooks()
         id
     }
 
     suspend fun deleteNotebook(id: Long) = withContext(Dispatchers.IO) {
         db.deleteNotebook(id)
-        refresh()
+        if (activeNotebookId == id) {
+            activeNotebookId = 0L
+            _items.value = emptyList()
+        }
+        _notebooks.value = db.listNotebooks()
     }
 
     suspend fun moveEntriesToNotebook(entryIds: List<Long>, targetNotebookId: Long) =
@@ -788,8 +839,18 @@ class VocabRepository(context: Context) {
     fun wordCountInNotebook(notebookId: Long): Int = db.countWordsInNotebook(notebookId)
 
     suspend fun updateImageBlob(id: Long, imageBlob: ByteArray?) = withContext(Dispatchers.IO) {
-        db.updateImageBlob(id, imageBlob)
-        refresh()
+        val inMem = _items.value.firstOrNull { it.id == id }
+        val entry = inMem ?: db.findById(id)
+        if (entry != null) {
+            val updated = entry.copy(imageBlob = imageBlob)
+            db.upsertEntries(listOf(updated))
+            if (_items.value.any { it.id == id }) {
+                _items.value = _items.value.map { if (it.id == id) updated else it }
+            }
+        } else {
+            db.updateImageBlob(id, imageBlob)
+        }
+        _notebooks.value = db.listNotebooks()
     }
 
     suspend fun updateRelatedWords(
@@ -799,13 +860,38 @@ class VocabRepository(context: Context) {
         antonyms: List<String>? = null,
         examples: List<ExampleSentence>? = null,
     ) = withContext(Dispatchers.IO) {
-        db.updateRelatedWords(id, nearWords, synonyms, antonyms, examples)
-        refresh()
+        val inMem = _items.value.firstOrNull { it.id == id }
+        val entry = inMem ?: db.findById(id)
+        if (entry != null) {
+            val updated = entry.copy(
+                nearWords = nearWords ?: entry.nearWords,
+                synonyms = synonyms ?: entry.synonyms,
+                antonyms = antonyms ?: entry.antonyms,
+                examples = examples ?: entry.examples,
+            )
+            db.upsertEntries(listOf(updated))
+            if (_items.value.any { it.id == id }) {
+                _items.value = _items.value.map { if (it.id == id) updated else it }
+            }
+        } else {
+            db.updateRelatedWords(id, nearWords, synonyms, antonyms, examples)
+        }
+        _notebooks.value = db.listNotebooks()
     }
 
     suspend fun updateDefinitions(id: Long, definitions: List<Definition>) = withContext(Dispatchers.IO) {
-        db.updateDefinitions(id, definitions)
-        refresh()
+        val inMem = _items.value.firstOrNull { it.id == id }
+        val entry = inMem ?: db.findById(id)
+        if (entry != null) {
+            val updated = entry.copy(definitions = definitions)
+            db.upsertEntries(listOf(updated))
+            if (_items.value.any { it.id == id }) {
+                _items.value = _items.value.map { if (it.id == id) updated else it }
+            }
+        } else {
+            db.updateDefinitions(id, definitions)
+        }
+        _notebooks.value = db.listNotebooks()
     }
 
     suspend fun rewriteOrders(notebookId: Long, ids: List<Long>) {

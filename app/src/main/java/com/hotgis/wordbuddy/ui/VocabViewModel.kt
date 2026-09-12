@@ -562,12 +562,15 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _ui.update { it.copy(imageBusy = true, imageError = null) }
             runCatching {
+                android.util.Log.d("VocabViewModel", "setEntryImage start: id=$id, uri=$uri")
                 val bytes = withContext(Dispatchers.IO) {
                     ImageCodec.fromUri(getApplication(), uri)
                 }
+                android.util.Log.d("VocabViewModel", "setEntryImage decoded bytes: ${bytes.size}")
                 repo.updateImageBlob(id, bytes)
                 syncLookupImage(id)
-            }.onFailure {
+            }.onFailure { e ->
+                android.util.Log.e("VocabViewModel", "setEntryImage failed for id=$id, uri=$uri", e)
                 _ui.update { it.copy(imageError = "选图失败，请换一张再试") }
             }
             _ui.update { it.copy(imageBusy = false) }

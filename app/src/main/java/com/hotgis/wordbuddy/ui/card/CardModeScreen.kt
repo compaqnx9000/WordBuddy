@@ -57,6 +57,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -151,12 +152,12 @@ fun CardModeScreen(
     onNearEnd: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    var showImageDialog by remember { mutableStateOf(false) }
-    var imageTargetId by remember { mutableStateOf<Long?>(null) }
+    var showImageDialog by rememberSaveable { mutableStateOf(false) }
+    var imageTargetId by rememberSaveable { mutableStateOf<Long?>(null) }
     var meaningEditEntry by remember { mutableStateOf<VocabEntry?>(null) }
     val launchGallery = rememberImagePickerLauncher(
         onImagePicked = { uri ->
-            val id = imageTargetId
+            val id = imageTargetId ?: currentEntry?.id
             if (id != null) {
                 showImageDialog = false
                 onPickImage(id, uri)
@@ -963,7 +964,7 @@ private fun LargeDeckSwipePager(
     modifier: Modifier = Modifier,
     pageContent: @Composable (VocabEntry) -> Unit,
 ) {
-    val window = remember(current.id, prev?.id, next?.id) {
+    val window = remember(current, prev, next) {
         virtualCardWindow(current, prev, next)
     }
     val pagerState = rememberPagerState(

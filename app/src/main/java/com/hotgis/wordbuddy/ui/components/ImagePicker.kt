@@ -39,23 +39,27 @@ fun rememberImagePickerLauncher(
     val context = LocalContext.current
     var launchToken by remember { mutableIntStateOf(0) }
 
+    fun report(message: String) {
+        if (onError != null) onError(message) else {
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
     ) { result ->
+        Log.d("ImagePicker", "galleryLauncher onResult: code=${result.resultCode}, data=${result.data}")
         if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
         val intent = result.data
         val uri = intent?.data
             ?: intent?.clipData?.let { clip ->
                 if (clip.itemCount > 0) clip.getItemAt(0).uri else null
             }
+        Log.d("ImagePicker", "galleryLauncher got uri: $uri")
         if (uri != null) {
             onImagePicked(uri)
-        }
-    }
-
-    fun report(message: String) {
-        if (onError != null) onError(message) else {
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        } else {
+            report("未能获取图片路径")
         }
     }
 

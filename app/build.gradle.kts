@@ -20,8 +20,8 @@ android {
         applicationId = "com.hotgis.wordbuddy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 19
-        versionName = "0.28"
+        versionCode = 21
+        versionName = "0.30"
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
@@ -84,6 +84,7 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.fragment.ktx)
     implementation(libs.androidx.biometric)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)

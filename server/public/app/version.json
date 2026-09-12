@@ -1,8 +1,8 @@
 {
-  "versionCode": 19,
-  "versionName": "0.28",
+  "versionCode": 21,
+  "versionName": "0.30",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "修复小米/澎湃OS等真机相册调起异常，全面兼容各品牌系统相册选图。",
-  "releasedAt": "2026-09-12T13:10:00.000Z"
+  "notes": "修复选图后词库被意外清空的问题（保证内存词库与本地数据库持久化平滑同步）。",
+  "releasedAt": "2026-09-12T14:15:00.000Z"
 }
