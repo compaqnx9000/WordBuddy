@@ -189,7 +189,13 @@ private fun StellarImageSourceDialog(
                             .clip(RoundedCornerShape(24.sdp()))
                             .border(1.5.dp, Stellar.Cyan.copy(alpha = 0.55f), RoundedCornerShape(24.sdp()))
                             .background(Stellar.Cyan.copy(alpha = 0.08f))
-                            .clickable(enabled = !busy, onClick = onPickGallery),
+                            .clickable(
+                                enabled = !busy,
+                                onClick = {
+                                    onDismiss()
+                                    onPickGallery()
+                                },
+                            ),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -392,7 +398,13 @@ private fun ClassicImageSourceDialog(
                     color = HwColors.AccentBlue,
                     fontSize = 15.ssp(),
                     modifier = Modifier
-                        .clickable(enabled = !busy, onClick = onPickGallery)
+                        .clickable(
+                            enabled = !busy,
+                            onClick = {
+                                onDismiss()
+                                onPickGallery()
+                            },
+                        )
                         .padding(8.sdp()),
                 )
                 Spacer(Modifier.weight(1f))

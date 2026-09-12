@@ -1,8 +1,8 @@
 {
-  "versionCode": 17,
-  "versionName": "0.26",
+  "versionCode": 18,
+  "versionName": "0.27",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "新增相册/媒体存储动态权限申请，修复相册选图权限受阻问题；优化各品牌系统相册兼容性。",
-  "releasedAt": "2026-09-12T12:20:00.000Z"
+  "notes": "修复相册选择器在真机上无法弹出的问题，优化系统相册兼容性与交互流程。",
+  "releasedAt": "2026-09-12T12:45:00.000Z"
 }

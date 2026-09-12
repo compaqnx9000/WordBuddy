@@ -15,15 +15,18 @@
 
     <queries>
         <intent>
+            <action android:name="android.provider.action.PICK_IMAGES" />
+        </intent>
+        <intent>
             <action android:name="android.intent.action.PICK" />
             <data android:mimeType="image/*" />
         </intent>
         <intent>
-            <action android:name="android.intent.action.PICK" />
-            <data android:scheme="content" android:host="media" android:mimeType="image/*" />
+            <action android:name="android.intent.action.GET_CONTENT" />
+            <data android:mimeType="image/*" />
         </intent>
         <intent>
-            <action android:name="android.intent.action.GET_CONTENT" />
+            <action android:name="android.intent.action.OPEN_DOCUMENT" />
             <data android:mimeType="image/*" />
         </intent>
     </queries>
