@@ -13,15 +13,15 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.zeroglab.hotwords"
+    namespace = "com.hotgis.wordbuddy"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.zeroglab.hotwords"
+        applicationId = "com.hotgis.wordbuddy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 15
-        versionName = "0.24"
+        versionCode = 17
+        versionName = "0.26"
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
@@ -98,23 +98,23 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
 
-// Copy debug APK to repo outputs/HotWords-debug.apk after every assembleDebug.
+// Copy debug APK to repo outputs/WordBuddy-debug.apk after every assembleDebug.
 val copyDebugApkToOutputs by tasks.registering(Copy::class) {
     from(layout.buildDirectory.dir("outputs/apk/debug"))
     include("*.apk")
     into(rootProject.layout.projectDirectory.dir("outputs"))
-    rename { "HotWords-debug.apk" }
+    rename { "WordBuddy-debug.apk" }
     doFirst {
         rootProject.layout.projectDirectory.dir("outputs").asFile.mkdirs()
     }
 }
 
-// Copy release APK to repo outputs/HotWords-release.apk after every assembleRelease.
+// Copy release APK to repo outputs/WordBuddy-release.apk after every assembleRelease.
 val copyReleaseApkToOutputs by tasks.registering(Copy::class) {
     from(layout.buildDirectory.dir("outputs/apk/release"))
     include("*.apk")
     into(rootProject.layout.projectDirectory.dir("outputs"))
-    rename { "HotWords-release.apk" }
+    rename { "WordBuddy-release.apk" }
     doFirst {
         rootProject.layout.projectDirectory.dir("outputs").asFile.mkdirs()
     }
