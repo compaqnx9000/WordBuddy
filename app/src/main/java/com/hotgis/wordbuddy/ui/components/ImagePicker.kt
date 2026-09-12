@@ -4,11 +4,11 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -20,12 +20,16 @@ import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
 
 /**
- * Opens the system photo picker without requesting storage/media permissions.
+ * Opens the system photo gallery/picker without requesting dangerous storage permissions.
  *
- * Photo Picker / SAF already grant a read URI; asking for READ_MEDIA_* first is what
- * prevents the gallery from appearing on many OEM phones. Launch is deferred so a
- * Compose Dialog can finish dismissing first — otherwise the picker starts behind
- * (or is immediately cancelled by) the dialog window.
+ * Traditional `ACTION_PICK` and system pickers grant a read URI via the activity result contract.
+ * We prioritize `ACTION_PICK` with MediaStore.Images.Media.EXTERNAL_CONTENT_URI, which is universally
+ * supported by all domestic Android OEMs (Xiaomi/MIUI/HyperOS, Huawei/HarmonyOS, OPPO/ColorOS,
+ * Vivo/OriginOS, Samsung, etc.).
+ *
+ * NOTE: When setting up ACTION_PICK with EXTERNAL_CONTENT_URI, NEVER call intent.type = "image/..."
+ * because Intent.setType() clears mData to null in Android framework, breaking intent resolution!
+ * Use setDataAndType() if both are required, or keep the URI as-is.
  */
 @Composable
 fun rememberImagePickerLauncher(
@@ -35,30 +39,18 @@ fun rememberImagePickerLauncher(
     val context = LocalContext.current
     var launchToken by remember { mutableIntStateOf(0) }
 
-    val photoPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia(),
-    ) { uri ->
-        if (uri != null) onImagePicked(uri)
-    }
-    val getContent = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent(),
-    ) { uri ->
-        if (uri != null) onImagePicked(uri)
-    }
-    val openDocument = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri != null) onImagePicked(uri)
-    }
-    val fallbackLauncher = rememberLauncherForActivityResult(
+    val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
-        val uri = result.data?.data
-            ?: result.data?.clipData?.let { clip ->
+        val intent = result.data
+        val uri = intent?.data
+            ?: intent?.clipData?.let { clip ->
                 if (clip.itemCount > 0) clip.getItemAt(0).uri else null
             }
-        if (uri != null) onImagePicked(uri)
+        if (uri != null) {
+            onImagePicked(uri)
+        }
     }
 
     fun report(message: String) {
@@ -68,72 +60,119 @@ fun rememberImagePickerLauncher(
     }
 
     fun launchNow() {
-        try {
-            photoPicker.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+        val candidates = buildList {
+            // 1. Universal Gallery Intent: ACTION_PICK with MediaStore URI (No type = "image/*" to avoid wiping mData!)
+            add(
+                Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
             )
-            return
-        } catch (e: Throwable) {
-            Log.w("ImagePicker", "PickVisualMedia failed", e)
+
+            // 2. Targeted for Xiaomi/MIUI Gallery (com.miui.gallery)
+            add(
+                Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+                    setPackage("com.miui.gallery")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            )
+
+            // 3. ACTION_PICK with both URI and MIME type via setDataAndType (retains both URI and type)
+            add(
+                Intent(Intent.ACTION_PICK).apply {
+                    setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            )
+
+            // 4. Android 13+ standard Photo Picker
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(
+                    Intent(MediaStore.ACTION_PICK_IMAGES).apply {
+                        type = "image/*"
+                    }
+                )
+            }
+
+            // 5. ACTION_GET_CONTENT without CATEGORY_OPENABLE (matches OEM galleries)
+            add(
+                Intent(Intent.ACTION_GET_CONTENT).apply {
+                    type = "image/*"
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            )
+
+            // 6. ACTION_PICK with MIME type only
+            add(
+                Intent(Intent.ACTION_PICK).apply {
+                    type = "image/*"
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            )
+
+            // 7. ACTION_GET_CONTENT with CATEGORY_OPENABLE (SAF document provider)
+            add(
+                Intent(Intent.ACTION_GET_CONTENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "image/*"
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            )
+
+            // 8. ACTION_OPEN_DOCUMENT (SAF)
+            add(
+                Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "image/*"
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            )
+
+            // 9. Chooser with ACTION_PICK
+            add(
+                Intent.createChooser(
+                    Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI),
+                    "选择图片",
+                )
+            )
+
+            // 10. Chooser with ACTION_GET_CONTENT
+            add(
+                Intent.createChooser(
+                    Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" },
+                    "选择图片",
+                )
+            )
         }
-        try {
-            getContent.launch("image/*")
-            return
-        } catch (e: Throwable) {
-            Log.w("ImagePicker", "GetContent failed", e)
+
+        var launched = false
+        var lastError: Throwable? = null
+        for (intent in candidates) {
+            try {
+                galleryLauncher.launch(intent)
+                launched = true
+                Log.d("ImagePicker", "Successfully launched gallery intent: $intent")
+                break
+            } catch (e: Throwable) {
+                lastError = e
+                Log.w("ImagePicker", "Failed candidate intent: $intent", e)
+            }
         }
-        try {
-            openDocument.launch(arrayOf("image/*"))
-            return
-        } catch (e: Throwable) {
-            Log.w("ImagePicker", "OpenDocument failed", e)
-        }
-        if (!launchLegacyPicker(context, fallbackLauncher)) {
-            report("未能打开系统相册，请检查是否安装了相册应用")
+
+        if (!launched) {
+            val detail = lastError?.message?.takeIf { it.isNotBlank() }
+                ?: lastError?.javaClass?.simpleName
+            val msg = if (detail != null) "未能打开系统相册 ($detail)" else "未能打开系统相册，请检查相册应用"
+            report(msg)
         }
     }
 
     LaunchedEffect(launchToken) {
         if (launchToken == 0) return@LaunchedEffect
-        delay(200)
+        delay(150)
         launchNow()
     }
 
     return remember {
         { launchToken += 1 }
     }
-}
-
-private fun launchLegacyPicker(
-    context: Context,
-    launcher: androidx.activity.result.ActivityResultLauncher<Intent>,
-): Boolean {
-    val candidates = listOf(
-        Intent(Intent.ACTION_GET_CONTENT).apply {
-            type = "image/*"
-            addCategory(Intent.CATEGORY_OPENABLE)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        },
-        Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "image/*"
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        },
-        Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
-            type = "image/*"
-        },
-        Intent.createChooser(
-            Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" },
-            "选择图片",
-        ),
-    )
-    for (intent in candidates) {
-        try {
-            launcher.launch(intent)
-            return true
-        } catch (e: Throwable) {
-            Log.w("ImagePicker", "Failed to launch $intent", e)
-        }
-    }
-    return false
 }

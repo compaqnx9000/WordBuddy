@@ -20,8 +20,8 @@ android {
         applicationId = "com.hotgis.wordbuddy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 18
-        versionName = "0.27"
+        versionCode = 19
+        versionName = "0.28"
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }

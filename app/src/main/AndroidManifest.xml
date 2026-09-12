@@ -14,12 +14,29 @@
         android:maxSdkVersion="32" />
 
     <queries>
+        <!-- 各品牌系统相册应用包名可见性声明 -->
+        <package android:name="com.miui.gallery" />
+        <package android:name="com.google.android.apps.photos" />
+        <package android:name="com.sec.android.gallery3d" />
+        <package android:name="com.huawei.photos" />
+        <package android:name="com.coloros.gallery3d" />
+        <package android:name="com.vivo.gallery" />
+        <package android:name="com.android.gallery3d" />
+
+        <!-- 相册与图片选择器 Intent 声明 -->
         <intent>
             <action android:name="android.provider.action.PICK_IMAGES" />
         </intent>
         <intent>
             <action android:name="android.intent.action.PICK" />
+            <data android:scheme="content" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.PICK" />
             <data android:mimeType="image/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.PICK" />
         </intent>
         <intent>
             <action android:name="android.intent.action.GET_CONTENT" />
