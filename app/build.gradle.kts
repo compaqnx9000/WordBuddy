@@ -84,6 +84,7 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    // 显式依赖 fragment-ktx 1.8.5，解决 biometric 隐式引入 fragment 1.2.5 导致的 "Can only use lower 16 bits for requestCode" 选图崩溃
     implementation(libs.androidx.fragment.ktx)
     implementation(libs.androidx.biometric)
     implementation(libs.androidx.lifecycle.runtime.ktx)

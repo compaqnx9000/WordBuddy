@@ -8,9 +8,13 @@ activityCompose = "1.9.3"
 navigation = "2.8.5"
 
 biometric = "1.1.0"
+# 【避坑关键：锁定 fragment 1.8.5+，防止 FragmentActivity 16 位 requestCode 崩溃】
+# androidx.biometric:1.1.0 内部传递依赖了远古的 fragment:1.2.5，其 checkForValidRequestCode() 会在 Compose
+# 分配 16 位以上 requestCode 时抛出 "Can only use lower 16 bits for requestCode" 异常导致真机选图崩溃。
 fragment = "1.8.5"
 
 [libraries]
+# 显式覆盖并提升 fragment-ktx 版本，修复 ActivityResultRegistry 兼容性
 androidx-fragment-ktx = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "fragment" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }

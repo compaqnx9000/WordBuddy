@@ -745,6 +745,11 @@ class VocabRepository(context: Context) {
         _notebooks.value = emptyList()
     }
 
+    /**
+     * 刷新生词本列表与条目：
+     * 注意：对于系统词书（isSystem == true），绝不可用 `db.listByNotebook()` 覆盖 `_items.value`，
+     * 因为系统词书的数千个条目缓存在内存中，只有非系统词本（用户生词本）才是全量落在本地 SQLite 中的。
+     */
     private fun refresh() {
         if (activeNotebookId > 0L) {
             val isSystem = _notebooks.value.firstOrNull { it.id == activeNotebookId }?.isSystem == true
@@ -838,6 +843,18 @@ class VocabRepository(context: Context) {
 
     fun wordCountInNotebook(notebookId: Long): Int = db.countWordsInNotebook(notebookId)
 
+    /**
+     * 【关键避坑备忘：选图保存与系统词库内存同步】
+     * 1. 系统词库（如大学四级 4543 词）为了极速启动与低内存开销，初始仅载入在内存 StateFlow `_items` 中，
+     *    未将数千个词条全部预插入本地 SQLite 的 `entries` 表。
+     * 2. 用户选完照片后更新图片时：
+     *    - 先优先从内存 `_items.value` 获取当前词条（若不在内存则从 DB 查找）。
+     *    - 使用 `db.upsertEntries(listOf(updated))` 将带有图片的词条持久化写入 SQLite。
+     *    - 关键点：在内存中就地更新（`_items.value = _items.value.map { if (it.id == id) updated else it }`）。
+     *    - 【绝对禁忌】：绝对不能在此处调用全量 `refresh()`！因为旧实现中 `refresh()` 内部会执行
+     *      `_items.value = db.listByNotebook(activeNotebookId)`，而系统词库在 SQLite 里尚无完整条目，
+     *      查出为空列表 `[]`，会直接将内存中完整的 4500+ 个单词全部冲刷为空，导致界面提示“词库是空的（0 / 0）”！
+     */
     suspend fun updateImageBlob(id: Long, imageBlob: ByteArray?) = withContext(Dispatchers.IO) {
         val inMem = _items.value.firstOrNull { it.id == id }
         val entry = inMem ?: db.findById(id)

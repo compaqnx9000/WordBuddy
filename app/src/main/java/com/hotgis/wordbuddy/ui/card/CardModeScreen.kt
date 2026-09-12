@@ -152,11 +152,13 @@ fun CardModeScreen(
     onNearEnd: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    // 【避坑点：切去系统相册时宿主 Activity 可能被系统销毁，必须用 rememberSaveable 持久化状态】
     var showImageDialog by rememberSaveable { mutableStateOf(false) }
     var imageTargetId by rememberSaveable { mutableStateOf<Long?>(null) }
     var meaningEditEntry by remember { mutableStateOf<VocabEntry?>(null) }
     val launchGallery = rememberImagePickerLauncher(
         onImagePicked = { uri ->
+            // 若后台恢复时 imageTargetId 偶然丢失，以当前正在展示的词条 currentEntry?.id 作为双重保底
             val id = imageTargetId ?: currentEntry?.id
             if (id != null) {
                 showImageDialog = false
@@ -964,6 +966,8 @@ private fun LargeDeckSwipePager(
     modifier: Modifier = Modifier,
     pageContent: @Composable (VocabEntry) -> Unit,
 ) {
+    // 【避坑点：大词库卡片缓存 key 必须包含完整 current 实体，不能仅写 current.id】
+    // 若仅依赖 current.id，在选图后词条 ID 未变而 imageBlob 变更时，Compose 不会重新计算 window，导致选图后无法即刻刷新出记忆图。
     val window = remember(current, prev, next) {
         virtualCardWindow(current, prev, next)
     }

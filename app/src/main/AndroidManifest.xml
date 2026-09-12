@@ -14,16 +14,16 @@
         android:maxSdkVersion="32" />
 
     <queries>
-        <!-- 各品牌系统相册应用包名可见性声明 -->
-        <package android:name="com.miui.gallery" />
-        <package android:name="com.google.android.apps.photos" />
-        <package android:name="com.sec.android.gallery3d" />
-        <package android:name="com.huawei.photos" />
-        <package android:name="com.coloros.gallery3d" />
-        <package android:name="com.vivo.gallery" />
-        <package android:name="com.android.gallery3d" />
+        <!-- 【Android 11+ 包可见性声明】各主流品牌定制 ROM 相册包名，确保相册应用在系统中可见 -->
+        <package android:name="com.miui.gallery" />            <!-- 小米 / 红米 / 澎湃OS / MIUI -->
+        <package android:name="com.google.android.apps.photos" /><!-- Google Photos / 原生 Android -->
+        <package android:name="com.sec.android.gallery3d" />   <!-- 三星 OneUI -->
+        <package android:name="com.huawei.photos" />           <!-- 华为鸿蒙 HarmonyOS / EMUI -->
+        <package android:name="com.coloros.gallery3d" />       <!-- OPPO ColorOS / 一加 -->
+        <package android:name="com.vivo.gallery" />            <!-- vivo OriginOS / FuntouchOS -->
+        <package android:name="com.android.gallery3d" />       <!-- AOSP / 魅族 / 展讯等原生相册 -->
 
-        <!-- 相册与图片选择器 Intent 声明 -->
+        <!-- 相册与图片选择器常用 Intent 意图匹配声明 -->
         <intent>
             <action android:name="android.provider.action.PICK_IMAGES" />
         </intent>
