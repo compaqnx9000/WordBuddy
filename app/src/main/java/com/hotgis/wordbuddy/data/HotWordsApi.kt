@@ -5,6 +5,10 @@ import com.hotgis.wordbuddy.BuildConfig
 import java.net.HttpURLConnection
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -57,7 +61,33 @@ data class WordHeads(
     val letterIndex: Map<Char, Int>,
 )
 
-class ApiException(message: String) : Exception(message)
+class ApiException(
+    message: String,
+    val code: String? = null,
+    val httpCode: Int = 0,
+) : Exception(message) {
+    val isSessionReplaced: Boolean
+        get() = code == SESSION_REPLACED_CODE
+
+    companion object {
+        const val SESSION_REPLACED_CODE = "SESSION_REPLACED"
+    }
+}
+
+/** Emits when the server invalidates this device because the account logged in elsewhere. */
+object AuthSessionEvents {
+    private val _replaced = MutableSharedFlow<String>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val replaced: SharedFlow<String> = _replaced.asSharedFlow()
+
+    fun notifyReplaced(message: String?) {
+        _replaced.tryEmit(
+            message?.trim()?.takeIf { it.isNotEmpty() } ?: "账号已在其他设备登录",
+        )
+    }
+}
 
 class HotWordsApi {
     private val bases = linkedSetOf(
@@ -363,6 +393,91 @@ class HotWordsApi {
         request("DELETE", "/words/$id", token)
     }
 
+    suspend fun fetchHomophones(token: String?, word: String, limit: Int = 3): List<WordHomophone> =
+        withContext(Dispatchers.IO) {
+            val encoded = java.net.URLEncoder.encode(word.trim(), StandardCharsets.UTF_8.name())
+            val root = request("GET", "/homophones?word=$encoded&limit=$limit", token)
+            val items = root.optJSONArray("items") ?: return@withContext emptyList()
+            buildList {
+                for (i in 0 until items.length()) {
+                    val obj = items.optJSONObject(i) ?: continue
+                    add(parseHomophone(obj))
+                }
+            }
+        }
+
+    suspend fun submitHomophone(token: String, word: String, body: String): WordHomophone =
+        withContext(Dispatchers.IO) {
+            val root = request(
+                "POST",
+                "/homophones",
+                token,
+                body = JSONObject().put("word", word).put("body", body),
+            )
+            parseHomophone(root.getJSONObject("item"))
+        }
+
+    suspend fun toggleHomophoneLike(token: String, id: Long): WordHomophone =
+        withContext(Dispatchers.IO) {
+            val root = request("POST", "/homophones/$id/like", token)
+            parseHomophone(root.getJSONObject("item"))
+        }
+
+    suspend fun fetchHomophoneLikers(
+        token: String,
+        id: Long,
+        limit: Int = 20,
+        offset: Int = 0,
+    ): HomophoneLikersPage = withContext(Dispatchers.IO) {
+        val root = request("GET", "/homophones/$id/likes?limit=$limit&offset=$offset", token)
+        val itemsArr = root.optJSONArray("items") ?: JSONArray()
+        val items = buildList {
+            for (i in 0 until itemsArr.length()) {
+                val item = itemsArr.optJSONObject(i) ?: continue
+                add(
+                    WordHomophoneLiker(
+                        userId = item.optLong("userId"),
+                        label = item.optString("label").ifBlank { "用户" },
+                        avatarUrl = optNullableString(item, "avatarUrl"),
+                    ),
+                )
+            }
+        }
+        HomophoneLikersPage(
+            total = root.optInt("total"),
+            items = items,
+            nextOffset = if (root.isNull("nextOffset")) null else root.optInt("nextOffset"),
+        )
+    }
+
+    private fun parseHomophone(obj: JSONObject): WordHomophone {
+        val likersArr = obj.optJSONArray("likers")
+        val likers = buildList {
+            if (likersArr != null) {
+                for (i in 0 until likersArr.length()) {
+                    val item = likersArr.optJSONObject(i) ?: continue
+                    add(
+                        WordHomophoneLiker(
+                            userId = item.optLong("userId"),
+                            label = item.optString("label").ifBlank { "用户" },
+                            avatarUrl = optNullableString(item, "avatarUrl"),
+                        ),
+                    )
+                }
+            }
+        }
+        return WordHomophone(
+            id = obj.getLong("id"),
+            word = obj.optString("word"),
+            body = obj.optString("body"),
+            likeCount = obj.optInt("likeCount"),
+            likedByMe = obj.optBoolean("likedByMe"),
+            authorUserId = obj.optLong("authorUserId"),
+            isMine = obj.optBoolean("isMine"),
+            likers = likers,
+        )
+    }
+
     private fun parseWord(obj: JSONObject): VocabEntry {
         return VocabEntry(
             id = obj.getLong("id"),
@@ -452,7 +567,12 @@ class HotWordsApi {
             val text = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
             val json = parseObject(text)
             if (code !in 200..299) {
-                throw ApiException(json.optString("error").ifBlank { "http $code" })
+                val errCode = json.optString("code").trim().ifBlank { null }
+                val message = json.optString("error").ifBlank { "http $code" }
+                if (errCode == ApiException.SESSION_REPLACED_CODE) {
+                    AuthSessionEvents.notifyReplaced(message)
+                }
+                throw ApiException(message, code = errCode, httpCode = code)
             }
             return json
         } finally {

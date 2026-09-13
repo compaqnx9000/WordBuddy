@@ -32,6 +32,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,9 +54,12 @@ import com.hotgis.wordbuddy.data.Accent
 import com.hotgis.wordbuddy.data.Definition
 import com.hotgis.wordbuddy.data.ExampleSentence
 import com.hotgis.wordbuddy.data.VocabEntry
+import com.hotgis.wordbuddy.data.WordHomophone
+import com.hotgis.wordbuddy.data.HomophoneLikersPage
 import com.hotgis.wordbuddy.ui.VocabUiState
 import com.hotgis.wordbuddy.ui.components.EditMeaningDialog
 import com.hotgis.wordbuddy.ui.components.EntryRelatedBlocks
+import com.hotgis.wordbuddy.ui.components.HomophoneTipRow
 import com.hotgis.wordbuddy.ui.components.ImageSourceDialog
 import com.hotgis.wordbuddy.ui.components.MnemonicImage
 import com.hotgis.wordbuddy.ui.components.highlightHeadword
@@ -81,6 +85,11 @@ fun LookupScreen(
     onGenerateAiForLookup: (String) -> Unit,
     onClearImageError: () -> Unit,
     onUpdateDefinitions: (Long, List<Definition>) -> Unit,
+    homophones: List<WordHomophone> = emptyList(),
+    onLoadHomophones: (String) -> Unit = {},
+    onSubmitHomophone: (String, String) -> Unit = { _, _ -> },
+    onToggleHomophoneLike: (Long) -> Unit = {},
+    onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
     modifier: Modifier = Modifier,
 ) {
     var showImageDialog by remember { mutableStateOf(false) }
@@ -91,6 +100,10 @@ fun LookupScreen(
             onPickLookupImage(uri)
         },
     )
+    val lookupWord = ui.lookupResult?.entry?.text
+    LaunchedEffect(lookupWord) {
+        lookupWord?.let(onLoadHomophones)
+    }
 
     Box(
         modifier
@@ -146,6 +159,9 @@ fun LookupScreen(
                     onOpenImageChooser = { showImageDialog = true },
                     onEditMeaning = { showMeaningDialog = true },
                     imageBusy = ui.imageBusy,
+                    homophones = homophones,
+                    onToggleHomophoneLike = onToggleHomophoneLike,
+                    onLoadHomophoneLikers = onLoadHomophoneLikers,
                 )
                 Spacer(Modifier.height(8.sdp()))
             }
@@ -176,11 +192,15 @@ fun LookupScreen(
             word = lookupEntry.text,
             definitions = lookupEntry.definitions,
             stellar = true,
+            homophones = homophones,
+            onToggleHomophoneLike = onToggleHomophoneLike,
             onDismiss = { showMeaningDialog = false },
-            onSave = { definitions ->
+            onSave = { definitions, tip ->
                 onUpdateDefinitions(lookupEntry.id, definitions)
+                tip?.let { onSubmitHomophone(lookupEntry.text, it) }
                 showMeaningDialog = false
             },
+            onLoadHomophoneLikers = onLoadHomophoneLikers,
         )
     }
 }
@@ -198,6 +218,9 @@ private fun LookupContent(
     onOpenImageChooser: () -> Unit,
     onEditMeaning: () -> Unit,
     imageBusy: Boolean,
+    homophones: List<WordHomophone> = emptyList(),
+    onToggleHomophoneLike: (Long) -> Unit = {},
+    onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
 ) {
     when {
         ui.lookupLoading -> {
@@ -228,6 +251,9 @@ private fun LookupContent(
                 isRelatedWordSaved = isRelatedWordSaved,
                 onOpenImageChooser = onOpenImageChooser,
                 onEditMeaning = onEditMeaning,
+                homophones = homophones,
+                onToggleHomophoneLike = onToggleHomophoneLike,
+                onLoadHomophoneLikers = onLoadHomophoneLikers,
             )
         }
         else -> {
@@ -255,6 +281,9 @@ private fun LookupResultBlock(
     isRelatedWordSaved: (String) -> Boolean,
     onOpenImageChooser: () -> Unit,
     onEditMeaning: () -> Unit,
+    homophones: List<WordHomophone> = emptyList(),
+    onToggleHomophoneLike: (Long) -> Unit = {},
+    onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
 ) {
     WordHeader(
         entry = entry,
@@ -267,6 +296,9 @@ private fun LookupResultBlock(
     DefinitionCard(
         definitions = entry.definitions,
         onEditMeaning = onEditMeaning,
+        homophones = homophones,
+        onToggleHomophoneLike = onToggleHomophoneLike,
+        onLoadHomophoneLikers = onLoadHomophoneLikers,
     )
     if (entry.nearWords.isNotEmpty() || entry.synonyms.isNotEmpty() || entry.antonyms.isNotEmpty()) {
         EntryRelatedBlocks(
@@ -417,6 +449,9 @@ private fun AccentChip(label: String, selected: Boolean, onClick: () -> Unit) {
 private fun DefinitionCard(
     definitions: List<Definition>,
     onEditMeaning: () -> Unit,
+    homophones: List<WordHomophone> = emptyList(),
+    onToggleHomophoneLike: (Long) -> Unit = {},
+    onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
 ) {
     val originals = remember(definitions) { definitions.filter { !it.isUserAdded } }
     val userNotes = remember(definitions) { definitions.filter { it.isUserAdded } }
@@ -441,12 +476,12 @@ private fun DefinitionCard(
                         Modifier
                             .fillMaxWidth()
                             .height(1.dp)
-                            .background(Stellar.Pink.copy(alpha = 0.35f)),
+                            .background(Stellar.Outline.copy(alpha = 0.35f)),
                     )
                     Spacer(Modifier.height(10.sdp()))
                     Text(
                         text = "我的补充",
-                        color = Stellar.Pink,
+                        color = Stellar.OnSurfaceVariant,
                         fontSize = 11.ssp(),
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.08.em,
@@ -454,9 +489,37 @@ private fun DefinitionCard(
                     Spacer(Modifier.height(10.sdp()))
                 }
                 userNotes.forEachIndexed { index, def ->
-                    if (index > 0) Spacer(Modifier.height(10.sdp()))
+                    if (index > 0) Spacer(Modifier.height(12.sdp()))
                     StellarDefinitionRow(def, userNote = true)
                 }
+            }
+        }
+        if (homophones.isNotEmpty()) {
+            Spacer(Modifier.height(14.sdp()))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(Stellar.Gold.copy(alpha = 0.35f)),
+            )
+            Spacer(Modifier.height(10.sdp()))
+            Text(
+                text = "谐音助记",
+                color = Stellar.Gold,
+                fontSize = 11.ssp(),
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.08.em,
+            )
+            Spacer(Modifier.height(10.sdp()))
+            homophones.take(3).forEachIndexed { index, tip ->
+                if (index > 0) Spacer(Modifier.height(8.sdp()))
+                HomophoneTipRow(
+                    tip = tip,
+                    onToggleLike = { onToggleHomophoneLike(tip.id) },
+                    onLoadLikers = onLoadHomophoneLikers?.let { load ->
+                        { offset -> load(tip.id, offset) }
+                    },
+                )
             }
         }
         Spacer(Modifier.height(14.sdp()))
@@ -513,7 +576,7 @@ private fun ExampleCard(
                 .padding(18.sdp()),
         ) {
             Text(
-                text = highlightHeadword(example.english, word, Stellar.CyanSoft),
+                text = highlightHeadword(example.english, word, Stellar.Headword),
                 color = Stellar.OnSurface,
                 fontSize = 16.ssp(),
                 lineHeight = 26.ssp(),

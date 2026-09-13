@@ -31,7 +31,13 @@ fun DesignScaleProvider(
     content: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
-        val scale = (maxWidth.value / DesignSpec.WIDTH_DP).coerceIn(0.72f, 1.35f)
+        val foldable = LocalFoldableLayout.current
+        val referenceWidth = if (foldable.designReferenceWidthDp > 0f) {
+            foldable.designReferenceWidthDp
+        } else {
+            maxWidth.value
+        }
+        val scale = (referenceWidth / DesignSpec.WIDTH_DP).coerceIn(0.72f, 1.35f)
         CompositionLocalProvider(
             LocalDesignScale provides scale,
             LocalFontScale provides fontScale.coerceIn(0.8f, 1.4f),

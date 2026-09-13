@@ -9,6 +9,32 @@ data class Definition(
         get() = if (pos.isBlank()) meaning else "$pos $meaning"
 }
 
+/** Shared 谐音助记 tip (community, ranked by likes). */
+data class WordHomophoneLiker(
+    val userId: Long,
+    val label: String,
+    val avatarUrl: String? = null,
+)
+
+data class WordHomophone(
+    val id: Long,
+    val word: String,
+    val body: String,
+    val likeCount: Int = 0,
+    val likedByMe: Boolean = false,
+    val authorUserId: Long = 0L,
+    /** True when the tip was authored by the signed-in user. */
+    val isMine: Boolean = false,
+    /** Populated only for [isMine] tips so authors can see who liked them. */
+    val likers: List<WordHomophoneLiker> = emptyList(),
+)
+
+data class HomophoneLikersPage(
+    val total: Int,
+    val items: List<WordHomophoneLiker>,
+    val nextOffset: Int? = null,
+)
+
 data class ExampleSentence(
     val english: String,
     val chinese: String,

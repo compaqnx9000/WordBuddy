@@ -4,16 +4,55 @@ import { query } from './db.js'
 import { extractDeviceInfo, normalizeIp, resolveIpLocation } from './device.js'
 
 const TOKEN_TTL = '30d'
+export const SESSION_REPLACED_CODE = 'SESSION_REPLACED'
+export const SESSION_REPLACED_MESSAGE = '账号已在其他设备登录'
 
-export function signToken(user) {
+export function signToken(user, sessionVersion = 0) {
   return jwt.sign(
-    { sub: String(user.id), phone: user.phone },
+    { sub: String(user.id), phone: user.phone, sv: Number(sessionVersion) || 0 },
     process.env.JWT_SECRET,
     { expiresIn: TOKEN_TTL },
   )
 }
 
-export function authRequired(req, res, next) {
+/** Bump session so any previously issued JWT becomes invalid. */
+export async function rotateSessionVersion(userId) {
+  const result = await query(
+    `UPDATE users
+     SET session_version = COALESCE(session_version, 0) + 1
+     WHERE id = $1
+     RETURNING session_version`,
+    [userId],
+  )
+  return Number(result.rows[0]?.session_version || 1)
+}
+
+async function assertActiveSession(payload) {
+  const userId = Number(payload.sub)
+  if (!Number.isFinite(userId) || userId <= 0) {
+    const err = new Error(SESSION_REPLACED_MESSAGE)
+    err.code = SESSION_REPLACED_CODE
+    throw err
+  }
+  const row = (
+    await query('SELECT session_version FROM users WHERE id = $1', [userId])
+  ).rows[0]
+  if (!row) {
+    const err = new Error('登录已过期')
+    err.code = 'SESSION_EXPIRED'
+    throw err
+  }
+  const tokenSv = Number(payload.sv ?? 0)
+  const dbSv = Number(row.session_version ?? 0)
+  if (tokenSv !== dbSv) {
+    const err = new Error(SESSION_REPLACED_MESSAGE)
+    err.code = SESSION_REPLACED_CODE
+    throw err
+  }
+  return { id: userId, phone: payload.phone }
+}
+
+export async function authRequired(req, res, next) {
   const header = req.headers.authorization || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : ''
   if (!token) {
@@ -22,15 +61,19 @@ export function authRequired(req, res, next) {
   }
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET)
-    req.user = { id: Number(payload.sub), phone: payload.phone }
+    req.user = await assertActiveSession(payload)
     next()
-  } catch {
+  } catch (error) {
+    if (error?.code === SESSION_REPLACED_CODE) {
+      res.status(401).json({ error: SESSION_REPLACED_MESSAGE, code: SESSION_REPLACED_CODE })
+      return
+    }
     res.status(401).json({ error: '登录已过期' })
   }
 }
 
-/** Attach req.user when token is present; otherwise continue as guest. */
-export function optionalAuth(req, _res, next) {
+/** Attach req.user when token is present and still the active session; otherwise guest. */
+export async function optionalAuth(req, _res, next) {
   const header = req.headers.authorization || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : ''
   if (!token) {
@@ -40,7 +83,7 @@ export function optionalAuth(req, _res, next) {
   }
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET)
-    req.user = { id: Number(payload.sub), phone: payload.phone }
+    req.user = await assertActiveSession(payload)
   } catch {
     req.user = null
   }
@@ -48,14 +91,17 @@ export function optionalAuth(req, _res, next) {
 }
 
 export async function ensureUserNotebook(userId) {
-  const existing = await query(
+  // Always prefer the notebook literally named 生词本 — never the newest user book
+  // (createNotebook inserts with min(sort_order)-1, which would otherwise steal this role).
+  const named = await query(
     `SELECT id FROM notebooks
-     WHERE kind = 'user' AND owner_user_id = $1
-     ORDER BY sort_order ASC, id ASC
+     WHERE kind = 'user' AND owner_user_id = $1 AND name = '生词本'
+     ORDER BY id ASC
      LIMIT 1`,
     [userId],
   )
-  if (existing.rowCount > 0) return existing.rows[0].id
+  if (named.rowCount > 0) return named.rows[0].id
+
   const created = await query(
     `INSERT INTO notebooks (kind, owner_user_id, name, sort_order)
      VALUES ('user', $1, '生词本', 0)

@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Home
@@ -27,16 +26,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.em
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
-import com.hotgis.wordbuddy.ui.lookup.hasStellarWallpaperBackground
 import com.hotgis.wordbuddy.ui.lookup.Stellar
+import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.theme.HwColors
 
 enum class MainTab {
@@ -103,25 +101,22 @@ private fun StellarBottomBar(
     selected: MainTab,
     onSelect: (MainTab) -> Unit,
 ) {
+    // Match NotebookBottomBar exactly: one rectangular panel over wallpaper (no rounded “floating” strip).
+    val line = Stellar.Cyan.copy(alpha = 0.20f)
     Column(
         Modifier
             .fillMaxWidth()
-            .shadow(
-                elevation = 16.dp,
-                shape = RoundedCornerShape(topStart = 16.sdp(), topEnd = 16.sdp()),
-                ambientColor = Stellar.Cyan.copy(alpha = 0.25f),
-                spotColor = Stellar.Cyan.copy(alpha = 0.25f),
-            )
-            .clip(RoundedCornerShape(topStart = 16.sdp(), topEnd = 16.sdp()))
-            .background(
-                if (hasStellarWallpaperBackground()) {
-                    Stellar.SurfaceContainer.copy(alpha = 0.62f)
-                } else {
-                    Stellar.SurfaceContainer.copy(alpha = 0.92f)
-                },
-            )
+            .background(stellarPanelBackgroundColor())
+            .drawBehind {
+                drawLine(
+                    color = line,
+                    start = Offset(0f, 0f),
+                    end = Offset(size.width, 0f),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(top = 8.sdp(), bottom = 6.sdp()),
+            .padding(top = 8.sdp(), bottom = 8.sdp()),
     ) {
         Row(Modifier.fillMaxWidth()) {
             StellarTab(
@@ -175,12 +170,11 @@ private fun StellarTab(
             modifier = Modifier.size(22.sdp()),
         )
         Text(
-            text = label.uppercase(),
+            text = label,
             color = color,
-            fontSize = 9.ssp(),
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.08.em,
-            modifier = Modifier.padding(top = 2.sdp()),
+            fontSize = 12.ssp(),
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            modifier = Modifier.padding(top = 3.sdp()),
         )
     }
 }

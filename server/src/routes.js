@@ -12,6 +12,7 @@ import {
   normalizePhone,
   recordLoginEvent,
   recordPasswordEvent,
+  rotateSessionVersion,
   signToken,
   verifyPassword,
 } from './auth.js'
@@ -151,6 +152,8 @@ async function consumeSms(smsId) {
 
 async function finishLogin(req, res, user, method) {
   const vocabNotebookId = await ensureUserNotebook(user.id)
+  // Single-device policy: each successful login invalidates older JWTs.
+  const sessionVersion = await rotateSessionVersion(user.id)
   await recordLoginEvent(req, {
     userId: user.id,
     phone: user.phone,
@@ -164,7 +167,7 @@ async function finishLogin(req, res, user, method) {
   const level = Math.min(7, Math.max(0, Number.isFinite(Number(user.user_level ?? profile?.user_level)) ? Number(user.user_level ?? profile?.user_level) : 0))
   res.json({
     isNewUser: false,
-    token: signToken(user),
+    token: signToken(user, sessionVersion),
     user: { id: Number(user.id), phone: user.phone, avatarUrl, level },
     vocabNotebookId: Number(vocabNotebookId),
     avatarUrl,
@@ -724,4 +727,230 @@ router.delete('/words/:id', authRequired, async (req, res) => {
   }
   await query('DELETE FROM words WHERE id = $1', [id])
   res.json({ ok: true })
+})
+
+function normalizeWordKey(raw) {
+  return String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+}
+
+function mapHomophone(row, likedByMe = false, extras = {}) {
+  return {
+    id: Number(row.id),
+    word: row.word_key,
+    body: row.body,
+    likeCount: Number(row.like_count) || 0,
+    likedByMe: Boolean(likedByMe),
+    authorUserId: Number(row.author_user_id),
+    isMine: Boolean(extras.isMine),
+    likers: Array.isArray(extras.likers) ? extras.likers : [],
+  }
+}
+
+function maskPhone(phone) {
+  const p = String(phone || '').trim()
+  if (p.length >= 7) return `${p.slice(0, 3)}****${p.slice(-4)}`
+  if (p) return p
+  return '用户'
+}
+
+async function likersForHomophones(homophoneIds, authorUserId, perTipLimit = 3) {
+  if (!authorUserId || !homophoneIds.length) return new Map()
+  const rows = await query(
+    `SELECT l.homophone_id, u.id AS user_id, u.phone, u.avatar_url, l.created_at
+     FROM word_homophone_likes l
+     JOIN users u ON u.id = l.user_id
+     WHERE l.homophone_id = ANY($1::bigint[])
+     ORDER BY l.created_at DESC`,
+    [homophoneIds],
+  )
+  const map = new Map()
+  for (const row of rows.rows) {
+    const id = Number(row.homophone_id)
+    const list = map.get(id) || []
+    if (list.length >= perTipLimit) continue
+    list.push({
+      userId: Number(row.user_id),
+      label: maskPhone(row.phone),
+      avatarUrl: row.avatar_url || null,
+    })
+    map.set(id, list)
+  }
+  return map
+}
+
+/** Top liked 谐音助记 for a headword (shared across all notebooks). */
+router.get('/homophones', optionalAuth, async (req, res) => {
+  const wordKey = normalizeWordKey(req.query.word)
+  if (!wordKey) {
+    res.status(400).json({ error: '缺少单词' })
+    return
+  }
+  const limit = Math.min(Math.max(Number(req.query.limit) || 3, 1), 10)
+  const rows = await query(
+    `SELECT id, word_key, body, author_user_id, like_count, created_at
+     FROM word_homophones
+     WHERE word_key = $1
+     ORDER BY like_count DESC, id DESC
+     LIMIT $2`,
+    [wordKey, limit],
+  )
+  let liked = new Set()
+  if (req.user?.id && rows.rows.length) {
+    const ids = rows.rows.map((r) => r.id)
+    const likedRows = await query(
+      `SELECT homophone_id FROM word_homophone_likes
+       WHERE user_id = $1 AND homophone_id = ANY($2::bigint[])`,
+      [req.user.id, ids],
+    )
+    liked = new Set(likedRows.rows.map((r) => Number(r.homophone_id)))
+  }
+  const mineIds = req.user?.id
+    ? rows.rows.filter((r) => Number(r.author_user_id) === req.user.id).map((r) => r.id)
+    : []
+  const likersMap = await likersForHomophones(mineIds, req.user?.id)
+  res.json({
+    word: wordKey,
+    items: rows.rows.map((row) => {
+      const id = Number(row.id)
+      const isMine = req.user?.id != null && Number(row.author_user_id) === req.user.id
+      return mapHomophone(row, liked.has(id), {
+        isMine,
+        likers: isMine ? likersMap.get(id) || [] : [],
+      })
+    }),
+  })
+})
+
+/** Upsert current user's 谐音助记 for a word (one tip per user per word). */
+router.post('/homophones', authRequired, async (req, res) => {
+  const wordKey = normalizeWordKey(req.body?.word)
+  const body = String(req.body?.body ?? '').trim()
+  if (!wordKey) {
+    res.status(400).json({ error: '缺少单词' })
+    return
+  }
+  if (!body) {
+    res.status(400).json({ error: '请输入谐音助记' })
+    return
+  }
+  if (body.length > 120) {
+    res.status(400).json({ error: '谐音助记太长（最多120字）' })
+    return
+  }
+  const upserted = await query(
+    `INSERT INTO word_homophones (word_key, body, author_user_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (word_key, author_user_id)
+     DO UPDATE SET body = EXCLUDED.body
+     RETURNING id, word_key, body, author_user_id, like_count, created_at`,
+    [wordKey, body, req.user.id],
+  )
+  const row = upserted.rows[0]
+  const liked = await query(
+    `SELECT 1 FROM word_homophone_likes WHERE homophone_id = $1 AND user_id = $2`,
+    [row.id, req.user.id],
+  )
+  const likersMap = await likersForHomophones([row.id], req.user.id)
+  res.status(201).json({
+    item: mapHomophone(row, liked.rowCount > 0, {
+      isMine: true,
+      likers: likersMap.get(Number(row.id)) || [],
+    }),
+  })
+})
+
+/** Toggle like on a 谐音助记 tip. */
+router.post('/homophones/:id/like', authRequired, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id) || id <= 0) {
+    res.status(400).json({ error: '无效的助记' })
+    return
+  }
+  const existing = await query(`SELECT id, word_key, body, author_user_id, like_count FROM word_homophones WHERE id = $1`, [id])
+  if (!existing.rows[0]) {
+    res.status(404).json({ error: '助记不存在' })
+    return
+  }
+  const liked = await query(
+    `SELECT 1 FROM word_homophone_likes WHERE homophone_id = $1 AND user_id = $2`,
+    [id, req.user.id],
+  )
+  if (liked.rowCount > 0) {
+    await query(`DELETE FROM word_homophone_likes WHERE homophone_id = $1 AND user_id = $2`, [id, req.user.id])
+    await query(
+      `UPDATE word_homophones SET like_count = GREATEST(like_count - 1, 0) WHERE id = $1`,
+      [id],
+    )
+  } else {
+    await query(
+      `INSERT INTO word_homophone_likes (homophone_id, user_id) VALUES ($1, $2)
+       ON CONFLICT DO NOTHING`,
+      [id, req.user.id],
+    )
+    await query(`UPDATE word_homophones SET like_count = like_count + 1 WHERE id = $1`, [id])
+  }
+  const updated = await query(
+    `SELECT id, word_key, body, author_user_id, like_count FROM word_homophones WHERE id = $1`,
+    [id],
+  )
+  const nowLiked = await query(
+    `SELECT 1 FROM word_homophone_likes WHERE homophone_id = $1 AND user_id = $2`,
+    [id, req.user.id],
+  )
+  const row = updated.rows[0]
+  const isMine = Number(row.author_user_id) === req.user.id
+  const likersMap = isMine ? await likersForHomophones([id], req.user.id) : new Map()
+  res.json({
+    item: mapHomophone(row, nowLiked.rowCount > 0, {
+      isMine,
+      likers: isMine ? likersMap.get(id) || [] : [],
+    }),
+  })
+})
+
+/**
+ * Paginated likers for a tip — only the author can browse the full list.
+ * Preview in GET /homophones stays tiny (a few recent names); this is the detail view.
+ */
+router.get('/homophones/:id/likes', authRequired, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id) || id <= 0) {
+    res.status(400).json({ error: '无效的助记' })
+    return
+  }
+  const tip = await query(
+    `SELECT id, author_user_id, like_count FROM word_homophones WHERE id = $1`,
+    [id],
+  )
+  const row = tip.rows[0]
+  if (!row) {
+    res.status(404).json({ error: '助记不存在' })
+    return
+  }
+  if (Number(row.author_user_id) !== req.user.id) {
+    res.status(403).json({ error: '只能查看自己助记的点赞名单' })
+    return
+  }
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 50)
+  const offset = Math.max(Number(req.query.offset) || 0, 0)
+  const total = Number(row.like_count) || 0
+  const likes = await query(
+    `SELECT u.id AS user_id, u.phone, u.avatar_url, l.created_at
+     FROM word_homophone_likes l
+     JOIN users u ON u.id = l.user_id
+     WHERE l.homophone_id = $1
+     ORDER BY l.created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [id, limit, offset],
+  )
+  const items = likes.rows.map((r) => ({
+    userId: Number(r.user_id),
+    label: maskPhone(r.phone),
+    avatarUrl: r.avatar_url || null,
+  }))
+  const nextOffset = offset + items.length < total ? offset + items.length : null
+  res.json({ total, items, nextOffset })
 })

@@ -96,8 +96,11 @@ import com.hotgis.wordbuddy.data.Definition
 import com.hotgis.wordbuddy.data.ExampleSentence
 import com.hotgis.wordbuddy.data.NaturalPhonics
 import com.hotgis.wordbuddy.data.VocabEntry
+import com.hotgis.wordbuddy.data.WordHomophone
+import com.hotgis.wordbuddy.data.HomophoneLikersPage
 import com.hotgis.wordbuddy.ui.components.EditMeaningDialog
 import com.hotgis.wordbuddy.ui.components.EntryRelatedBlocks
+import com.hotgis.wordbuddy.ui.components.HomophoneTipRow
 import com.hotgis.wordbuddy.ui.components.ImageSourceDialog
 import com.hotgis.wordbuddy.ui.components.MnemonicImage
 import com.hotgis.wordbuddy.ui.components.highlightHeadword
@@ -149,7 +152,16 @@ fun CardModeScreen(
     onSpeakSyllables: (List<String>) -> Unit,
     onToggleRelatedStar: (VocabEntry) -> Unit,
     isRelatedWordSaved: (String) -> Boolean,
+    homophones: List<WordHomophone> = emptyList(),
+    onLoadHomophones: (String) -> Unit = {},
+    onSubmitHomophone: (String, String) -> Unit = { _, _ -> },
+    onToggleHomophoneLike: (Long) -> Unit = {},
+    onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
     onNearEnd: () -> Unit = {},
+    /** When false (e.g. foldable list+card split), hide shuffle/play/seek chrome. */
+    showPlaybackControls: Boolean = true,
+    /** When false, omit the local card top bar (parent draws a shared split header). */
+    showTopBar: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     // 【避坑点：切去系统相册时宿主 Activity 可能被系统销毁，必须用 rememberSaveable 持久化状态】
@@ -174,6 +186,10 @@ fun CardModeScreen(
         pageCount = { if (usePager) total.coerceAtLeast(1) else 1 },
     )
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(currentEntry?.text) {
+        currentEntry?.text?.let(onLoadHomophones)
+    }
 
     LaunchedEffect(safeIndex, total, usePager) {
         if (!usePager || total == 0) return@LaunchedEffect
@@ -237,7 +253,9 @@ fun CardModeScreen(
                 },
             ),
     ) {
-        CardTopBar(title = notebookName, onBack = onBack)
+        if (showTopBar) {
+            CardTopBar(title = notebookName, onBack = onBack)
+        }
         if (total == 0 || currentEntry == null) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text("词库是空的", color = Stellar.OnSurfaceVariant, fontSize = 16.ssp())
@@ -275,6 +293,13 @@ fun CardModeScreen(
                         onToggleRelatedStar = onToggleRelatedStar,
                         isRelatedWordSaved = isRelatedWordSaved,
                         onExampleScrollChange = { scrolling -> lockWordPager = scrolling },
+                        homophones = if (entries[page].text.equals(currentEntry?.text, ignoreCase = true)) {
+                            homophones
+                        } else {
+                            emptyList()
+                        },
+                        onToggleHomophoneLike = onToggleHomophoneLike,
+                        onLoadHomophoneLikers = onLoadHomophoneLikers,
                     )
                 }
             } else {
@@ -306,28 +331,37 @@ fun CardModeScreen(
                         onToggleRelatedStar = onToggleRelatedStar,
                         isRelatedWordSaved = isRelatedWordSaved,
                         onExampleScrollChange = { scrolling -> lockWordPager = scrolling },
+                        homophones = if (entry.text.equals(currentEntry?.text, ignoreCase = true)) {
+                            homophones
+                        } else {
+                            emptyList()
+                        },
+                        onToggleHomophoneLike = onToggleHomophoneLike,
+                        onLoadHomophoneLikers = onLoadHomophoneLikers,
                     )
                 }
             }
         }
-        CardControlBar(
-            sourceIndex = sourceIndex.coerceIn(0, (total - 1).coerceAtLeast(0)),
-            pageCount = total,
-            shuffled = shuffled,
-            playing = playing,
-            speakOnPageChange = speakOnPageChange,
-            onShuffle = onShuffle,
-            onPrev = ::goPrev,
-            onPlayToggle = onPlayToggle,
-            onNext = ::goNext,
-            onToggleSpeak = onToggleSpeak,
-            onSeekPage = { natural ->
-                if (total == 0) return@CardControlBar
-                val target = natural.coerceIn(0, total - 1)
-                onSeekPage(target)
-                if (target >= total - 4) onNearEnd()
-            },
-        )
+        if (showPlaybackControls) {
+            CardControlBar(
+                sourceIndex = sourceIndex.coerceIn(0, (total - 1).coerceAtLeast(0)),
+                pageCount = total,
+                shuffled = shuffled,
+                playing = playing,
+                speakOnPageChange = speakOnPageChange,
+                onShuffle = onShuffle,
+                onPrev = ::goPrev,
+                onPlayToggle = onPlayToggle,
+                onNext = ::goNext,
+                onToggleSpeak = onToggleSpeak,
+                onSeekPage = { natural ->
+                    if (total == 0) return@CardControlBar
+                    val target = natural.coerceIn(0, total - 1)
+                    onSeekPage(target)
+                    if (target >= total - 4) onNearEnd()
+                },
+            )
+        }
     }
 
     if (showImageDialog) {
@@ -354,11 +388,15 @@ fun CardModeScreen(
             word = entry.text,
             definitions = entry.definitions,
             stellar = true,
+            homophones = homophones,
+            onToggleHomophoneLike = onToggleHomophoneLike,
             onDismiss = { meaningEditEntry = null },
-            onSave = { definitions ->
+            onSave = { definitions, tip ->
                 onUpdateDefinitions(entry.id, definitions)
+                tip?.let { onSubmitHomophone(entry.text, it) }
                 meaningEditEntry = null
             },
+            onLoadHomophoneLikers = onLoadHomophoneLikers,
         )
     }
 }
@@ -378,6 +416,9 @@ private fun CardPage(
     onToggleRelatedStar: (VocabEntry) -> Unit,
     isRelatedWordSaved: (String) -> Boolean,
     onExampleScrollChange: (Boolean) -> Unit,
+    homophones: List<WordHomophone> = emptyList(),
+    onToggleHomophoneLike: (Long) -> Unit = {},
+    onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
 ) {
     val scrollState = remember(entry.id) { ScrollState(0) }
     var phonicsOn by remember(entry.id) { mutableStateOf(false) }
@@ -411,6 +452,9 @@ private fun CardPage(
         CardDefinitionCard(
             definitions = entry.definitions,
             onEditMeaning = onEditMeaning,
+            homophones = homophones,
+            onToggleHomophoneLike = onToggleHomophoneLike,
+            onLoadHomophoneLikers = onLoadHomophoneLikers,
         )
         if (entry.nearWords.isNotEmpty() || entry.synonyms.isNotEmpty() || entry.antonyms.isNotEmpty()) {
             EntryRelatedBlocks(
@@ -663,6 +707,9 @@ private fun CardAccentChip(label: String, selected: Boolean, onClick: () -> Unit
 private fun CardDefinitionCard(
     definitions: List<Definition>,
     onEditMeaning: () -> Unit,
+    homophones: List<WordHomophone> = emptyList(),
+    onToggleHomophoneLike: (Long) -> Unit = {},
+    onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
 ) {
     val originals = remember(definitions) { definitions.filter { !it.isUserAdded } }
     val userNotes = remember(definitions) { definitions.filter { it.isUserAdded } }
@@ -687,12 +734,12 @@ private fun CardDefinitionCard(
                         Modifier
                             .fillMaxWidth()
                             .height(1.dp)
-                            .background(Stellar.Pink.copy(alpha = 0.35f)),
+                            .background(Stellar.Outline.copy(alpha = 0.35f)),
                     )
                     Spacer(Modifier.height(10.sdp()))
                     Text(
                         text = "我的补充",
-                        color = Stellar.Pink,
+                        color = Stellar.OnSurfaceVariant,
                         fontSize = 11.ssp(),
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.08.em,
@@ -700,9 +747,37 @@ private fun CardDefinitionCard(
                     Spacer(Modifier.height(10.sdp()))
                 }
                 userNotes.forEachIndexed { index, def ->
-                    if (index > 0) Spacer(Modifier.height(10.sdp()))
+                    if (index > 0) Spacer(Modifier.height(12.sdp()))
                     StellarDefinitionRow(def, userNote = true)
                 }
+            }
+        }
+        if (homophones.isNotEmpty()) {
+            Spacer(Modifier.height(14.sdp()))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(Stellar.Gold.copy(alpha = 0.35f)),
+            )
+            Spacer(Modifier.height(10.sdp()))
+            Text(
+                text = "谐音助记",
+                color = Stellar.Gold,
+                fontSize = 11.ssp(),
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.08.em,
+            )
+            Spacer(Modifier.height(10.sdp()))
+            homophones.take(3).forEachIndexed { index, tip ->
+                if (index > 0) Spacer(Modifier.height(8.sdp()))
+                HomophoneTipRow(
+                    tip = tip,
+                    onToggleLike = { onToggleHomophoneLike(tip.id) },
+                    onLoadLikers = onLoadHomophoneLikers?.let { load ->
+                        { offset -> load(tip.id, offset) }
+                    },
+                )
             }
         }
         Spacer(Modifier.height(14.sdp()))
@@ -846,7 +921,7 @@ private fun CardExamplePanel(
             userScrollEnabled = examples.size > 1,
         ) { page ->
             val example = examples[page]
-            val highlight = Stellar.CyanSoft
+            val highlight = Stellar.Headword
             val highlighted = remember(word, example.english, highlight) {
                 highlightHeadword(example.english, word, highlight)
             }
@@ -1116,7 +1191,6 @@ private fun CardControlBar(
             )
             .clip(barShape)
             .background(Stellar.SurfaceContainer.copy(alpha = 0.96f))
-            .border(1.dp, Stellar.NeonBorder, barShape)
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = 20.sdp(), vertical = 8.sdp()),
         verticalArrangement = Arrangement.spacedBy(4.sdp()),

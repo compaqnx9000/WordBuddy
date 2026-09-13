@@ -54,6 +54,10 @@
     <uses-feature
         android:name="android.hardware.fingerprint"
         android:required="false" />
+    <!-- Optional hinge sensor (Samsung Z Fold / some OEMs); layout still works via WindowManager. -->
+    <uses-feature
+        android:name="android.hardware.sensor.hinge_angle"
+        android:required="false" />
 
     <application
         android:name=".HotWordsApp"
@@ -68,8 +72,18 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden|density"
+            android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.HotWords" />
+            android:theme="@style/Theme.HotWords">
+            <!-- Samsung / Xiaomi / Honor / Huawei fold & tablet continuity -->
+            <meta-data
+                android:name="android.allow_multiple_resumed_activities"
+                android:value="true" />
+            <meta-data
+                android:name="android.window.PROPERTY_ACTIVITY_EMBEDDING_SPLITS_ENABLED"
+                android:value="true" />
+        </activity>
 
         <!-- Launcher icons by user level (only one alias enabled at a time). -->
         <activity-alias

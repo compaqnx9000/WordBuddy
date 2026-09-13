@@ -31,6 +31,8 @@ export async function ensureSchema() {
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_level INTEGER NOT NULL DEFAULT 0`)
   await query(`ALTER TABLE users ALTER COLUMN user_level SET DEFAULT 0`)
   await query(`UPDATE users SET user_level = 0 WHERE user_level IS NULL OR user_level < 0 OR user_level > 7`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0`)
+  await query(`UPDATE users SET session_version = 0 WHERE session_version IS NULL`)
   await query(`
     CREATE TABLE IF NOT EXISTS login_events (
       id BIGSERIAL PRIMARY KEY,
@@ -101,4 +103,27 @@ export async function ensureSchema() {
     )
   `)
   await query('CREATE INDEX IF NOT EXISTS admin_audit_created ON admin_audit (created_at DESC)')
+  await query(`
+    CREATE TABLE IF NOT EXISTS word_homophones (
+      id BIGSERIAL PRIMARY KEY,
+      word_key TEXT NOT NULL,
+      body TEXT NOT NULL,
+      author_user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+      like_count INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (word_key, author_user_id)
+    )
+  `)
+  await query(`
+    CREATE INDEX IF NOT EXISTS word_homophones_top
+      ON word_homophones (word_key, like_count DESC, id DESC)
+  `)
+  await query(`
+    CREATE TABLE IF NOT EXISTS word_homophone_likes (
+      homophone_id BIGINT NOT NULL REFERENCES word_homophones (id) ON DELETE CASCADE,
+      user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (homophone_id, user_id)
+    )
+  `)
 }

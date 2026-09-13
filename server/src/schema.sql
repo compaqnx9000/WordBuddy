@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
     last_ip TEXT,
     last_ip_location TEXT,
     user_level INTEGER NOT NULL DEFAULT 0,
+    session_version INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -137,3 +138,24 @@ CREATE TABLE IF NOT EXISTS admin_audit (
 
 CREATE INDEX IF NOT EXISTS admin_audit_created
     ON admin_audit (created_at DESC);
+
+-- Shared 谐音助记 tips keyed by canonical word text (not notebook-local word id).
+CREATE TABLE IF NOT EXISTS word_homophones (
+    id BIGSERIAL PRIMARY KEY,
+    word_key TEXT NOT NULL,
+    body TEXT NOT NULL,
+    author_user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    like_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (word_key, author_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS word_homophones_top
+    ON word_homophones (word_key, like_count DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS word_homophone_likes (
+    homophone_id BIGINT NOT NULL REFERENCES word_homophones (id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (homophone_id, user_id)
+);

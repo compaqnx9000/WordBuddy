@@ -23,7 +23,11 @@ import com.hotgis.wordbuddy.data.StudySettings
 import com.hotgis.wordbuddy.data.SettingsStore
 import com.hotgis.wordbuddy.data.VocabEntry
 import com.hotgis.wordbuddy.data.HotWordsApi
+import com.hotgis.wordbuddy.data.AuthSessionEvents
+import com.hotgis.wordbuddy.data.ApiException
 import com.hotgis.wordbuddy.data.WordHeads
+import com.hotgis.wordbuddy.data.WordHomophone
+import com.hotgis.wordbuddy.data.HomophoneLikersPage
 import com.hotgis.wordbuddy.data.WordPage
 import com.hotgis.wordbuddy.data.SessionStore
 import com.hotgis.wordbuddy.data.UserSession
@@ -43,9 +47,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -130,12 +137,19 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     val notebooks: StateFlow<List<Notebook>> = repo.notebooks
     private val _session = MutableStateFlow(sessionStore.load())
     val session: StateFlow<UserSession?> = _session.asStateFlow()
+    private val _sessionReplacedMessages = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    /** Toast / dialog copy when this device was kicked by another login. */
+    val sessionReplacedMessages: SharedFlow<String> = _sessionReplacedMessages.asSharedFlow()
     private val _login = MutableStateFlow(LoginUi())
     val login: StateFlow<LoginUi> = _login.asStateFlow()
     private val _avatarBitmap = MutableStateFlow<Bitmap?>(null)
     val avatarBitmap: StateFlow<Bitmap?> = _avatarBitmap.asStateFlow()
     private val _avatarBusy = MutableStateFlow(false)
     val avatarBusy: StateFlow<Boolean> = _avatarBusy.asStateFlow()
+    private val _homophones = MutableStateFlow<List<WordHomophone>>(emptyList())
+    /** Top liked 谐音助记 for the currently focused headword. */
+    val homophones: StateFlow<List<WordHomophone>> = _homophones.asStateFlow()
+    private var homophonesWordKey: String = ""
     private var pageJob: Job? = null
     private var letterIndexJob: Job? = null
     private var catalogLetterIndexJob: Job? = null
@@ -143,6 +157,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private var selectNotebookJob: Job? = null
     private var headsAppendJob: Job? = null
     private var countdownJob: Job? = null
+    private var sessionWatchJob: Job? = null
+    private var handlingSessionReplace = false
     /** notebookId → A–Z/# absolute list index (prefetched for all system catalogs). */
     private val letterIndexByNotebook = mutableMapOf<Long, Map<Char, Int>>()
     private val headsReady = mutableSetOf<Long>()
@@ -209,6 +225,57 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             LauncherIcons.apply(getApplication(), 0)
             viewModelScope.launch { bootstrapGuestCatalogs() }
+        }
+        viewModelScope.launch {
+            AuthSessionEvents.replaced.collect { message ->
+                onSessionReplaced(message)
+            }
+        }
+        startSessionWatch()
+    }
+
+    private fun onSessionReplaced(message: String) {
+        if (handlingSessionReplace) return
+        if (_session.value == null) return
+        handlingSessionReplace = true
+        logout()
+        viewModelScope.launch {
+            _sessionReplacedMessages.emit(message)
+            handlingSessionReplace = false
+        }
+    }
+
+    /** Probe `/me` so a kicked device notices even without other API traffic. */
+    fun validateSessionNow() {
+        val token = _session.value?.token ?: return
+        viewModelScope.launch {
+            runCatching { api.fetchMe(token) }
+                .onSuccess { remoteNullable ->
+                    val remote = remoteNullable ?: return@onSuccess
+                    val current = _session.value ?: return@onSuccess
+                    val merged = current.copy(
+                        phone = remote.phone.ifBlank { current.phone },
+                        avatarUrl = remote.avatarUrl ?: current.avatarUrl,
+                        level = remote.level,
+                        vocabNotebookId = remote.vocabNotebookId.takeIf { it > 0L } ?: current.vocabNotebookId,
+                        userId = remote.userId.takeIf { it > 0L } ?: current.userId,
+                    )
+                    if (merged != current) {
+                        sessionStore.save(merged)
+                        _session.value = merged
+                        LauncherIcons.apply(getApplication(), merged.level)
+                    }
+                }
+        }
+    }
+
+    private fun startSessionWatch() {
+        sessionWatchJob?.cancel()
+        sessionWatchJob = viewModelScope.launch {
+            while (isActive) {
+                delay(20_000)
+                if (_session.value != null) validateSessionNow()
+            }
         }
     }
 
@@ -292,6 +359,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
         withContext(Dispatchers.IO) { repo.publishNotebooks(merged) }
         prefetchCatalogHeads(merged.filter { it.isSystem })
+        realignVocabNotebookSession()
     }
 
     /**
@@ -500,10 +568,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         val bundled = withContext(Dispatchers.IO) {
             MnemonicCatalog.bytesFor(app, result.entry.text)
         }
-        val notebookId = _session.value?.vocabNotebookId?.takeIf { it > 0L }
-            ?: notebooks.value.firstOrNull { !it.isSystem }?.id
-            ?: _ui.value.settings.defaultNotebookId.takeIf { it > 0L }
-            ?: return null
+        val notebookId = resolveVocabNotebookId() ?: return null
         val toSave = result.entry.copy(
             notebookId = notebookId,
             imageBlob = null,
@@ -524,8 +589,9 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         if (activeNotebook()?.isSystem == true) return
         viewModelScope.launch {
             ids.forEach { id ->
+                // 云端删除失败（本机词、离线、404）也不能挡住本地删除，否则左滑删除会“点了还在”。
                 runCatching { api.deleteWord(token(), id) }
-                    .onSuccess { repo.delete(id) }
+                repo.delete(id)
             }
             _ui.update { state ->
                 val result = state.lookupResult
@@ -803,50 +869,116 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val _favoriteRevision = MutableStateFlow(0)
+    /** Bumps when words are added/removed from the default favorite notebook. */
+    val favoriteRevision: StateFlow<Int> = _favoriteRevision.asStateFlow()
+
     fun isWordSaved(word: String): Boolean {
-        val notebookId = _session.value?.vocabNotebookId ?: return false
-        return repo.peekWord(notebookId, word) != null
+        val notebookId = resolveVocabNotebookId() ?: return false
+        // Always hit SQLite for the *favorite target* notebook. Memory `_items` is often the
+        // active catalog (中考/四级…), so peeking `_items` would miss words already in 生词本.
+        return repo.findInNotebookDb(notebookId, word) != null
     }
 
-    fun toggleSaveRelatedWord(entry: VocabEntry) {
+    /**
+     * Toggle whether [entry] lives in the user's 生词本.
+     * [onResult] receives the resulting favorited state, or null if the action failed.
+     */
+    fun toggleSaveRelatedWord(entry: VocabEntry, onResult: ((Boolean?) -> Unit)? = null) {
         viewModelScope.launch {
-            val notebookId = _session.value?.vocabNotebookId ?: return@launch
-            val existing = repo.getByWord(notebookId, entry.text)
-            if (existing != null) {
-                runCatching { api.deleteWord(token(), existing.id) }
-                repo.delete(existing.id)
-                _ui.update { state ->
-                    val result = state.lookupResult
-                    if (result != null && result.entry.text.equals(entry.text, ignoreCase = true)) {
-                        state.copy(
-                            lookupResult = LookupResult(
-                                entry = result.entry.copy(id = 0L),
-                                saved = false,
-                            ),
+            val result = runCatching {
+                val notebookId = resolveVocabNotebookId()
+                    ?: error("没有可用的生词本，请先登录")
+                val existing = repo.getByWord(notebookId, entry.text)
+                if (existing != null) {
+                    runCatching { api.deleteWord(token(), existing.id) }
+                    repo.delete(existing.id)
+                    headsCache.remove(notebookId)
+                    headsReady.remove(notebookId)
+                    _ui.update { state ->
+                        val lookup = state.lookupResult
+                        if (lookup != null && lookup.entry.text.equals(entry.text, ignoreCase = true)) {
+                            state.copy(
+                                lookupResult = LookupResult(
+                                    entry = lookup.entry.copy(id = 0L),
+                                    saved = false,
+                                ),
+                            )
+                        } else {
+                            state
+                        }
+                    }
+                    false
+                } else {
+                    val toSave = entry.copy(
+                        id = 0L,
+                        notebookId = notebookId,
+                        imageBlob = null,
+                        addedAtMillis = System.currentTimeMillis(),
+                    )
+                    val saved = runCatching {
+                        api.createWord(token(), notebookId, toSave)
+                    }.getOrElse { networkError ->
+                        // API 不可用时仍写入本机生词本，避免列表左滑收藏“看起来成功、实际没有”。
+                        android.util.Log.w(
+                            "VocabViewModel",
+                            "createWord failed, saving locally: ${networkError.message}",
                         )
-                    } else {
-                        state
+                        val localId = repo.insert(toSave)
+                        repo.getById(localId) ?: toSave.copy(id = localId)
                     }
-                }
-            } else {
-                val toSave = entry.copy(
-                    id = 0L,
-                    notebookId = notebookId,
-                    imageBlob = null,
-                    addedAtMillis = System.currentTimeMillis(),
-                )
-                val saved = runCatching { api.createWord(token(), notebookId, toSave) }.getOrNull() ?: return@launch
-                repo.cacheEntry(saved)
-                _ui.update { state ->
-                    val result = state.lookupResult
-                    if (result != null && result.entry.text.equals(entry.text, ignoreCase = true)) {
-                        state.copy(lookupResult = LookupResult(saved, true))
-                    } else {
-                        state
+                    repo.cacheEntry(saved)
+                    // Drop stale heads so the next open of this user notebook reloads from SQLite/cloud.
+                    headsCache.remove(notebookId)
+                    headsReady.remove(notebookId)
+                    _ui.update { state ->
+                        val lookup = state.lookupResult
+                        if (lookup != null && lookup.entry.text.equals(entry.text, ignoreCase = true)) {
+                            state.copy(lookupResult = LookupResult(saved, true))
+                        } else {
+                            state
+                        }
                     }
+                    true
                 }
             }
+            result
+                .onSuccess { saved ->
+                    _favoriteRevision.value = _favoriteRevision.value + 1
+                    onResult?.invoke(saved)
+                }
+                .onFailure { error ->
+                    android.util.Log.e("VocabViewModel", "toggleSaveRelatedWord failed", error)
+                    _ui.update { it.copy(lookupError = error.message ?: "收藏失败") }
+                    onResult?.invoke(null)
+                }
         }
+    }
+
+    /** Prefer 设置→默认收藏生词本, then named 生词本, then session vocab id. */
+    private fun resolveVocabNotebookId(): Long? {
+        val settingsId = _ui.value.settings.defaultNotebookId.takeIf { it > 0L }
+        if (settingsId != null) {
+            val book = notebooks.value.firstOrNull { it.id == settingsId && !it.isSystem }
+            if (book != null) return book.id
+        }
+        notebooks.value
+            .firstOrNull { !it.isSystem && it.name == "生词本" }
+            ?.id
+            ?.takeIf { it > 0L }
+            ?.let { return it }
+        return _session.value?.vocabNotebookId?.takeIf { it > 0L }
+            ?: notebooks.value.firstOrNull { !it.isSystem }?.id?.takeIf { it > 0L }
+    }
+
+    /** Keep session.vocabNotebookId aligned with the resolved favorite target. */
+    private fun realignVocabNotebookSession() {
+        val targetId = resolveVocabNotebookId() ?: return
+        val current = _session.value ?: return
+        if (current.vocabNotebookId == targetId) return
+        val updated = current.copy(vocabNotebookId = targetId)
+        sessionStore.save(updated)
+        _session.value = updated
     }
 
     fun onNotebookTabOpened() {
@@ -856,27 +988,37 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 ?: _session.value?.vocabNotebookId?.takeIf { it > 0L }
                 ?: repo.notebooks.value.firstOrNull()?.id
                 ?: return@launch
+            val isSystem = notebooks.value.firstOrNull { it.id == id }?.isSystem == true
             withContext(Dispatchers.IO) { repo.openCachedNotebook(id) }
             refreshAlphabetLetterIndex(id)
-            loadHeads(id)
-            if (id !in headsReady) {
-                if (repo.items.value.isEmpty()) {
-                    refreshNotebook(id, reset = true, prefetchAll = true)
-                } else if (repo.hasMore) {
-                    refreshNotebook(id, reset = false, prefetchAll = true)
+            if (isSystem) {
+                loadHeads(id)
+                if (id !in headsReady) {
+                    if (repo.items.value.isEmpty()) {
+                        refreshNotebook(id, reset = true, prefetchAll = true)
+                    } else if (repo.hasMore) {
+                        refreshNotebook(id, reset = false, prefetchAll = true)
+                    }
                 }
+            } else if (repo.items.value.isEmpty()) {
+                refreshNotebook(id, reset = true, prefetchAll = true)
             }
         }
     }
 
     fun selectNotebook(id: Long) {
         if (id == 0L) return
+        val isSystem = notebooks.value.firstOrNull { it.id == id }?.isSystem == true
         if (id == _ui.value.activeNotebookId && repo.items.value.isNotEmpty()) {
             applyCachedLetterIndex(id)
             if (_alphabetLetterIndex.value.isEmpty()) refreshAlphabetLetterIndex(id)
             viewModelScope.launch {
-                if (!loadHeads(id) && repo.hasMore) {
-                    refreshNotebook(id, reset = false, prefetchAll = true)
+                if (isSystem) {
+                    if (!loadHeads(id) && repo.hasMore) {
+                        refreshNotebook(id, reset = false, prefetchAll = true)
+                    }
+                } else {
+                    withContext(Dispatchers.IO) { repo.openCachedNotebook(id) }
                 }
             }
             return
@@ -886,7 +1028,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         hydrateJob?.cancel()
         selectNotebookJob?.cancel()
         headsAppendJob?.cancel()
-        val hasHeadsInMemory = headsCache[id]?.items?.isNotEmpty() == true
+        val hasHeadsInMemory = isSystem && headsCache[id]?.items?.isNotEmpty() == true
         _ui.update {
             it.copy(
                 activeNotebookId = id,
@@ -894,7 +1036,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 shuffledOrder = null,
                 revealedIds = emptySet(),
                 listError = null,
-                listLoading = !hasHeadsInMemory,
+                listLoading = isSystem && !hasHeadsInMemory,
             )
         }
         publishLetterIndexForNotebook(id)
@@ -903,26 +1045,25 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             refreshAlphabetLetterIndex(id)
             // Catalogs: apply heads progressively (first screen, then full list).
             // Skip SQLite full reload — that was the multi-second hitch on CET6 etc.
-            if (hasHeadsInMemory || notebooks.value.firstOrNull { it.id == id }?.isSystem == true) {
-                val loadedHeads = loadHeads(id)
+            if (isSystem) {
+                loadHeads(id)
                 if (_ui.value.activeNotebookId == id) {
                     _ui.update { it.copy(listLoading = false) }
                 }
                 return@launch
             }
-            // User notebooks / cache miss: small SQLite read is fine.
+            // User notebooks: SQLite is the source of truth. Do NOT call listHeads —
+            // a stale headsCache would wipe just-favorited local words from the UI.
             withContext(Dispatchers.IO) { repo.openCachedNotebook(id) }
-            if (_ui.value.activeNotebookId != id) return@launch
-            val loadedHeads = loadHeads(id)
+            refreshAlphabetLetterIndex(id)
             if (_ui.value.activeNotebookId == id) {
                 _ui.update { it.copy(listLoading = false) }
             }
-            if (!loadedHeads) {
-                val cached = repo.items.value.size
-                when {
-                    cached == 0 -> refreshNotebook(id, reset = true, prefetchAll = true)
-                    repo.hasMore -> refreshNotebook(id, reset = false, prefetchAll = true)
-                }
+            // Soft sync from cloud without discarding local-only rows.
+            if (repo.items.value.isEmpty()) {
+                refreshNotebook(id, reset = true, prefetchAll = true)
+            } else {
+                refreshNotebook(id, reset = false, prefetchAll = false)
             }
         }
     }
@@ -1522,7 +1663,9 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 val remaining = repo.notebooks.value
                 val session = _session.value
                 if (session != null && session.vocabNotebookId == id) {
-                    val nextVocabId = remaining.firstOrNull { !it.isSystem }?.id ?: 0L
+                    val nextVocabId = remaining.firstOrNull { !it.isSystem && it.name == "生词本" }?.id
+                        ?: remaining.firstOrNull { !it.isSystem }?.id
+                        ?: 0L
                     val updated = session.copy(vocabNotebookId = nextVocabId)
                     sessionStore.save(updated)
                     _session.value = updated
@@ -1588,6 +1731,12 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         val notebook = notebooks.value.firstOrNull { it.id == id } ?: return
         if (notebook.isSystem) return
         updateSettings { it.copy(defaultNotebookId = id) }
+        val current = _session.value
+        if (current != null && current.vocabNotebookId != id) {
+            val updated = current.copy(vocabNotebookId = id)
+            sessionStore.save(updated)
+            _session.value = updated
+        }
     }
 
     fun toggleAutoPlay() {
@@ -1613,6 +1762,50 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    fun loadHomophones(word: String) {
+        val key = word.trim().lowercase()
+        if (key.isEmpty()) {
+            homophonesWordKey = ""
+            _homophones.value = emptyList()
+            return
+        }
+        homophonesWordKey = key
+        viewModelScope.launch {
+            val token = _session.value?.token
+            val tips = runCatching { api.fetchHomophones(token, word, limit = 3) }
+                .getOrDefault(emptyList())
+            if (homophonesWordKey == key) {
+                _homophones.value = tips
+            }
+        }
+    }
+
+    fun submitHomophone(word: String, body: String) {
+        val tip = body.trim()
+        if (tip.isEmpty()) return
+        viewModelScope.launch {
+            val token = _session.value?.token ?: return@launch
+            runCatching { api.submitHomophone(token, word, tip) }
+                .onSuccess { loadHomophones(word) }
+        }
+    }
+
+    fun toggleHomophoneLike(id: Long) {
+        val word = homophonesWordKey
+        if (word.isEmpty()) return
+        viewModelScope.launch {
+            val token = _session.value?.token ?: return@launch
+            runCatching { api.toggleHomophoneLike(token, id) }
+                .onSuccess { loadHomophones(word) }
+        }
+    }
+
+    suspend fun loadHomophoneLikers(id: Long, offset: Int = 0): HomophoneLikersPage? {
+        val token = _session.value?.token ?: return null
+        return runCatching { api.fetchHomophoneLikers(token, id, limit = 20, offset = offset) }
+            .getOrNull()
     }
 
     fun exportNotebookJson(): String {
@@ -1981,7 +2174,13 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun syncProfileFromServer() {
         val current = _session.value ?: return
-        val remote = runCatching { api.fetchMe(current.token) }.getOrNull() ?: return
+        val remote = runCatching { api.fetchMe(current.token) }
+            .onFailure { error ->
+                if (error is ApiException && error.isSessionReplaced) {
+                    // AuthSessionEvents already notified; avoid double work.
+                }
+            }
+            .getOrNull() ?: return
         val merged = current.copy(
             phone = remote.phone.ifBlank { current.phone },
             avatarUrl = remote.avatarUrl ?: current.avatarUrl,
@@ -2110,6 +2309,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        sessionWatchJob?.cancel()
         stopAutoPlay()
         tts.shutdown()
         super.onCleared()

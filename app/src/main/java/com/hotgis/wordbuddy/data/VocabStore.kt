@@ -764,6 +764,10 @@ class VocabRepository(context: Context) {
         _items.value.firstOrNull { it.notebookId == notebookId && it.text.equals(word, ignoreCase = true) }
             ?: db.findByWord(notebookId, word)
 
+    /** SQLite-only lookup — safe while `_items` holds a different (e.g. catalog) notebook. */
+    fun findInNotebookDb(notebookId: Long, word: String): VocabEntry? =
+        db.findByWord(notebookId, word)
+
     suspend fun getByWord(notebookId: Long, word: String): VocabEntry? = withContext(Dispatchers.IO) {
         peekWord(notebookId, word)
     }

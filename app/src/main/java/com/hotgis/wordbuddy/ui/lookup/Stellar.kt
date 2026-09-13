@@ -51,6 +51,11 @@ data class StellarPalette(
     val CyanBright: Color,
     /** Soft primary — headlines & FAB fills on dark themes. */
     val CyanSoft: Color,
+    /**
+     * In-example headword emphasis. Must stay clearly distinct from [OnSurface] body text
+     * on every theme (CyanSoft is often near-white on dark themes and is the wrong choice).
+     */
+    val Headword: Color,
     /** Secondary accent (noun POS, highlights). */
     val Pink: Color,
     /** Tertiary accent (verb POS, stars). */
@@ -78,6 +83,7 @@ object StellarPalettes {
         Cyan = Color(0xFF00DBE9),
         CyanBright = Color(0xFF00F0FF),
         CyanSoft = Color(0xFFDBFCFF),
+        Headword = Color(0xFF00E5FF),
         Pink = Color(0xFFFFABF3),
         Gold = Color(0xFFFED639),
         Glass = Color(0x662E3637),
@@ -99,6 +105,7 @@ object StellarPalettes {
         Cyan = Color(0xFF2DD4BF),
         CyanBright = Color(0xFF5EEAD4),
         CyanSoft = Color(0xFFCCFBF1),
+        Headword = Color(0xFF2DD4BF),
         Pink = Color(0xFF86EFAC),
         Gold = Color(0xFFFBBF24),
         Glass = Color(0x66244039),
@@ -120,6 +127,7 @@ object StellarPalettes {
         Cyan = Color(0xFF38BDF8),
         CyanBright = Color(0xFF7DD3FC),
         CyanSoft = Color(0xFFE0F2FE),
+        Headword = Color(0xFF38BDF8),
         Pink = Color(0xFFA5B4FC),
         Gold = Color(0xFFFDE047),
         Glass = Color(0x66243044),
@@ -141,6 +149,7 @@ object StellarPalettes {
         Cyan = Color(0xFFF5C542),
         CyanBright = Color(0xFFFDE68A),
         CyanSoft = Color(0xFFFFF3C4),
+        Headword = Color(0xFFFFB020),
         Pink = Color(0xFFFF9F6B),
         Gold = Color(0xFFFFE08A),
         Glass = Color(0x663A2E1C),
@@ -162,6 +171,7 @@ object StellarPalettes {
         Cyan = Color(0xFFF472B6),
         CyanBright = Color(0xFFF9A8D4),
         CyanSoft = Color(0xFFFCE7F3),
+        Headword = Color(0xFF67E8F9),
         Pink = Color(0xFF67E8F9),
         Gold = Color(0xFFFDE68A),
         Glass = Color(0x663A2A3E),
@@ -183,6 +193,7 @@ object StellarPalettes {
         Cyan = Color(0xFFFF6B6B),
         CyanBright = Color(0xFFFF8E8E),
         CyanSoft = Color(0xFFFFE4E6),
+        Headword = Color(0xFFFF8A3D),
         Pink = Color(0xFFFFB4A2),
         Gold = Color(0xFFFBBF24),
         Glass = Color(0x663D2626),
@@ -205,6 +216,7 @@ object StellarPalettes {
         Cyan = Color(0xFF0B7A86),
         CyanBright = Color(0xFF129EAB),
         CyanSoft = Color(0xFF074F57),
+        Headword = Color(0xFF0B7A86),
         Pink = Color(0xFFA61D88),
         Gold = Color(0xFF9A4A0A),
         Glass = Color(0xF2FFFFFF),
@@ -227,6 +239,7 @@ object StellarPalettes {
         Cyan = Color(0xFF9AD84A),
         CyanBright = Color(0xFFB8F060),
         CyanSoft = Color(0xFFD8FF9A),
+        Headword = Color(0xFFB8F060),
         Pink = Color(0xFFFF9EB5),
         Gold = Color(0xFFFFE066),
         Glass = Color(0x731E6844),
@@ -287,6 +300,8 @@ object Stellar {
         @Composable @ReadOnlyComposable get() = LocalStellar.current.CyanBright
     val CyanSoft: Color
         @Composable @ReadOnlyComposable get() = LocalStellar.current.CyanSoft
+    val Headword: Color
+        @Composable @ReadOnlyComposable get() = LocalStellar.current.Headword
     val Pink: Color
         @Composable @ReadOnlyComposable get() = LocalStellar.current.Pink
     val Gold: Color
@@ -337,17 +352,18 @@ fun stellarPosColor(pos: String): Color = stellarPosColor(pos, LocalStellar.curr
 fun StellarDefinitionRow(
     def: Definition,
     modifier: Modifier = Modifier,
-    userNote: Boolean = false,
+    @Suppress("UNUSED_PARAMETER") userNote: Boolean = false,
     maxLines: Int = Int.MAX_VALUE,
     onMeaningLayout: ((TextLayoutResult) -> Unit)? = null,
 ) {
+    // Supplements use the same colors/spacing as dictionary rows for theme readability.
     val posText = when {
         def.pos.isBlank() -> ""
         def.pos.endsWith(".") || def.pos.startsWith("【") -> def.pos
         else -> "${def.pos}."
     }
-    val posColor = if (userNote) Stellar.Pink else stellarPosColor(def.pos)
-    val meaningColor = if (userNote) Stellar.Pink.copy(alpha = 0.92f) else Stellar.OnSurface
+    val posColor = stellarPosColor(def.pos)
+    val meaningColor = Stellar.OnSurface
     val lineH = 26.ssp()
     val bodySize = 16.ssp()
     val firstLineHeight = with(LocalDensity.current) { lineH.toDp() }
@@ -362,18 +378,7 @@ fun StellarDefinitionRow(
     )
 
     Row(
-        modifier
-            .fillMaxWidth()
-            .then(
-                if (userNote) {
-                    Modifier
-                        .clip(RoundedCornerShape(10.sdp()))
-                        .background(Stellar.Pink.copy(alpha = 0.10f))
-                        .padding(horizontal = 10.sdp(), vertical = 8.sdp())
-                } else {
-                    Modifier
-                },
-            ),
+        modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top,
     ) {
         Box(

@@ -1,8 +1,11 @@
 package com.hotgis.wordbuddy.audio
 
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.os.Build
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -22,6 +25,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Free word audio: Youdao dict voice (no API key) with Android TTS as fallback.
@@ -34,15 +38,22 @@ class TtsPlayer(context: Context) {
     @Volatile private var ttsReady = false
 
     init {
-        tts = TextToSpeech(app) { status ->
+        val preferredEngine = preferredEnglishTtsEngine()
+        val listener = TextToSpeech.OnInitListener { status ->
             ttsReady = status == TextToSpeech.SUCCESS
             val engine = tts
             if (ttsReady && engine != null) {
                 engine.setSpeechRate(0.9f)
                 engine.setPitch(1.0f)
             } else if (!ttsReady) {
-                Log.w(TAG, "System TTS init failed: $status")
+                Log.w(TAG, "System TTS init failed: $status engine=$preferredEngine")
             }
+        }
+        tts = if (preferredEngine != null) {
+            Log.i(TAG, "Using TTS engine: $preferredEngine")
+            TextToSpeech(app, listener, preferredEngine)
+        } else {
+            TextToSpeech(app, listener)
         }
     }
 
@@ -72,7 +83,12 @@ class TtsPlayer(context: Context) {
         }
     }
 
-    /** Speak syllable/parts with a short pause between each (for natural phonics). */
+    /**
+     * Speak syllable/parts with a short pause between each (for natural phonics).
+     *
+     * Prefer Youdao clips for each part: many OEM defaults (e.g. Xiaomi Chinese TTS)
+     * silently skip short English fragments, while Samsung/Google TTS speak them fine.
+     */
     suspend fun speakSequence(
         parts: List<String>,
         accent: Accent,
@@ -87,8 +103,10 @@ class TtsPlayer(context: Context) {
         playMutex.withLock {
             stopInternal()
             cleaned.forEachIndexed { index, part ->
-                // Syllable pieces are more reliable via system TTS than dict clips.
-                speakWithSystemTts(part, accent)
+                val playedOnline = playDictVoiceOrNull(part, accent)
+                if (!playedOnline) {
+                    speakWithSystemTts(part, accent)
+                }
                 if (index < cleaned.lastIndex) {
                     delay(pauseMs)
                 }
@@ -120,6 +138,19 @@ class TtsPlayer(context: Context) {
         try {
             tts?.stop()
         } catch (_: Exception) {
+        }
+    }
+
+    private suspend fun playDictVoiceOrNull(word: String, accent: Accent): Boolean {
+        val file = withContext(Dispatchers.IO) { downloadDictVoice(word, accent) } ?: return false
+        return try {
+            playFile(file)
+            true
+        } catch (error: Exception) {
+            Log.w(TAG, "Online audio playback failed for part=$word", error)
+            false
+        } finally {
+            file.delete()
         }
     }
 
@@ -220,30 +251,42 @@ class TtsPlayer(context: Context) {
             return
         }
         engine.setSpeechRate(speechRate)
-        suspendCancellableCoroutine { continuation ->
-            val utteranceId = UUID.randomUUID().toString()
-            val finished = AtomicBoolean(false)
-            val finish = {
-                if (finished.compareAndSet(false, true) && continuation.isActive) {
-                    continuation.resume(Unit)
+        val maxWaitMs = (word.length * 420L + 1_800L).coerceIn(1_800L, 8_000L)
+        // Some OEM engines (Xiaomi) fire onDone too early, never, or only onStop.
+        withTimeoutOrNull(maxWaitMs) {
+            suspendCancellableCoroutine { continuation ->
+                val utteranceId = UUID.randomUUID().toString()
+                val finished = AtomicBoolean(false)
+                val finish = {
+                    if (finished.compareAndSet(false, true) && continuation.isActive) {
+                        continuation.resume(Unit)
+                    }
                 }
+                engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(id: String?) = Unit
+                    override fun onDone(id: String?) {
+                        if (id == utteranceId) finish()
+                    }
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(id: String?) {
+                        if (id == utteranceId) finish()
+                    }
+                    override fun onError(id: String?, errorCode: Int) {
+                        if (id == utteranceId) finish()
+                    }
+                    override fun onStop(id: String?, interrupted: Boolean) {
+                        if (id == utteranceId) finish()
+                    }
+                })
+                continuation.invokeOnCancellation { engine.stop() }
+                val spoken = engine.speak(word, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+                if (spoken == TextToSpeech.ERROR) finish()
             }
-            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(id: String?) = Unit
-                override fun onDone(id: String?) {
-                    if (id == utteranceId) finish()
-                }
-                @Deprecated("Deprecated in Java")
-                override fun onError(id: String?) {
-                    if (id == utteranceId) finish()
-                }
-                override fun onError(id: String?, errorCode: Int) {
-                    if (id == utteranceId) finish()
-                }
-            })
-            continuation.invokeOnCancellation { engine.stop() }
-            val spoken = engine.speak(word, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
-            if (spoken == TextToSpeech.ERROR) finish()
+        }
+        // Wait out engines that report done before audio actually finishes.
+        var spins = 0
+        while (engine.isSpeaking && spins++ < 80) {
+            delay(40)
         }
         engine.setSpeechRate(DEFAULT_SPEECH_RATE)
     }
@@ -258,6 +301,27 @@ class TtsPlayer(context: Context) {
             val result = engine.setLanguage(locale)
             result >= TextToSpeech.LANG_AVAILABLE
         }
+    }
+
+    /** Prefer Google/Samsung English engines over OEM Chinese-only defaults. */
+    private fun preferredEnglishTtsEngine(): String? {
+        val intent = Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE)
+        val flags = if (Build.VERSION.SDK_INT >= 24) PackageManager.MATCH_ALL else 0
+        val packages = app.packageManager
+            .queryIntentServices(intent, flags)
+            .mapNotNull { it.serviceInfo?.packageName }
+            .distinct()
+        if (packages.isEmpty()) return null
+        val preferred = listOf(
+            "com.google.android.tts",
+            "com.samsung.SMT",
+            "com.samsung.android.tts",
+        )
+        return preferred.firstOrNull { it in packages }
+            ?: packages.firstOrNull { pkg ->
+                pkg.contains("google", ignoreCase = true) ||
+                    pkg.contains("samsung", ignoreCase = true)
+            }
     }
 
     private companion object {

@@ -53,6 +53,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -170,10 +172,27 @@ fun WordListScreen(
     onRecite: (startEntryId: Long?) -> Unit,
     onBack: () -> Unit,
     onLoadMore: () -> Unit = {},
+    /** Whether [word] is already in the user's vocab notebook (生词本). */
+    isWordFavorited: (String) -> Boolean = { false },
+    /** Bumps when favorite notebook membership changes — forces swipe label recomposition. */
+    favoriteRevision: Int = 0,
+    /**
+     * Toggle favorite into/out of 生词本.
+     * Invoke [onDone] with the resulting favorited state, or null if the toggle failed.
+     */
+    onToggleFavorite: (entry: VocabEntry, onDone: (Boolean?) -> Unit) -> Unit = { _, onDone -> onDone(null) },
     alphabetLetterIndex: Map<Char, Int> = emptyMap(),
     onSeekAlphabetLetter: (Char) -> Unit = {},
     pendingScrollEntryId: Long? = null,
     onPendingScrollConsumed: () -> Unit = {},
+    /** Foldable dual-pane: selecting a list row updates the detail card. */
+    onPreviewEntry: ((Long) -> Unit)? = null,
+    /**
+     * Foldable list+card split: hide local top/bottom chrome (parent draws one shared header).
+     * Bump [openMoreRequest] from the shared header to open this screen's ··· menu.
+     */
+    splitPaneBody: Boolean = false,
+    openMoreRequest: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -186,8 +205,19 @@ fun WordListScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
     var showStatsDialog by remember { mutableStateOf(false) }
     var openSwipeId by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(openMoreRequest) {
+        if (openMoreRequest > 0) showMoreMenu = true
+    }
     var lastClickedEntryId by remember { mutableStateOf<Long?>(null) }
+    // Optimistic favorite overrides so swipe star updates immediately after tap.
+    var favoriteOverrides by remember(ui.activeNotebookId) { mutableStateOf(emptyMap<String, Boolean>()) }
     val catalogLocked = notebooks.firstOrNull { it.id == ui.activeNotebookId }?.isSystem == true
+    val defaultFavoriteNotebookId = ui.settings.defaultNotebookId
+    fun isFavorited(entry: VocabEntry): Boolean {
+        val key = entry.text.lowercase()
+        return favoriteOverrides[key]
+            ?: isWordFavorited(entry.text)
+    }
     val listState = rememberLazyListState()
     val listScope = rememberCoroutineScope()
     var pendingAlphabetLetter by remember { mutableStateOf<Char?>(null) }
@@ -302,24 +332,28 @@ fun WordListScreen(
             .fillMaxSize()
             .stellarScreenBackground(),
     ) {
-        ListTopBar(
-            title = activeNotebookName,
-            selectionMode = selectionMode,
-            selectedCount = selectedIds.size,
-            onBack = {
-                if (selectionMode) {
+        if (!splitPaneBody || selectionMode) {
+            ListTopBar(
+                title = activeNotebookName,
+                selectionMode = selectionMode,
+                selectedCount = selectedIds.size,
+                showModeSubtitle = !splitPaneBody,
+                showMoreButton = !splitPaneBody,
+                onBack = {
+                    if (selectionMode) {
+                        selectionMode = false
+                        selectedIds = emptySet()
+                    } else {
+                        onBack()
+                    }
+                },
+                onOpenMore = { showMoreMenu = true },
+                onCancelSelection = {
                     selectionMode = false
                     selectedIds = emptySet()
-                } else {
-                    onBack()
-                }
-            },
-            onOpenMore = { showMoreMenu = true },
-            onCancelSelection = {
-                selectionMode = false
-                selectedIds = emptySet()
-            },
-        )
+                },
+            )
+        }
         if (!ui.listError.isNullOrBlank()) {
             Text(
                 text = ui.listError,
@@ -408,29 +442,20 @@ fun WordListScreen(
                                     onSpeak = {},
                                 )
                             } else if (catalogLocked) {
-                                WordRowBody(
-                                    entry = entry,
-                                    showMeaning = ui.hideDefinitions == (entry.id in ui.revealedIds),
-                                    wordColumnWidth = cappedWordColumn,
-                                    meaningStyle = meaningStyle,
-                                    meaningBlockHeight = meaningBlockHeight,
-                                    selectionMode = false,
-                                    selected = false,
-                                    onSelectToggle = {},
-                                    onToggleMeaning = {
-                                        lastClickedEntryId = entry.id
-                                        onReveal(entry.id)
-                                    },
-                                    onSpeak = {
-                                        lastClickedEntryId = entry.id
-                                        onSpeak(entry)
-                                    },
-                                )
-                            } else {
-                            DraggableItem(dragDropState = dragDropState, index = index) { isDragging ->
-                                SwipeRevealDelete(
+                                val favorited = remember(
+                                    entry.text,
+                                    entry.id,
+                                    favoriteRevision,
+                                    defaultFavoriteNotebookId,
+                                    favoriteOverrides[entry.text.lowercase()],
+                                ) {
+                                    isFavorited(entry)
+                                }
+                                SwipeRevealAction(
                                     revealed = openSwipeId == entry.id,
-                                    enabled = !reordering,
+                                    enabled = true,
+                                    actionWidth = 88.sdp(),
+                                    actionColor = Stellar.Gold.copy(alpha = 0.88f),
                                     onRevealChange = { open ->
                                         openSwipeId = when {
                                             open -> entry.id
@@ -438,9 +463,74 @@ fun WordListScreen(
                                             else -> openSwipeId
                                         }
                                     },
-                                    onDelete = {
+                                    onAction = {
+                                        openSwipeId = null
+                                        onToggleFavorite(entry) { nowSaved ->
+                                            if (nowSaved == null) return@onToggleFavorite
+                                            val key = entry.text.lowercase()
+                                            favoriteOverrides = favoriteOverrides + (key to nowSaved)
+                                        }
+                                    },
+                                    actionContent = {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Icon(
+                                                imageVector = if (favorited) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                                                contentDescription = if (favorited) "取消收藏" else "收藏",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(22.sdp()),
+                                            )
+                                            Spacer(Modifier.height(2.sdp()))
+                                            Text(
+                                                if (favorited) "取消" else "收藏",
+                                                color = Color.White,
+                                                fontSize = 13.ssp(),
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                            )
+                                        }
+                                    },
+                                ) {
+                                    WordRowBody(
+                                        entry = entry,
+                                        showMeaning = ui.hideDefinitions == (entry.id in ui.revealedIds),
+                                        wordColumnWidth = cappedWordColumn,
+                                        meaningStyle = meaningStyle,
+                                        meaningBlockHeight = meaningBlockHeight,
+                                        selectionMode = false,
+                                        selected = false,
+                                        onSelectToggle = {},
+                                        onToggleMeaning = {
+                                            lastClickedEntryId = entry.id
+                                            onPreviewEntry?.invoke(entry.id)
+                                            onReveal(entry.id)
+                                        },
+                                        onSpeak = {
+                                            lastClickedEntryId = entry.id
+                                            onPreviewEntry?.invoke(entry.id)
+                                            onSpeak(entry)
+                                        },
+                                    )
+                                }
+                            } else {
+                            DraggableItem(dragDropState = dragDropState, index = index) { isDragging ->
+                                SwipeRevealAction(
+                                    revealed = openSwipeId == entry.id,
+                                    enabled = !reordering,
+                                    actionWidth = 76.sdp(),
+                                    actionColor = LocalStellar.current.Pink.copy(alpha = 0.82f),
+                                    onRevealChange = { open ->
+                                        openSwipeId = when {
+                                            open -> entry.id
+                                            openSwipeId == entry.id -> null
+                                            else -> openSwipeId
+                                        }
+                                    },
+                                    onAction = {
                                         openSwipeId = null
                                         onDelete(entry.id)
+                                    },
+                                    actionContent = {
+                                        Text("删除", color = Color.White, fontSize = 15.ssp(), fontWeight = FontWeight.Medium)
                                     },
                                 ) {
                                     WordRowBody(
@@ -455,10 +545,12 @@ fun WordListScreen(
                                         modifier = if (isDragging) Modifier.shadow(8.dp) else Modifier,
                                         onToggleMeaning = {
                                             lastClickedEntryId = entry.id
+                                            onPreviewEntry?.invoke(entry.id)
                                             onReveal(entry.id)
                                         },
                                         onSpeak = {
                                             lastClickedEntryId = entry.id
+                                            onPreviewEntry?.invoke(entry.id)
                                             onSpeak(entry)
                                         },
                                     )
@@ -493,7 +585,7 @@ fun WordListScreen(
                 onMove = { showMoveDialog = true },
                 onDelete = { showDeleteConfirm = true },
             )
-        } else {
+        } else if (!splitPaneBody) {
             NotebookBottomBar(
                 hideDefinitions = ui.hideDefinitions,
                 cardEnabled = totalCount > 0,
@@ -1067,27 +1159,29 @@ private fun SelectionActionButton(
 }
 
 @Composable
-private fun SwipeRevealDelete(
+private fun SwipeRevealAction(
     revealed: Boolean,
     enabled: Boolean,
+    actionWidth: Dp,
+    actionColor: Color,
     onRevealChange: (Boolean) -> Unit,
-    onDelete: () -> Unit,
+    onAction: () -> Unit,
+    actionContent: @Composable () -> Unit,
     content: @Composable () -> Unit,
 ) {
     val density = LocalDensity.current
-    val deleteWidth = 76.sdp()
-    val deletePx = with(density) { deleteWidth.toPx() }
+    val actionPx = with(density) { actionWidth.toPx() }
     val offsetX = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
-    val showDelete = offsetX.value < -0.5f
+    val showAction = offsetX.value < -0.5f
 
-    LaunchedEffect(revealed, deletePx) {
-        offsetX.animateTo(if (revealed) -deletePx else 0f, tween(180))
+    LaunchedEffect(revealed, actionPx) {
+        offsetX.animateTo(if (revealed) -actionPx else 0f, tween(180))
     }
 
     val dragState = rememberDraggableState { delta ->
         scope.launch {
-            offsetX.snapTo((offsetX.value + delta).coerceIn(-deletePx, 0f))
+            offsetX.snapTo((offsetX.value + delta).coerceIn(-actionPx, 0f))
         }
     }
 
@@ -1096,18 +1190,18 @@ private fun SwipeRevealDelete(
             .fillMaxWidth()
             .clipToBounds(),
     ) {
-        if (showDelete) {
+        if (showAction) {
             Box(Modifier.matchParentSize()) {
                 Box(
                     Modifier
                         .align(Alignment.CenterEnd)
                         .fillMaxHeight()
-                        .width(deleteWidth)
-                        .background(LocalStellar.current.Pink.copy(alpha = 0.82f))
-                        .clickable(onClick = onDelete),
+                        .width(actionWidth)
+                        .background(actionColor)
+                        .clickable(onClick = onAction),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("删除", color = Color.White, fontSize = 15.ssp(), fontWeight = FontWeight.Medium)
+                    actionContent()
                 }
             }
         }
@@ -1121,10 +1215,10 @@ private fun SwipeRevealDelete(
                     orientation = Orientation.Horizontal,
                     enabled = enabled,
                     onDragStopped = {
-                        val open = offsetX.value <= -deletePx / 2f
+                        val open = offsetX.value <= -actionPx / 2f
                         onRevealChange(open)
                         scope.launch {
-                            offsetX.animateTo(if (open) -deletePx else 0f, tween(180))
+                            offsetX.animateTo(if (open) -actionPx else 0f, tween(180))
                         }
                     },
                 ),
@@ -1142,6 +1236,8 @@ private fun ListTopBar(
     onBack: () -> Unit,
     onOpenMore: () -> Unit,
     onCancelSelection: () -> Unit,
+    showModeSubtitle: Boolean = true,
+    showMoreButton: Boolean = true,
 ) {
     val line = Stellar.Cyan.copy(alpha = 0.20f)
     Box(
@@ -1204,20 +1300,26 @@ private fun ListTopBar(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(
-                        text = "列表模式",
-                        color = Stellar.OnSurfaceVariant,
-                        fontSize = 11.ssp(),
-                        textAlign = TextAlign.Center,
-                    )
+                    if (showModeSubtitle) {
+                        Text(
+                            text = "列表模式",
+                            color = Stellar.OnSurfaceVariant,
+                            fontSize = 11.ssp(),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                 }
-                IconButton(onClick = onOpenMore) {
-                    Text(
-                        text = "···",
-                        color = Stellar.Cyan,
-                        fontSize = 18.ssp(),
-                        fontWeight = FontWeight.Bold,
-                    )
+                if (showMoreButton) {
+                    IconButton(onClick = onOpenMore) {
+                        Text(
+                            text = "···",
+                            color = Stellar.Cyan,
+                            fontSize = 18.ssp(),
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                } else {
+                    Spacer(Modifier.size(48.sdp()))
                 }
             }
         }

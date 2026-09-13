@@ -20,8 +20,8 @@ android {
         applicationId = "com.hotgis.wordbuddy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 21
-        versionName = "0.30"
+        versionCode = 30
+        versionName = "0.39"
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
@@ -47,8 +47,8 @@ android {
 
     buildTypes {
         debug {
-            // Emulator → host machine; physical debug builds fall back to cloud API.
-            buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8787\"")
+            // Emulator and physical debug builds both use the Aliyun cloud API.
+            buildConfigField("String", "API_BASE_URL", "\"http://39.96.67.128:8787\"")
             buildConfigField("String", "API_FALLBACK_URL", "\"http://39.96.67.128:8787\"")
         }
         release {
@@ -91,6 +91,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.window)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)

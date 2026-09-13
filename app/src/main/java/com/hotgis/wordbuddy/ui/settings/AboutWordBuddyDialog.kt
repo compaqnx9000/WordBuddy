@@ -391,24 +391,28 @@ private fun AboutLegalFooter(
     onOpenPrivacy: () -> Unit,
 ) {
     val year = Calendar.getInstance().get(Calendar.YEAR)
+    // Panel behind footer so links/copyright stay readable on bright wallpapers.
     Column(
-        Modifier.fillMaxWidth(),
+        Modifier
+            .fillMaxWidth()
+            .stellarGlass()
+            .padding(horizontal = 16.sdp(), vertical = 16.sdp()),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.sdp()),
+        verticalArrangement = Arrangement.spacedBy(10.sdp()),
     ) {
         AboutLegalLink("《软件许可及服务协议》", onOpenAgreement)
         AboutLegalLink("《隐私保护指引摘要》", onOpenPrivacySummary)
         AboutLegalLink("《隐私保护指引》", onOpenPrivacy)
-        Spacer(Modifier.height(6.sdp()))
+        Spacer(Modifier.height(4.sdp()))
         Text(
             text = "客服邮箱：hi@wordbuddy.cc",
-            color = Stellar.OnSurfaceVariant.copy(alpha = 0.75f),
+            color = Stellar.OnSurface.copy(alpha = 0.88f),
             fontSize = 12.ssp(),
             textAlign = TextAlign.Center,
         )
         Text(
             text = "HotGIS 版权所有\nCopyright © 2024-$year HotGIS. All Rights Reserved.",
-            color = Stellar.OnSurfaceVariant.copy(alpha = 0.55f),
+            color = Stellar.OnSurface.copy(alpha = 0.72f),
             fontSize = 11.ssp(),
             textAlign = TextAlign.Center,
             lineHeight = 16.ssp(),
@@ -420,8 +424,9 @@ private fun AboutLegalFooter(
 private fun AboutLegalLink(text: String, onClick: () -> Unit) {
     Text(
         text = text,
-        color = Stellar.Cyan,
+        color = Stellar.CyanSoft,
         fontSize = 13.ssp(),
+        fontWeight = FontWeight.Medium,
         modifier = Modifier.clickable(onClick = onClick),
     )
 }
