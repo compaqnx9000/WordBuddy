@@ -1,8 +1,8 @@
 {
-  "versionCode": 30,
-  "versionName": "0.39",
+  "versionCode": 39,
+  "versionName": "0.48",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "卡片播放栏去掉霓虹描边。",
-  "releasedAt": "2026-09-13T13:15:00.000Z"
+  "notes": "修复每日签到可重复领取；签到区改为日历日期展示（今天/已领取/待签到）。",
+  "releasedAt": "2026-09-14T10:25:00.000Z"
 }

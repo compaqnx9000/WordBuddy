@@ -159,3 +159,91 @@ CREATE TABLE IF NOT EXISTS word_homophone_likes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (homophone_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS user_checkins (
+    user_id BIGINT PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+    total_points INTEGER NOT NULL DEFAULT 0,
+    streak_days INTEGER NOT NULL DEFAULT 0,
+    last_checkin_date DATE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS user_checkin_logs (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    checkin_date DATE NOT NULL,
+    streak_days INTEGER NOT NULL,
+    points_earned INTEGER NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, checkin_date)
+);
+
+CREATE INDEX IF NOT EXISTS user_checkin_logs_date
+    ON user_checkin_logs (checkin_date DESC);
+
+CREATE INDEX IF NOT EXISTS user_checkin_logs_user
+    ON user_checkin_logs (user_id, checkin_date DESC);
+
+CREATE INDEX IF NOT EXISTS user_checkins_points
+    ON user_checkins (total_points DESC);
+
+CREATE TABLE IF NOT EXISTS points_ledger (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    delta INTEGER NOT NULL,
+    balance_after INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    ref_type TEXT,
+    ref_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS points_ledger_user
+    ON points_ledger (user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS gifts (
+    id BIGSERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    subtitle TEXT,
+    cover_emoji TEXT NOT NULL DEFAULT '🎁',
+    cover_color TEXT NOT NULL DEFAULT '#1B6CA8',
+    category TEXT NOT NULL DEFAULT 'recommend',
+    points_cost INTEGER NOT NULL DEFAULT 0,
+    cash_fen INTEGER NOT NULL DEFAULT 0,
+    original_price_fen INTEGER,
+    points_offset_fen INTEGER,
+    stock INTEGER NOT NULL DEFAULT -1,
+    redeemed_count INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    published BOOLEAN NOT NULL DEFAULT TRUE,
+    need_address BOOLEAN NOT NULL DEFAULT FALSE,
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS gifts_published_sort
+    ON gifts (published, sort_order ASC, id DESC);
+
+CREATE TABLE IF NOT EXISTS gift_orders (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    gift_id BIGINT REFERENCES gifts (id) ON DELETE SET NULL,
+    gift_title TEXT NOT NULL,
+    cover_emoji TEXT,
+    cover_color TEXT,
+    points_spent INTEGER NOT NULL DEFAULT 0,
+    cash_fen INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'completed',
+    address_name TEXT,
+    address_phone TEXT,
+    address_detail TEXT,
+    remark TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS gift_orders_user
+    ON gift_orders (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS gift_orders_created
+    ON gift_orders (created_at DESC);

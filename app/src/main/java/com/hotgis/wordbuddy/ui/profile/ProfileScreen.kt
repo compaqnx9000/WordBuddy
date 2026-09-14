@@ -34,7 +34,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CardGiftcard
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.EventAvailable
+import java.time.LocalDate
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.HelpOutline
@@ -53,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -82,6 +87,9 @@ import androidx.compose.ui.unit.dp
 import com.hotgis.wordbuddy.BuildConfig
 import com.hotgis.wordbuddy.data.AppUpdater
 import com.hotgis.wordbuddy.data.AppUpdateInfo
+import com.hotgis.wordbuddy.data.CheckInResult
+import com.hotgis.wordbuddy.data.CheckInState
+import com.hotgis.wordbuddy.data.CheckInStore
 import com.hotgis.wordbuddy.data.HotWordsApi
 import com.hotgis.wordbuddy.data.NotebookImportResult
 import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
@@ -108,6 +116,10 @@ fun ProfileScreen(
     onImportContent: suspend (String) -> NotebookImportResult,
     phone: String? = null,
     level: Int = 1,
+    checkIn: CheckInState = CheckInState(),
+    onRefreshCheckIn: () -> Unit = {},
+    onCheckIn: (onResult: (CheckInResult) -> Unit) -> Unit = { it(CheckInResult.AlreadyCheckedIn) },
+    onOpenPointsMall: () -> Unit = {},
     onLogin: () -> Unit = {},
     onChangePassword: (
         oldPassword: String,
@@ -139,8 +151,14 @@ fun ProfileScreen(
     var updateDismiss by remember { mutableStateOf("") }
     var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var pendingApk by remember { mutableStateOf<File?>(null) }
+    var checkInSuccess by remember { mutableStateOf<CheckInResult.Success?>(null) }
+    var checkInBusy by remember { mutableStateOf(false) }
     val loggedIn = !phone.isNullOrBlank()
     val activity = context as? Activity
+
+    LaunchedEffect(Unit) {
+        onRefreshCheckIn()
+    }
 
     fun installPendingApk(file: File) {
         if (!AppUpdater.canRequestInstall(context)) {
@@ -313,6 +331,16 @@ fun ProfileScreen(
     if (showAbout) {
         AboutWordBuddyDialog(onDismiss = { showAbout = false })
     }
+    checkInSuccess?.let { success ->
+        StellarConfirmDialog(
+            title = "签到成功",
+            message = "连续第 ${success.streakDays} 天，获得 ${success.pointsEarned} 积分\n当前累计 ${success.totalPoints} 分",
+            confirmText = "太棒了",
+            dismissText = "",
+            onDismiss = { checkInSuccess = null },
+            onConfirm = { checkInSuccess = null },
+        )
+    }
     updateTitle?.let { title ->
         StellarConfirmDialog(
             title = title,
@@ -393,6 +421,7 @@ fun ProfileScreen(
                 phone = phone,
                 level = level,
                 wordCount = wordCount,
+                totalPoints = checkIn.totalPoints,
                 avatarBitmap = avatarBitmap,
                 avatarBusy = avatarBusy,
                 onAvatarClick = {
@@ -411,6 +440,43 @@ fun ProfileScreen(
                 },
                 onOpenSettings = onOpenSettings,
             )
+
+            DailyCheckInCard(
+                state = checkIn,
+                loggedIn = loggedIn,
+                busy = checkInBusy,
+                onCheckIn = {
+                    if (!loggedIn) {
+                        onLogin()
+                        return@DailyCheckInCard
+                    }
+                    if (checkInBusy || checkIn.checkedInToday) return@DailyCheckInCard
+                    checkInBusy = true
+                    onCheckIn { result ->
+                        checkInBusy = false
+                        when (result) {
+                            is CheckInResult.Success -> checkInSuccess = result
+                            CheckInResult.AlreadyCheckedIn -> {
+                                Toast.makeText(context, "今天已经签到过了", Toast.LENGTH_SHORT).show()
+                            }
+                            CheckInResult.NeedLogin -> onLogin()
+                            is CheckInResult.Failed -> {
+                                Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                },
+            )
+
+            ProfileMenuCard {
+                ProfileMenuRow(
+                    icon = Icons.Outlined.CardGiftcard,
+                    iconTint = Stellar.Gold,
+                    title = "积分兑礼",
+                    trailing = "可用 ${checkIn.totalPoints} 分",
+                    onClick = onOpenPointsMall,
+                )
+            }
 
             if (loggedIn) {
                 ProfileMenuCard {
@@ -517,11 +583,251 @@ private fun ProfileTopBar() {
 }
 
 @Composable
+private fun DailyCheckInCard(
+    state: CheckInState,
+    loggedIn: Boolean,
+    busy: Boolean = false,
+    onCheckIn: () -> Unit,
+) {
+    val cardShape = RoundedCornerShape(18.sdp())
+    val today = remember { CheckInStore.todayShanghai() }
+    val daySlots = remember(state.checkedInToday, state.streakDays, state.todayReward, today) {
+        buildCheckInDaySlots(today, state)
+    }
+    val buttonLabel = when {
+        !loggedIn -> "登录签到"
+        busy -> "签到中…"
+        state.checkedInToday -> "已签到"
+        else -> "签到 +${state.todayReward}"
+    }
+    val buttonEnabled = when {
+        !loggedIn -> true
+        busy -> false
+        state.checkedInToday -> false
+        else -> true
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(cardShape)
+            .stellarGlass()
+            .padding(horizontal = 16.sdp(), vertical = 14.sdp()),
+        verticalArrangement = Arrangement.spacedBy(12.sdp()),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(36.sdp())
+                    .clip(RoundedCornerShape(10.sdp()))
+                    .background(Stellar.Gold.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.EventAvailable,
+                    contentDescription = null,
+                    tint = Stellar.Gold,
+                    modifier = Modifier.size(20.sdp()),
+                )
+            }
+            Spacer(Modifier.width(12.sdp()))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "每日签到",
+                    color = Stellar.OnSurface,
+                    fontSize = 16.ssp(),
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = when {
+                        !loggedIn -> "登录后签到，积分将同步到云端"
+                        state.streakDays > 0 -> "已连签 ${state.streakDays} 天 · 累计 ${state.totalPoints} 分"
+                        else -> "断签后从 1 分重新开始 · 累计 ${state.totalPoints} 分"
+                    },
+                    color = Stellar.OnSurfaceVariant.copy(alpha = 0.9f),
+                    fontSize = 12.ssp(),
+                )
+            }
+            Text(
+                text = buttonLabel,
+                color = if (!buttonEnabled && loggedIn) {
+                    Stellar.OnSurfaceVariant
+                } else {
+                    Stellar.OnPrimary
+                },
+                fontSize = 13.ssp(),
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(
+                        if (!buttonEnabled && loggedIn) {
+                            Stellar.SurfaceHigh
+                        } else {
+                            Stellar.Gold
+                        },
+                    )
+                    .clickable(
+                        enabled = buttonEnabled,
+                        onClick = onCheckIn,
+                    )
+                    .padding(horizontal = 14.sdp(), vertical = 8.sdp()),
+            )
+        }
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.sdp()),
+        ) {
+            daySlots.forEach { slot ->
+                CheckInDayCell(
+                    slot = slot,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+private data class CheckInDaySlot(
+    val date: LocalDate,
+    val reward: Int,
+    val isToday: Boolean,
+    val claimed: Boolean,
+    val isClaimTarget: Boolean,
+)
+
+private fun buildCheckInDaySlots(today: LocalDate, state: CheckInState): List<CheckInDaySlot> {
+    val streak = state.streakDays.coerceAtLeast(0)
+    val lastCheckIn: LocalDate? = when {
+        state.checkedInToday -> today
+        streak > 0 -> today.minusDays(1)
+        else -> null
+    }
+    val firstClaimed = lastCheckIn?.minusDays((streak - 1).coerceAtLeast(0).toLong())
+    // Show 7 calendar days centered on today: -3 … +3
+    return (-3..3).map { offset ->
+        val date = today.plusDays(offset.toLong())
+        val claimed = lastCheckIn != null &&
+            firstClaimed != null &&
+            !date.isBefore(firstClaimed) &&
+            !date.isAfter(lastCheckIn)
+        val reward = when {
+            claimed && firstClaimed != null -> {
+                val dayNum = (date.toEpochDay() - firstClaimed.toEpochDay()).toInt() + 1
+                CheckInStore.rewardForDay(dayNum.coerceAtLeast(1))
+            }
+            date == today && !state.checkedInToday -> state.todayReward
+            date.isAfter(today) -> {
+                val daysAhead = (date.toEpochDay() - today.toEpochDay()).toInt()
+                val afterClaimingToday = when {
+                    state.checkedInToday -> streak
+                    streak > 0 -> streak + 1
+                    else -> 1
+                }
+                CheckInStore.rewardForDay(afterClaimingToday + daysAhead)
+            }
+            else -> CheckInStore.rewardForDay(1)
+        }
+        CheckInDaySlot(
+            date = date,
+            reward = reward,
+            isToday = date == today,
+            claimed = claimed,
+            isClaimTarget = !state.checkedInToday && date == today,
+        )
+    }
+}
+
+private fun formatCheckInDateLabel(date: LocalDate, today: LocalDate): String {
+    if (date == today) return "今天"
+    return "${date.monthValue}.${date.dayOfMonth}"
+}
+
+@Composable
+private fun CheckInDayCell(
+    slot: CheckInDaySlot,
+    modifier: Modifier = Modifier,
+) {
+    val today = remember { CheckInStore.todayShanghai() }
+    val shape = RoundedCornerShape(12.sdp())
+    Column(
+        modifier
+            .clip(shape)
+            .background(
+                when {
+                    slot.isClaimTarget -> Stellar.Gold.copy(alpha = 0.14f)
+                    slot.claimed -> Stellar.Cyan.copy(alpha = 0.10f)
+                    else -> Stellar.SurfaceHigh.copy(alpha = 0.75f)
+                },
+            )
+            .border(
+                width = if (slot.isToday) 1.dp else 0.dp,
+                color = if (slot.isToday) Stellar.Cyan.copy(alpha = 0.55f) else Color.Transparent,
+                shape = shape,
+            )
+            .padding(vertical = 8.sdp(), horizontal = 2.sdp()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = formatCheckInDateLabel(slot.date, today),
+            color = if (slot.isToday) Stellar.Cyan else Stellar.OnSurfaceVariant,
+            fontSize = 10.ssp(),
+            fontWeight = if (slot.isToday) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(6.sdp()))
+        Box(
+            Modifier
+                .size(28.sdp())
+                .clip(CircleShape)
+                .background(
+                    when {
+                        slot.claimed -> Stellar.Cyan
+                        slot.isClaimTarget -> Stellar.Gold
+                        else -> Stellar.SurfaceContainer
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (slot.claimed) {
+                Icon(
+                    Icons.Outlined.Check,
+                    contentDescription = null,
+                    tint = Stellar.OnPrimary,
+                    modifier = Modifier.size(16.sdp()),
+                )
+            } else {
+                Text(
+                    text = "${slot.reward}",
+                    color = if (slot.isClaimTarget) Stellar.OnPrimary else Stellar.OnSurfaceVariant,
+                    fontSize = 12.ssp(),
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        Spacer(Modifier.height(4.sdp()))
+        Text(
+            text = when {
+                slot.claimed -> "已领取"
+                slot.isClaimTarget -> "+${slot.reward}分"
+                else -> "待签到"
+            },
+            color = Stellar.OnSurfaceVariant.copy(alpha = 0.8f),
+            fontSize = 9.ssp(),
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
 private fun ProfileHeroCard(
     userName: String,
     phone: String?,
     level: Int,
     wordCount: Int,
+    totalPoints: Int,
     avatarBitmap: Bitmap?,
     avatarBusy: Boolean,
     onAvatarClick: () -> Unit,
@@ -693,7 +999,7 @@ private fun ProfileHeroCard(
                 modifier = Modifier.offset(y = (-16).sdp()),
             )
             Text(
-                text = "已收藏 $wordCount 词 · 学习中",
+                text = "已收藏 $wordCount 词 · 积分 $totalPoints",
                 color = Stellar.OnSurfaceVariant,
                 fontSize = 12.ssp(),
                 modifier = Modifier.offset(y = (-10).sdp()),

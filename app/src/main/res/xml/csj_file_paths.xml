@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <external-path
+        name="tt_external_root"
+        path="." />
+    <external-path
+        name="tt_external_download"
+        path="Download" />
+    <external-files-path
+        name="tt_external_files_path"
+        path="." />
+    <cache-path
+        name="tt_cache_path"
+        path="." />
+    <external-cache-path
+        name="tt_external_cache_path"
+        path="." />
+    <files-path
+        name="tt_files_path"
+        path="." />
+</paths>

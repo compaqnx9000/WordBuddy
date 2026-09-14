@@ -1,0 +1,8 @@
+## 本机 Android SDK 路径（Android Studio 会自动生成，勿提交密钥类配置时可只提交示例）
+## sdk.dir=C\:\\Users\\...\\AppData\\Local\\Android\\Sdk
+
+## 穿山甲（必填后才能展示开屏广告）
+## 后台路径：流量变现 → 应用 → 应用 ID（5 开头）
+##          流量变现 → 代码位 → 开屏代码位 ID（8 开头）
+csj.appId=
+csj.splashCodeId=

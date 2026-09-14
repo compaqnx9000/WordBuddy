@@ -223,6 +223,136 @@ class HotWordsApi {
         )
     }
 
+    suspend fun fetchCheckIn(token: String): CheckInState = withContext(Dispatchers.IO) {
+        val root = request("GET", "/me/checkin", auth = token)
+        parseCheckIn(root.optJSONObject("checkIn"))
+    }
+
+    suspend fun performCheckIn(token: String): CheckInResult = withContext(Dispatchers.IO) {
+        val root = request("POST", "/me/checkin", auth = token, body = JSONObject())
+        val checkIn = parseCheckIn(root.optJSONObject("checkIn"))
+        if (root.optBoolean("already", false) || !root.optBoolean("ok", false)) {
+            CheckInResult.AlreadyCheckedIn
+        } else {
+            CheckInResult.Success(
+                pointsEarned = root.optInt("pointsEarned", checkIn.todayReward),
+                streakDays = root.optInt("streakDays", checkIn.streakDays),
+                totalPoints = root.optInt("totalPoints", checkIn.totalPoints),
+            )
+        }
+    }
+
+    suspend fun listGiftCategories(): List<GiftCategory> = withContext(Dispatchers.IO) {
+        val root = request("GET", "/gifts/categories", auth = null)
+        val items = root.optJSONArray("items") ?: JSONArray()
+        buildList {
+            for (i in 0 until items.length()) {
+                val obj = items.optJSONObject(i) ?: continue
+                add(GiftCategory(id = obj.optString("id"), name = obj.optString("name")))
+            }
+        }
+    }
+
+    suspend fun listGifts(category: String = "recommend", page: Int = 1): List<GiftItem> =
+        withContext(Dispatchers.IO) {
+            val path = "/gifts?page=$page&pageSize=40&category=${enc(category)}"
+            val root = request("GET", path, auth = null)
+            val items = root.optJSONArray("items") ?: JSONArray()
+            buildList {
+                for (i in 0 until items.length()) {
+                    val obj = items.optJSONObject(i) ?: continue
+                    add(parseGift(obj))
+                }
+            }
+        }
+
+    suspend fun fetchGift(id: Long): GiftItem = withContext(Dispatchers.IO) {
+        val root = request("GET", "/gifts/$id", auth = null)
+        parseGift(root.getJSONObject("item"))
+    }
+
+    suspend fun redeemGift(
+        token: String,
+        giftId: Long,
+        name: String? = null,
+        phone: String? = null,
+        detail: String? = null,
+    ): GiftRedeemResult = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+        if (!name.isNullOrBlank()) body.put("name", name)
+        if (!phone.isNullOrBlank()) body.put("phone", phone)
+        if (!detail.isNullOrBlank()) body.put("detail", detail)
+        val root = request("POST", "/gifts/$giftId/redeem", auth = token, body = body)
+        GiftRedeemResult(
+            message = root.optString("message").ifBlank { "兑换成功" },
+            order = parseGiftOrder(root.getJSONObject("order")),
+            totalPoints = root.optInt("totalPoints"),
+            checkIn = parseCheckIn(root.optJSONObject("checkIn")),
+        )
+    }
+
+    suspend fun listGiftOrders(token: String, page: Int = 1): List<GiftOrder> =
+        withContext(Dispatchers.IO) {
+            val root = request("GET", "/me/gift-orders?page=$page&pageSize=50", auth = token)
+            val items = root.optJSONArray("items") ?: JSONArray()
+            buildList {
+                for (i in 0 until items.length()) {
+                    val obj = items.optJSONObject(i) ?: continue
+                    add(parseGiftOrder(obj))
+                }
+            }
+        }
+
+    private fun parseGift(obj: JSONObject): GiftItem {
+        return GiftItem(
+            id = obj.optLong("id"),
+            title = obj.optString("title"),
+            subtitle = obj.optString("subtitle"),
+            coverEmoji = obj.optString("coverEmoji").ifBlank { "🎁" },
+            coverColor = obj.optString("coverColor").ifBlank { "#1B6CA8" },
+            category = obj.optString("category").ifBlank { "recommend" },
+            pointsCost = obj.optInt("pointsCost"),
+            cashFen = obj.optInt("cashFen"),
+            cashYuan = obj.optString("cashYuan").ifBlank { "0.00" },
+            originalPriceYuan = optNullableString(obj, "originalPriceYuan"),
+            pointsOffsetYuan = optNullableString(obj, "pointsOffsetYuan"),
+            stock = obj.optInt("stock", -1),
+            redeemedCount = obj.optInt("redeemedCount"),
+            needAddress = obj.optBoolean("needAddress"),
+            description = obj.optString("description"),
+        )
+    }
+
+    private fun parseGiftOrder(obj: JSONObject): GiftOrder {
+        return GiftOrder(
+            id = obj.optLong("id"),
+            giftId = if (obj.has("giftId") && !obj.isNull("giftId")) obj.optLong("giftId") else null,
+            giftTitle = obj.optString("giftTitle"),
+            coverEmoji = obj.optString("coverEmoji").ifBlank { "🎁" },
+            coverColor = obj.optString("coverColor").ifBlank { "#1B6CA8" },
+            pointsSpent = obj.optInt("pointsSpent"),
+            cashFen = obj.optInt("cashFen"),
+            cashYuan = obj.optString("cashYuan").ifBlank { "0.00" },
+            status = obj.optString("status"),
+            addressName = optNullableString(obj, "addressName"),
+            addressPhone = optNullableString(obj, "addressPhone"),
+            addressDetail = optNullableString(obj, "addressDetail"),
+            remark = optNullableString(obj, "remark"),
+            createdAt = optNullableString(obj, "createdAt"),
+        )
+    }
+
+    private fun parseCheckIn(obj: JSONObject?): CheckInState {
+        if (obj == null) return CheckInState()
+        return CheckInState(
+            totalPoints = obj.optInt("totalPoints", 0).coerceAtLeast(0),
+            streakDays = obj.optInt("streakDays", 0).coerceAtLeast(0),
+            lastCheckInDate = optNullableString(obj, "lastCheckInDate"),
+            checkedInToday = obj.optBoolean("checkedInToday", false),
+            todayReward = obj.optInt("todayReward", 1).coerceIn(1, 7),
+        )
+    }
+
     suspend fun fetchAvatarUrl(token: String): String? = withContext(Dispatchers.IO) {
         fetchMe(token)?.avatarUrl
     }

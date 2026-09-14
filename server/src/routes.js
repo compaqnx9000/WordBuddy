@@ -17,6 +17,14 @@ import {
   verifyPassword,
 } from './auth.js'
 import { newLoginCode, sendCode, skipVerify } from './sms.js'
+import { getUserCheckIn, performUserCheckIn } from './checkin.js'
+import {
+  GIFT_CATEGORIES,
+  getGift,
+  listPublishedGifts,
+  mapOrder,
+  redeemGift,
+} from './gifts.js'
 
 export const router = Router()
 
@@ -279,6 +287,7 @@ router.get('/me', authRequired, async (req, res) => {
     await query('SELECT id, phone, avatar_url, user_level FROM users WHERE id = $1', [req.user.id])
   ).rows[0]
   const level = Math.min(7, Math.max(0, Number.isFinite(Number(row?.user_level)) ? Number(row.user_level) : 0))
+  const checkIn = await getUserCheckIn(req.user.id)
   res.json({
     user: {
       id: Number(row?.id || req.user.id),
@@ -289,7 +298,96 @@ router.get('/me', authRequired, async (req, res) => {
     vocabNotebookId: Number(vocabNotebookId),
     avatarUrl: row?.avatar_url || null,
     level,
+    checkIn,
   })
+})
+
+router.get('/me/checkin', authRequired, async (req, res) => {
+  const checkIn = await getUserCheckIn(req.user.id)
+  res.json({ checkIn })
+})
+
+router.post('/me/checkin', authRequired, async (req, res) => {
+  try {
+    const result = await performUserCheckIn(req.user.id)
+    if (result.already) {
+      res.json({ ok: false, already: true, checkIn: result.state, error: '今天已经签到过了' })
+      return
+    }
+    res.json({
+      ok: true,
+      already: false,
+      pointsEarned: result.pointsEarned,
+      streakDays: result.streakDays,
+      totalPoints: result.totalPoints,
+      checkIn: result.state,
+    })
+  } catch (error) {
+    console.error('[me/checkin]', error)
+    res.status(500).json({ error: '签到失败，请稍后重试' })
+  }
+})
+
+router.get('/gifts/categories', (_req, res) => {
+  res.json({ items: GIFT_CATEGORIES })
+})
+
+router.get('/gifts', async (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1)
+  const pageSize = Math.min(60, Math.max(1, Number(req.query.pageSize) || 40))
+  const category = String(req.query.category || '').trim()
+  const q = String(req.query.q || '').trim()
+  const data = await listPublishedGifts({ category, q, page, pageSize })
+  res.json(data)
+})
+
+router.get('/gifts/:id', async (req, res) => {
+  const gift = await getGift(Number(req.params.id))
+  if (!gift || !gift.published) {
+    res.status(404).json({ error: '礼品不存在' })
+    return
+  }
+  res.json({ item: gift })
+})
+
+router.post('/gifts/:id/redeem', authRequired, async (req, res) => {
+  try {
+    const result = await redeemGift(req.user.id, Number(req.params.id), {
+      name: req.body?.name,
+      phone: req.body?.phone,
+      detail: req.body?.detail,
+    })
+    if (!result.ok) {
+      res.status(400).json({ error: result.error })
+      return
+    }
+    const checkIn = await getUserCheckIn(req.user.id)
+    res.json({
+      ok: true,
+      message: result.message,
+      order: result.order,
+      totalPoints: result.totalPoints,
+      checkIn,
+    })
+  } catch (error) {
+    console.error('[gifts/redeem]', error)
+    res.status(500).json({ error: '兑换失败，请稍后重试' })
+  }
+})
+
+router.get('/me/gift-orders', authRequired, async (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1)
+  const pageSize = Math.min(50, Math.max(1, Number(req.query.pageSize) || 20))
+  const offset = (page - 1) * pageSize
+  const total = (
+    await query('SELECT count(*)::int AS n FROM gift_orders WHERE user_id = $1', [req.user.id])
+  ).rows[0].n
+  const result = await query(
+    `SELECT * FROM gift_orders WHERE user_id = $1
+     ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+    [req.user.id, pageSize, offset],
+  )
+  res.json({ items: result.rows.map(mapOrder), total, page, pageSize })
 })
 
 router.post('/me/avatar', authRequired, async (req, res) => {

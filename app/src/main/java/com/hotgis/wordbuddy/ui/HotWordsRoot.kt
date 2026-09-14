@@ -73,8 +73,12 @@ import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.hasStellarWallpaperBackground
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackgroundColor
+import com.hotgis.wordbuddy.ui.gifts.GiftDetailScreen
+import com.hotgis.wordbuddy.ui.gifts.GiftOrdersScreen
+import com.hotgis.wordbuddy.ui.gifts.PointsMallScreen
 import com.hotgis.wordbuddy.ui.profile.ProfileScreen
 import com.hotgis.wordbuddy.ui.settings.AppSettingsScreen
+import com.hotgis.wordbuddy.ui.shorts.ShortsScreen
 import com.hotgis.wordbuddy.ui.theme.HotWordsTheme
 import kotlinx.coroutines.delay
 
@@ -89,6 +93,9 @@ fun HotWordsRoot(
     var tab by remember { mutableStateOf(MainTab.Home) }
     var overlay by remember { mutableStateOf(Overlay.None) }
     var showAppSettings by remember { mutableStateOf(false) }
+    var showPointsMall by remember { mutableStateOf(false) }
+    var showGiftOrders by remember { mutableStateOf(false) }
+    var giftDetailId by remember { mutableStateOf<Long?>(null) }
     var showLogin by remember { mutableStateOf(false) }
     var loginHint by remember { mutableStateOf<String?>(null) }
     var pendingExit by remember { mutableStateOf(false) }
@@ -100,6 +107,7 @@ fun HotWordsRoot(
     val words by viewModel.filteredWords.collectAsStateWithLifecycle()
     val notebooks by viewModel.notebooks.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
+    val checkIn by viewModel.checkIn.collectAsStateWithLifecycle()
     val avatarBitmap by viewModel.avatarBitmap.collectAsStateWithLifecycle()
     val avatarBusy by viewModel.avatarBusy.collectAsStateWithLifecycle()
     val login by viewModel.login.collectAsStateWithLifecycle()
@@ -218,6 +226,9 @@ fun HotWordsRoot(
         if (tab == MainTab.Notebook && overlay == Overlay.None) {
             viewModel.onNotebookTabOpened()
         }
+        if (tab == MainTab.Me) {
+            viewModel.refreshCheckIn()
+        }
     }
 
     LaunchedEffect(pendingExit) {
@@ -239,6 +250,18 @@ fun HotWordsRoot(
                 pendingExit = false
                 showAppSettings = false
             }
+            giftDetailId != null -> {
+                pendingExit = false
+                giftDetailId = null
+            }
+            showGiftOrders -> {
+                pendingExit = false
+                showGiftOrders = false
+            }
+            showPointsMall -> {
+                pendingExit = false
+                showPointsMall = false
+            }
             overlay == Overlay.Settings -> {
                 pendingExit = false
                 overlay = Overlay.Card
@@ -256,7 +279,7 @@ fun HotWordsRoot(
                     Toast.makeText(context, "再按一次退出", Toast.LENGTH_SHORT).show()
                 }
             }
-            tab == MainTab.Notebook || tab == MainTab.Me -> {
+            tab == MainTab.Notebook || tab == MainTab.Me || tab == MainTab.Shorts -> {
                 pendingExit = false
                 tab = MainTab.Home
             }
@@ -273,10 +296,14 @@ fun HotWordsRoot(
             // Include Me: otherwise Scaffold uses a solid theme color behind MainBottomBar,
             // which reads as a separate opaque strip (unlike NotebookBottomBar drawn on wallpaper).
             val stellarChrome = showAppSettings ||
+                showPointsMall ||
+                showGiftOrders ||
+                giftDetailId != null ||
                 overlay == Overlay.Card ||
                 overlay == Overlay.Settings ||
                 (overlay == Overlay.None && (
                     tab == MainTab.Home ||
+                        tab == MainTab.Shorts ||
                         tab == MainTab.Notebook ||
                         tab == MainTab.Me
                     ))
@@ -345,19 +372,86 @@ fun HotWordsRoot(
                 },
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 bottomBar = {
-                    if (overlay == Overlay.None && tab != MainTab.Notebook) {
+                    if (overlay == Overlay.None &&
+                        tab != MainTab.Notebook &&
+                        !showAppSettings &&
+                        !showPointsMall &&
+                        !showGiftOrders &&
+                        giftDetailId == null
+                    ) {
                         MainBottomBar(
                             selected = tab,
                             onSelect = {
                                 showAppSettings = false
+                                showPointsMall = false
+                                showGiftOrders = false
+                                giftDetailId = null
                                 tab = it
                             },
-                            stellar = showAppSettings || tab == MainTab.Home || tab == MainTab.Me,
+                            stellar = showAppSettings ||
+                                tab == MainTab.Home ||
+                                tab == MainTab.Shorts ||
+                                tab == MainTab.Me,
                         )
                     }
                 },
             ) { padding ->
-            if (showAppSettings) {
+            when {
+                giftDetailId != null -> {
+                    GiftDetailScreen(
+                        giftId = giftDetailId!!,
+                        totalPoints = checkIn.totalPoints,
+                        token = session?.token,
+                        onBack = { giftDetailId = null },
+                        onRedeemed = {
+                            viewModel.refreshCheckIn()
+                            giftDetailId = null
+                            showGiftOrders = true
+                        },
+                        onLogin = {
+                            loginHint = "登录后可兑换礼品"
+                            showLogin = true
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .hotWordsScreen(padding, consumeStatusBars = false),
+                    )
+                }
+                showGiftOrders -> {
+                    GiftOrdersScreen(
+                        token = session?.token,
+                        onBack = { showGiftOrders = false },
+                        onLogin = {
+                            loginHint = "登录后查看兑换订单"
+                            showLogin = true
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .hotWordsScreen(padding, consumeStatusBars = false),
+                    )
+                }
+                showPointsMall -> {
+                    PointsMallScreen(
+                        totalPoints = checkIn.totalPoints,
+                        userName = ui.settings.displayName,
+                        loggedIn = session != null,
+                        onBack = { showPointsMall = false },
+                        onOpenOrders = { showGiftOrders = true },
+                        onOpenGift = { giftDetailId = it },
+                        onOpenCheckIn = {
+                            showPointsMall = false
+                            tab = MainTab.Me
+                        },
+                        onLogin = {
+                            loginHint = "登录后可兑换礼品"
+                            showLogin = true
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .hotWordsScreen(padding, consumeStatusBars = false),
+                    )
+                }
+                showAppSettings -> {
                 AppSettingsScreen(
                     modifier = Modifier
                         .fillMaxSize()
@@ -377,7 +471,8 @@ fun HotWordsRoot(
                         viewModel.logout()
                     },
                 )
-            } else when (overlay) {
+            }
+                else -> when (overlay) {
                 Overlay.Card -> {
                     HotWordsStudyCard(
                         modifier = Modifier
@@ -467,6 +562,22 @@ fun HotWordsRoot(
                             onToggleHomophoneLike = viewModel::toggleHomophoneLike,
                             onLoadHomophoneLikers = { id, offset ->
                                 viewModel.loadHomophoneLikers(id, offset)
+                            },
+                        )
+                    }
+
+                    MainTab.Shorts -> {
+                        ShortsScreen(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .hotWordsScreen(padding, consumeStatusBars = false),
+                            onOpenWord = { word ->
+                                viewModel.setLookupQuery(word)
+                                viewModel.submitLookup()
+                                tab = MainTab.Home
+                            },
+                            onShare = {
+                                Toast.makeText(context, "分享即将上线", Toast.LENGTH_SHORT).show()
                             },
                         )
                     }
@@ -613,6 +724,10 @@ fun HotWordsRoot(
                             onImportContent = viewModel::importNotebookJson,
                             phone = session?.phone,
                             level = session?.level ?: 0,
+                            checkIn = checkIn,
+                            onRefreshCheckIn = viewModel::refreshCheckIn,
+                            onCheckIn = viewModel::performCheckIn,
+                            onOpenPointsMall = { showPointsMall = true },
                             onLogin = {
                                 loginHint = "登录后可同步收藏与生词本"
                                 showLogin = true
@@ -629,6 +744,7 @@ fun HotWordsRoot(
         }
         }
         }
+    }
     }
 }
 

@@ -16,10 +16,12 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -40,8 +42,31 @@ import com.hotgis.wordbuddy.ui.theme.HwColors
 enum class MainTab {
     Home,
     Notebook,
+    Shorts,
     Me,
 }
+
+private data class MainTabSpec(
+    val tab: MainTab,
+    val label: String,
+    val selectedIcon: ImageVector,
+    val unselectedIcon: ImageVector,
+)
+
+private val mainTabs = listOf(
+    MainTabSpec(MainTab.Home, "首页", Icons.Filled.Home, Icons.Outlined.Home),
+    MainTabSpec(MainTab.Notebook, "生词本", Icons.Filled.MenuBook, Icons.Outlined.MenuBook),
+    MainTabSpec(MainTab.Shorts, "短视频", Icons.Filled.PlayCircle, Icons.Outlined.PlayCircle),
+    MainTabSpec(MainTab.Me, "我", Icons.Filled.Person, Icons.Outlined.Person),
+)
+
+private val stellarTabs = listOf(
+    MainTabSpec(MainTab.Home, "首页", Icons.Filled.Home, Icons.Outlined.Home),
+    MainTabSpec(MainTab.Notebook, "生词本", Icons.Filled.MenuBook, Icons.Outlined.MenuBook),
+    MainTabSpec(MainTab.Shorts, "短视频", Icons.Filled.PlayCircle, Icons.Outlined.PlayCircle),
+    MainTabSpec(MainTab.Me, "我", Icons.Filled.AutoAwesome, Icons.Outlined.AutoAwesome),
+)
+
 
 @Composable
 fun MainBottomBar(
@@ -68,30 +93,16 @@ fun MainBottomBar(
                 .fillMaxWidth()
                 .height(48.sdp()),
         ) {
-            BottomTabItem(
-                label = "首页",
-                selected = selected == MainTab.Home,
-                selectedIcon = Icons.Filled.Home,
-                unselectedIcon = Icons.Outlined.Home,
-                onClick = { onSelect(MainTab.Home) },
-                modifier = Modifier.weight(1f),
-            )
-            BottomTabItem(
-                label = "生词本",
-                selected = selected == MainTab.Notebook,
-                selectedIcon = Icons.Filled.MenuBook,
-                unselectedIcon = Icons.Outlined.MenuBook,
-                onClick = { onSelect(MainTab.Notebook) },
-                modifier = Modifier.weight(1f),
-            )
-            BottomTabItem(
-                label = "我",
-                selected = selected == MainTab.Me,
-                selectedIcon = Icons.Filled.Person,
-                unselectedIcon = Icons.Outlined.Person,
-                onClick = { onSelect(MainTab.Me) },
-                modifier = Modifier.weight(1f),
-            )
+            mainTabs.forEach { spec ->
+                BottomTabItem(
+                    label = spec.label,
+                    selected = selected == spec.tab,
+                    selectedIcon = spec.selectedIcon,
+                    unselectedIcon = spec.unselectedIcon,
+                    onClick = { onSelect(spec.tab) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }
@@ -119,30 +130,16 @@ private fun StellarBottomBar(
             .padding(top = 8.sdp(), bottom = 8.sdp()),
     ) {
         Row(Modifier.fillMaxWidth()) {
-            StellarTab(
-                label = "首页",
-                selected = selected == MainTab.Home,
-                selectedIcon = Icons.Filled.Home,
-                unselectedIcon = Icons.Outlined.Home,
-                onClick = { onSelect(MainTab.Home) },
-                modifier = Modifier.weight(1f),
-            )
-            StellarTab(
-                label = "生词本",
-                selected = selected == MainTab.Notebook,
-                selectedIcon = Icons.Filled.MenuBook,
-                unselectedIcon = Icons.Outlined.MenuBook,
-                onClick = { onSelect(MainTab.Notebook) },
-                modifier = Modifier.weight(1f),
-            )
-            StellarTab(
-                label = "我",
-                selected = selected == MainTab.Me,
-                selectedIcon = Icons.Filled.AutoAwesome,
-                unselectedIcon = Icons.Outlined.AutoAwesome,
-                onClick = { onSelect(MainTab.Me) },
-                modifier = Modifier.weight(1f),
-            )
+            stellarTabs.forEach { spec ->
+                StellarTab(
+                    label = spec.label,
+                    selected = selected == spec.tab,
+                    selectedIcon = spec.selectedIcon,
+                    unselectedIcon = spec.unselectedIcon,
+                    onClick = { onSelect(spec.tab) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }

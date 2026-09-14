@@ -269,7 +269,7 @@ fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
                         detailDismiss = ""
                         pendingUpdate = null
                         detailMessage =
-                            "我们仅收集账号登录与学习所需的最少信息（如手机号、词库数据）。不会出售你的个人信息。详细说明见《隐私保护指引》。"
+                            "我们仅收集账号登录与学习所需的最少信息（如手机号、词库数据）。使用广告服务（穿山甲）时，可能使用设备标识等信息用于广告投放与反作弊。不会出售你的个人信息。详细说明见《隐私保护指引》。"
                     },
                     onOpenPrivacy = {
                         detailTitle = "隐私保护指引"
@@ -277,7 +277,7 @@ fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
                         detailDismiss = ""
                         pendingUpdate = null
                         detailMessage =
-                            "词搭子会本地缓存部分词条以便离线浏览，并在登录后将你的生词本同步至服务器。你可以随时退出登录清除本机缓存。\n\n如需删除账号数据，请联系 hi@wordbuddy.cc。"
+                            "词搭子会本地缓存部分词条以便离线浏览，并在登录后将你的生词本同步至服务器。你可以随时退出登录清除本机缓存。\n\n应用内可能展示由穿山甲提供的广告；广告 SDK 可能使用设备与网络相关信息用于投放与反作弊。你可以在首次启动时选择是否同意。\n\n如需删除账号数据，请联系 hi@wordbuddy.cc。"
                     },
                 )
             }

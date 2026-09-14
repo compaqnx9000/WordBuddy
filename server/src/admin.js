@@ -11,6 +11,8 @@ import {
   verifyPassword,
 } from './auth.js'
 import { mapDeviceRow } from './device.js'
+import { todayShanghai } from './checkin.js'
+import { GIFT_CATEGORIES, mapGift, mapOrder } from './gifts.js'
 
 export const adminRouter = Router()
 
@@ -151,13 +153,16 @@ adminRouter.get('/me', adminRequired, async (req, res) => {
 })
 
 adminRouter.get('/overview', adminRequired, async (_req, res) => {
-  const [users, logins, words, catalogs, userBooks, sms] = await Promise.all([
+  const today = todayShanghai()
+  const [users, logins, words, catalogs, userBooks, sms, checkInToday, checkInUsers] = await Promise.all([
     query('SELECT count(*)::int AS n FROM users'),
     query(`SELECT count(*)::int AS n FROM login_events WHERE created_at > now() - interval '7 days' AND success = TRUE`),
     query('SELECT count(*)::int AS n FROM words'),
     query(`SELECT count(*)::int AS n FROM notebooks WHERE kind = 'catalog'`),
     query(`SELECT count(*)::int AS n FROM notebooks WHERE kind = 'user'`),
     query(`SELECT count(*)::int AS n FROM sms_codes WHERE created_at > now() - interval '24 hours'`),
+    query(`SELECT count(*)::int AS n FROM user_checkin_logs WHERE checkin_date = $1::date`, [today]),
+    query(`SELECT count(*)::int AS n FROM user_checkins WHERE total_points > 0`),
   ])
   const recentUsers = await query(
     `SELECT id, phone, avatar_url, created_at, last_login_at, login_count,
@@ -174,6 +179,8 @@ adminRouter.get('/overview', adminRequired, async (_req, res) => {
       catalogCount: catalogs.rows[0].n,
       userNotebookCount: userBooks.rows[0].n,
       sms24h: sms.rows[0].n,
+      checkInToday: checkInToday.rows[0].n,
+      checkInUsers: checkInUsers.rows[0].n,
     },
     recentUsers: recentUsers.rows.map(mapUser),
   })
@@ -231,7 +238,7 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
     res.status(404).json({ error: '用户不存在' })
     return
   }
-  const [notebooks, logins, passwords, sms, devices] = await Promise.all([
+  const [notebooks, logins, passwords, sms, devices, checkIn, checkInLogs] = await Promise.all([
     query(
       `SELECT n.id, n.kind, n.slug, n.name, n.published, n.sort_order, n.owner_user_id, n.created_at,
               (SELECT count(*)::int FROM words w WHERE w.notebook_id = n.id) AS word_count
@@ -266,7 +273,19 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
        ORDER BY last_seen_at DESC, id DESC`,
       [id],
     ),
+    query(
+      `SELECT total_points, streak_days, last_checkin_date, updated_at
+       FROM user_checkins WHERE user_id = $1`,
+      [id],
+    ),
+    query(
+      `SELECT id, checkin_date, streak_days, points_earned, created_at
+       FROM user_checkin_logs WHERE user_id = $1
+       ORDER BY checkin_date DESC LIMIT 60`,
+      [id],
+    ),
   ])
+  const checkInRow = checkIn.rows[0]
   res.json({
     user: mapUser(user),
     notebooks: notebooks.rows.map(mapNotebook),
@@ -284,6 +303,23 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
       expiresAt: iso(row.expires_at),
       consumedAt: iso(row.consumed_at),
       consumed: Boolean(row.consumed),
+    })),
+    checkIn: checkInRow
+      ? {
+          totalPoints: Number(checkInRow.total_points || 0),
+          streakDays: Number(checkInRow.streak_days || 0),
+          lastCheckInDate: checkInRow.last_checkin_date
+            ? String(checkInRow.last_checkin_date).slice(0, 10)
+            : null,
+          updatedAt: iso(checkInRow.updated_at),
+        }
+      : { totalPoints: 0, streakDays: 0, lastCheckInDate: null, updatedAt: null },
+    checkInLogs: checkInLogs.rows.map((row) => ({
+      id: Number(row.id),
+      checkInDate: String(row.checkin_date).slice(0, 10),
+      streakDays: Number(row.streak_days || 0),
+      pointsEarned: Number(row.points_earned || 0),
+      createdAt: iso(row.created_at),
     })),
   })
 })
@@ -676,4 +712,294 @@ adminRouter.get('/audit', adminRequired, async (req, res) => {
     page,
     pageSize,
   })
+})
+
+adminRouter.get('/checkins', adminRequired, async (req, res) => {
+  const { page, pageSize, offset } = pageParams(req)
+  const q = String(req.query.q || '').trim()
+  const today = todayShanghai()
+  const params = [today]
+  let where = 'TRUE'
+  if (q) {
+    params.push(`%${q}%`)
+    where = `(u.phone ILIKE $${params.length})`
+  }
+  const total = (
+    await query(
+      `SELECT count(*)::int AS n
+       FROM user_checkins c
+       JOIN users u ON u.id = c.user_id
+       WHERE ${where}`,
+      q ? [`%${q}%`] : [],
+    )
+  ).rows[0].n
+  params.push(pageSize, offset)
+  const result = await query(
+    `
+    SELECT c.user_id, c.total_points, c.streak_days, c.last_checkin_date, c.updated_at,
+           u.phone, u.avatar_url, u.user_level,
+           (c.last_checkin_date = $1::date) AS checked_today
+    FROM user_checkins c
+    JOIN users u ON u.id = c.user_id
+    WHERE ${where}
+    ORDER BY c.total_points DESC, c.updated_at DESC, c.user_id DESC
+    LIMIT $${params.length - 1} OFFSET $${params.length}
+    `,
+    params,
+  )
+  const [todayCount, pointsSum] = await Promise.all([
+    query(`SELECT count(*)::int AS n FROM user_checkin_logs WHERE checkin_date = $1::date`, [today]),
+    query(`SELECT coalesce(sum(total_points), 0)::int AS n FROM user_checkins`),
+  ])
+  res.json({
+    items: result.rows.map((row) => ({
+      userId: Number(row.user_id),
+      phone: row.phone,
+      avatarUrl: row.avatar_url || null,
+      level: Math.min(7, Math.max(0, Number(row.user_level || 0))),
+      totalPoints: Number(row.total_points || 0),
+      streakDays: Number(row.streak_days || 0),
+      lastCheckInDate: row.last_checkin_date ? String(row.last_checkin_date).slice(0, 10) : null,
+      checkedToday: Boolean(row.checked_today),
+      updatedAt: iso(row.updated_at),
+    })),
+    stats: {
+      today,
+      checkInToday: todayCount.rows[0].n,
+      totalPoints: pointsSum.rows[0].n,
+      userCount: total,
+    },
+    total,
+    page,
+    pageSize,
+  })
+})
+
+adminRouter.get('/checkins/logs', adminRequired, async (req, res) => {
+  const { page, pageSize, offset } = pageParams(req)
+  const q = String(req.query.q || '').trim()
+  const params = []
+  let where = 'TRUE'
+  if (q) {
+    params.push(`%${q}%`)
+    where = '(u.phone ILIKE $1)'
+  }
+  const total = (
+    await query(
+      `SELECT count(*)::int AS n
+       FROM user_checkin_logs l
+       JOIN users u ON u.id = l.user_id
+       WHERE ${where}`,
+      params,
+    )
+  ).rows[0].n
+  params.push(pageSize, offset)
+  const result = await query(
+    `
+    SELECT l.id, l.user_id, l.checkin_date, l.streak_days, l.points_earned, l.created_at,
+           u.phone, u.avatar_url
+    FROM user_checkin_logs l
+    JOIN users u ON u.id = l.user_id
+    WHERE ${where}
+    ORDER BY l.checkin_date DESC, l.id DESC
+    LIMIT $${params.length - 1} OFFSET $${params.length}
+    `,
+    params,
+  )
+  res.json({
+    items: result.rows.map((row) => ({
+      id: Number(row.id),
+      userId: Number(row.user_id),
+      phone: row.phone,
+      avatarUrl: row.avatar_url || null,
+      checkInDate: String(row.checkin_date).slice(0, 10),
+      streakDays: Number(row.streak_days || 0),
+      pointsEarned: Number(row.points_earned || 0),
+      createdAt: iso(row.created_at),
+    })),
+    total,
+    page,
+    pageSize,
+  })
+})
+
+adminRouter.get('/gifts', adminRequired, async (req, res) => {
+  const { page, pageSize, offset } = pageParams(req)
+  const q = String(req.query.q || '').trim()
+  const params = []
+  let where = 'TRUE'
+  if (q) {
+    params.push(`%${q}%`)
+    where = '(title ILIKE $1 OR subtitle ILIKE $1)'
+  }
+  const total = (await query(`SELECT count(*)::int AS n FROM gifts WHERE ${where}`, params)).rows[0].n
+  params.push(pageSize, offset)
+  const result = await query(
+    `SELECT * FROM gifts WHERE ${where}
+     ORDER BY sort_order ASC, id DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params,
+  )
+  res.json({ items: result.rows.map(mapGift), total, page, pageSize, categories: GIFT_CATEGORIES })
+})
+
+adminRouter.post('/gifts', adminRequired, async (req, res) => {
+  const title = String(req.body?.title || '').trim()
+  if (!title) {
+    res.status(400).json({ error: '请填写礼品名称' })
+    return
+  }
+  const pointsCost = Math.max(0, Number(req.body?.pointsCost) || 0)
+  const cashFen = Math.max(0, Math.round(Number(req.body?.cashYuan || 0) * 100) || Number(req.body?.cashFen) || 0)
+  const row = (
+    await query(
+      `INSERT INTO gifts
+        (title, subtitle, cover_emoji, cover_color, category, points_cost, cash_fen,
+         original_price_fen, points_offset_fen, stock, sort_order, published, need_address, description)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       RETURNING *`,
+      [
+        title,
+        String(req.body?.subtitle || '').trim() || null,
+        String(req.body?.coverEmoji || '🎁').trim() || '🎁',
+        String(req.body?.coverColor || '#1B6CA8').trim() || '#1B6CA8',
+        String(req.body?.category || 'recommend').trim() || 'recommend',
+        pointsCost,
+        cashFen,
+        req.body?.originalPriceYuan != null
+          ? Math.round(Number(req.body.originalPriceYuan) * 100)
+          : req.body?.originalPriceFen ?? null,
+        req.body?.pointsOffsetYuan != null
+          ? Math.round(Number(req.body.pointsOffsetYuan) * 100)
+          : req.body?.pointsOffsetFen ?? null,
+        req.body?.stock == null || req.body?.stock === '' ? -1 : Number(req.body.stock),
+        Number(req.body?.sortOrder) || 0,
+        req.body?.published !== false,
+        Boolean(req.body?.needAddress),
+        String(req.body?.description || '').trim() || null,
+      ],
+    )
+  ).rows[0]
+  await audit(req, 'create_gift', 'gift', row.id, { title })
+  res.json({ item: mapGift(row) })
+})
+
+adminRouter.patch('/gifts/:id', adminRequired, async (req, res) => {
+  const id = Number(req.params.id)
+  const existing = (await query('SELECT * FROM gifts WHERE id = $1', [id])).rows[0]
+  if (!existing) {
+    res.status(404).json({ error: '礼品不存在' })
+    return
+  }
+  const title = req.body?.title != null ? String(req.body.title).trim() : existing.title
+  const pointsCost =
+    req.body?.pointsCost != null ? Math.max(0, Number(req.body.pointsCost) || 0) : existing.points_cost
+  let cashFen = existing.cash_fen
+  if (req.body?.cashYuan != null) cashFen = Math.max(0, Math.round(Number(req.body.cashYuan) * 100))
+  else if (req.body?.cashFen != null) cashFen = Math.max(0, Number(req.body.cashFen) || 0)
+  const published = req.body?.published != null ? Boolean(req.body.published) : existing.published
+  const row = (
+    await query(
+      `UPDATE gifts SET
+         title=$1, subtitle=$2, cover_emoji=$3, cover_color=$4, category=$5,
+         points_cost=$6, cash_fen=$7, original_price_fen=$8, points_offset_fen=$9,
+         stock=$10, sort_order=$11, published=$12, need_address=$13, description=$14
+       WHERE id=$15 RETURNING *`,
+      [
+        title,
+        req.body?.subtitle != null ? String(req.body.subtitle).trim() : existing.subtitle,
+        req.body?.coverEmoji != null ? String(req.body.coverEmoji).trim() : existing.cover_emoji,
+        req.body?.coverColor != null ? String(req.body.coverColor).trim() : existing.cover_color,
+        req.body?.category != null ? String(req.body.category).trim() : existing.category,
+        pointsCost,
+        cashFen,
+        req.body?.originalPriceYuan != null
+          ? Math.round(Number(req.body.originalPriceYuan) * 100)
+          : req.body?.originalPriceFen != null
+            ? Number(req.body.originalPriceFen)
+            : existing.original_price_fen,
+        req.body?.pointsOffsetYuan != null
+          ? Math.round(Number(req.body.pointsOffsetYuan) * 100)
+          : req.body?.pointsOffsetFen != null
+            ? Number(req.body.pointsOffsetFen)
+            : existing.points_offset_fen,
+        req.body?.stock != null ? Number(req.body.stock) : existing.stock,
+        req.body?.sortOrder != null ? Number(req.body.sortOrder) : existing.sort_order,
+        published,
+        req.body?.needAddress != null ? Boolean(req.body.needAddress) : existing.need_address,
+        req.body?.description != null ? String(req.body.description).trim() : existing.description,
+        id,
+      ],
+    )
+  ).rows[0]
+  await audit(req, 'update_gift', 'gift', id, { title, published })
+  res.json({ item: mapGift(row) })
+})
+
+adminRouter.delete('/gifts/:id', adminRequired, async (req, res) => {
+  const id = Number(req.params.id)
+  const row = (await query('DELETE FROM gifts WHERE id = $1 RETURNING id, title', [id])).rows[0]
+  if (!row) {
+    res.status(404).json({ error: '礼品不存在' })
+    return
+  }
+  await audit(req, 'delete_gift', 'gift', id, { title: row.title })
+  res.json({ ok: true })
+})
+
+adminRouter.get('/gift-orders', adminRequired, async (req, res) => {
+  const { page, pageSize, offset } = pageParams(req)
+  const q = String(req.query.q || '').trim()
+  const status = String(req.query.status || '').trim()
+  const params = []
+  const where = ['TRUE']
+  if (q) {
+    params.push(`%${q}%`)
+    where.push(`(u.phone ILIKE $${params.length} OR o.gift_title ILIKE $${params.length})`)
+  }
+  if (status) {
+    params.push(status)
+    where.push(`o.status = $${params.length}`)
+  }
+  const total = (
+    await query(
+      `SELECT count(*)::int AS n FROM gift_orders o
+       JOIN users u ON u.id = o.user_id
+       WHERE ${where.join(' AND ')}`,
+      params,
+    )
+  ).rows[0].n
+  params.push(pageSize, offset)
+  const result = await query(
+    `SELECT o.*, u.phone FROM gift_orders o
+     JOIN users u ON u.id = o.user_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY o.created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params,
+  )
+  res.json({ items: result.rows.map(mapOrder), total, page, pageSize })
+})
+
+adminRouter.patch('/gift-orders/:id', adminRequired, async (req, res) => {
+  const id = Number(req.params.id)
+  const status = String(req.body?.status || '').trim()
+  const allowed = new Set(['pending_cash', 'pending_ship', 'shipped', 'completed', 'cancelled'])
+  if (!allowed.has(status)) {
+    res.status(400).json({ error: '无效状态' })
+    return
+  }
+  const row = (
+    await query(
+      `UPDATE gift_orders SET status = $1, updated_at = now(), remark = COALESCE($2, remark)
+       WHERE id = $3 RETURNING *`,
+      [status, req.body?.remark != null ? String(req.body.remark) : null, id],
+    )
+  ).rows[0]
+  if (!row) {
+    res.status(404).json({ error: '订单不存在' })
+    return
+  }
+  await audit(req, 'update_gift_order', 'gift_order', id, { status })
+  res.json({ item: mapOrder(row) })
 })

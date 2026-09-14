@@ -8,6 +8,9 @@ dotenv.config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 const url = process.env.DATABASE_URL
 if (!url) throw new Error('DATABASE_URL is required')
 
+// Keep DATE columns as yyyy-MM-dd strings — JS Date + toISOString shifts by timezone.
+pg.types.setTypeParser(1082, (value) => value)
+
 export const pool = new pg.Pool({
   connectionString: url,
   max: 10,
@@ -126,4 +129,83 @@ export async function ensureSchema() {
       PRIMARY KEY (homophone_id, user_id)
     )
   `)
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_checkins (
+      user_id BIGINT PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+      total_points INTEGER NOT NULL DEFAULT 0,
+      streak_days INTEGER NOT NULL DEFAULT 0,
+      last_checkin_date DATE,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_checkin_logs (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+      checkin_date DATE NOT NULL,
+      streak_days INTEGER NOT NULL,
+      points_earned INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (user_id, checkin_date)
+    )
+  `)
+  await query('CREATE INDEX IF NOT EXISTS user_checkin_logs_date ON user_checkin_logs (checkin_date DESC)')
+  await query('CREATE INDEX IF NOT EXISTS user_checkin_logs_user ON user_checkin_logs (user_id, checkin_date DESC)')
+  await query('CREATE INDEX IF NOT EXISTS user_checkins_points ON user_checkins (total_points DESC)')
+  await query(`
+    CREATE TABLE IF NOT EXISTS points_ledger (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+      delta INTEGER NOT NULL,
+      balance_after INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      ref_type TEXT,
+      ref_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query('CREATE INDEX IF NOT EXISTS points_ledger_user ON points_ledger (user_id, created_at DESC)')
+  await query(`
+    CREATE TABLE IF NOT EXISTS gifts (
+      id BIGSERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      subtitle TEXT,
+      cover_emoji TEXT NOT NULL DEFAULT '🎁',
+      cover_color TEXT NOT NULL DEFAULT '#1B6CA8',
+      category TEXT NOT NULL DEFAULT 'recommend',
+      points_cost INTEGER NOT NULL DEFAULT 0,
+      cash_fen INTEGER NOT NULL DEFAULT 0,
+      original_price_fen INTEGER,
+      points_offset_fen INTEGER,
+      stock INTEGER NOT NULL DEFAULT -1,
+      redeemed_count INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      published BOOLEAN NOT NULL DEFAULT TRUE,
+      need_address BOOLEAN NOT NULL DEFAULT FALSE,
+      description TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query('CREATE INDEX IF NOT EXISTS gifts_published_sort ON gifts (published, sort_order ASC, id DESC)')
+  await query(`
+    CREATE TABLE IF NOT EXISTS gift_orders (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+      gift_id BIGINT REFERENCES gifts (id) ON DELETE SET NULL,
+      gift_title TEXT NOT NULL,
+      cover_emoji TEXT,
+      cover_color TEXT,
+      points_spent INTEGER NOT NULL DEFAULT 0,
+      cash_fen INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'completed',
+      address_name TEXT,
+      address_phone TEXT,
+      address_detail TEXT,
+      remark TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query('CREATE INDEX IF NOT EXISTS gift_orders_user ON gift_orders (user_id, created_at DESC)')
+  await query('CREATE INDEX IF NOT EXISTS gift_orders_created ON gift_orders (created_at DESC)')
 }

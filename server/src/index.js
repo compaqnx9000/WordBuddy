@@ -6,6 +6,7 @@ import dotenv from 'dotenv'
 import express from 'express'
 import { ensureSuperAdmin } from './auth.js'
 import { ensureSchema } from './db.js'
+import { ensureGiftSeed } from './gifts.js'
 import { adminRouter } from './admin.js'
 import { router } from './routes.js'
 
@@ -62,6 +63,7 @@ app.use((err, _req, res, _next) => {
 
 const port = Number(process.env.PORT) || 8787
 ensureSchema()
+  .then(() => ensureGiftSeed())
   .then(() => ensureSuperAdmin())
   .then(() => {
     app.listen(port, '0.0.0.0', () => {

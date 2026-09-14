@@ -14,6 +14,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // 穿山甲 / Pangle China SDK
+        maven { url = uri("https://artifact.bytedance.com/repository/pangle") }
     }
 }
 

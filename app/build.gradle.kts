@@ -12,6 +12,20 @@ if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.inputStream().use { localProperties.load(it) }
+}
+
+fun escapeBuildConfig(value: String): String =
+    value.replace("\\", "\\\\").replace("\"", "\\\"")
+
+// 穿山甲：在 local.properties 填写 csj.appId / csj.splashCodeId（勿提交密钥到 git）
+val csjAppId = localProperties.getProperty("csj.appId", "").trim()
+val csjSplashCodeId = localProperties.getProperty("csj.splashCodeId", "").trim()
+val csjSplashFallbackCodeId = localProperties.getProperty("csj.splashFallbackCodeId", "").trim()
+
 android {
     namespace = "com.hotgis.wordbuddy"
     compileSdk = 35
@@ -20,14 +34,22 @@ android {
         applicationId = "com.hotgis.wordbuddy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 30
-        versionName = "0.39"
+        versionCode = 39
+        versionName = "0.48"
         ndk {
+            // Pangle AAR only ships armeabi-v7a / arm64-v8a (no x86_64).
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
         // Domain https://wordbuddy.cc is blocked until ICP 备案; use server IP for now.
         buildConfigField("String", "API_BASE_URL", "\"http://39.96.67.128:8787\"")
         buildConfigField("String", "API_FALLBACK_URL", "\"http://39.96.67.128:8787\"")
+        buildConfigField("String", "CSJ_APP_ID", "\"${escapeBuildConfig(csjAppId)}\"")
+        buildConfigField("String", "CSJ_SPLASH_CODE_ID", "\"${escapeBuildConfig(csjSplashCodeId)}\"")
+        buildConfigField(
+            "String",
+            "CSJ_SPLASH_FALLBACK_CODE_ID",
+            "\"${escapeBuildConfig(csjSplashFallbackCodeId)}\"",
+        )
     }
 
     signingConfigs {
@@ -63,7 +85,8 @@ android {
 
     packaging {
         jniLibs {
-            useLegacyPackaging = true
+            // false improves 16KB page-size zip alignment for native .so (Android 15+).
+            useLegacyPackaging = false
         }
     }
 
@@ -92,12 +115,17 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.window)
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.ui)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.pangle.mediation.sdk)
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
 

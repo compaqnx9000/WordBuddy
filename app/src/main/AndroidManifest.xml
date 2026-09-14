@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -12,6 +14,9 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <queries>
         <!-- 【Android 11+ 包可见性声明】各主流品牌定制 ROM 相册包名，确保相册应用在系统中可见 -->
@@ -70,8 +75,14 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.HotWords">
         <activity
-            android:name=".MainActivity"
+            android:name=".ads.SplashActivity"
             android:exported="true"
+            android:theme="@style/Theme.HotWords"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="false"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden|density"
             android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize"
@@ -93,7 +104,7 @@
             android:icon="@mipmap/ic_launcher"
             android:roundIcon="@mipmap/ic_launcher_round"
             android:label="@string/app_name"
-            android:targetActivity=".MainActivity">
+            android:targetActivity=".ads.SplashActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -106,7 +117,7 @@
             android:icon="@mipmap/ic_level_1"
             android:roundIcon="@mipmap/ic_level_1"
             android:label="@string/app_name"
-            android:targetActivity=".MainActivity">
+            android:targetActivity=".ads.SplashActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -119,7 +130,7 @@
             android:icon="@mipmap/ic_level_2"
             android:roundIcon="@mipmap/ic_level_2"
             android:label="@string/app_name"
-            android:targetActivity=".MainActivity">
+            android:targetActivity=".ads.SplashActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -132,7 +143,7 @@
             android:icon="@mipmap/ic_level_2"
             android:roundIcon="@mipmap/ic_level_2"
             android:label="@string/app_name"
-            android:targetActivity=".MainActivity">
+            android:targetActivity=".ads.SplashActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -145,7 +156,7 @@
             android:icon="@mipmap/ic_level_2"
             android:roundIcon="@mipmap/ic_level_2"
             android:label="@string/app_name"
-            android:targetActivity=".MainActivity">
+            android:targetActivity=".ads.SplashActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -158,7 +169,7 @@
             android:icon="@mipmap/ic_level_2"
             android:roundIcon="@mipmap/ic_level_2"
             android:label="@string/app_name"
-            android:targetActivity=".MainActivity">
+            android:targetActivity=".ads.SplashActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -171,7 +182,7 @@
             android:icon="@mipmap/ic_level_2"
             android:roundIcon="@mipmap/ic_level_2"
             android:label="@string/app_name"
-            android:targetActivity=".MainActivity">
+            android:targetActivity=".ads.SplashActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -184,7 +195,7 @@
             android:icon="@mipmap/ic_level_2"
             android:roundIcon="@mipmap/ic_level_2"
             android:label="@string/app_name"
-            android:targetActivity=".MainActivity">
+            android:targetActivity=".ads.SplashActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -200,5 +211,9 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        <!-- Do NOT declare TTFileProvider: ads-sdk-pro 7.x merges its own
+             com.byazt.ae.FileProvider. Declaring the legacy TTFileProvider
+             crashes cold start on AndroidX apps (ClassNotFound: support.v4). -->
     </application>
 </manifest>
+

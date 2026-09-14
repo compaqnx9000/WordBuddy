@@ -21,6 +21,9 @@ import com.hotgis.wordbuddy.data.Notebook
 import com.hotgis.wordbuddy.data.SortMode
 import com.hotgis.wordbuddy.data.StudySettings
 import com.hotgis.wordbuddy.data.SettingsStore
+import com.hotgis.wordbuddy.data.CheckInStore
+import com.hotgis.wordbuddy.data.CheckInState
+import com.hotgis.wordbuddy.data.CheckInResult
 import com.hotgis.wordbuddy.data.VocabEntry
 import com.hotgis.wordbuddy.data.HotWordsApi
 import com.hotgis.wordbuddy.data.AuthSessionEvents
@@ -127,6 +130,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private val repo = VocabRepository(application)
     private val settingsStore = SettingsStore(application)
     private val sessionStore = SessionStore(application)
+    private val checkInStore = CheckInStore(application)
     private val api = HotWordsApi()
     private val dictionary = DictionaryClient()
     private val tts = TtsPlayer(application)
@@ -137,6 +141,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     val notebooks: StateFlow<List<Notebook>> = repo.notebooks
     private val _session = MutableStateFlow(sessionStore.load())
     val session: StateFlow<UserSession?> = _session.asStateFlow()
+    private val _checkIn = MutableStateFlow(checkInStore.load())
+    val checkIn: StateFlow<CheckInState> = _checkIn.asStateFlow()
     private val _sessionReplacedMessages = MutableSharedFlow<String>(extraBufferCapacity = 1)
     /** Toast / dialog copy when this device was kicked by another login. */
     val sessionReplacedMessages: SharedFlow<String> = _sessionReplacedMessages.asSharedFlow()
@@ -1840,6 +1846,77 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun refreshCheckIn() {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            _checkIn.value = CheckInState()
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.fetchCheckIn(token) }
+                .onSuccess { remote ->
+                    checkInStore.applyRemoteRaw(
+                        totalPoints = remote.totalPoints,
+                        streakDays = remote.streakDays,
+                        lastCheckInDate = remote.lastCheckInDate,
+                    )
+                    _checkIn.value = remote
+                }
+                .onFailure {
+                    _checkIn.value = checkInStore.load()
+                }
+        }
+    }
+
+    fun applyCheckInPoints(totalPoints: Int) {
+        val current = _checkIn.value
+        checkInStore.applyRemoteRaw(
+            totalPoints = totalPoints.coerceAtLeast(0),
+            streakDays = current.streakDays,
+            lastCheckInDate = current.lastCheckInDate,
+        )
+        _checkIn.value = checkInStore.load()
+    }
+
+    fun performCheckIn(onResult: (CheckInResult) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(CheckInResult.NeedLogin)
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.performCheckIn(token) }
+                .onSuccess { result ->
+                    runCatching { api.fetchCheckIn(token) }
+                        .onSuccess { remote ->
+                            checkInStore.applyRemoteRaw(
+                                totalPoints = remote.totalPoints,
+                                streakDays = remote.streakDays,
+                                lastCheckInDate = remote.lastCheckInDate,
+                            )
+                            _checkIn.value = remote
+                        }
+                        .onFailure {
+                            when (result) {
+                                is CheckInResult.Success -> {
+                                    checkInStore.applyRemoteRaw(
+                                        totalPoints = result.totalPoints,
+                                        streakDays = result.streakDays,
+                                        lastCheckInDate = CheckInStore.todayShanghai().toString(),
+                                    )
+                                    _checkIn.value = checkInStore.load()
+                                }
+                                else -> _checkIn.value = checkInStore.load()
+                            }
+                        }
+                    onResult(result)
+                }
+                .onFailure { error ->
+                    onResult(CheckInResult.Failed(error.message ?: "签到失败，请稍后重试"))
+                }
+        }
+    }
+
     fun updateSettings(transform: (StudySettings) -> StudySettings) {
         _ui.update { state ->
             val next = transform(state.settings)
@@ -2145,6 +2222,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         loadAvatarBitmap()
+        refreshCheckIn()
         viewModelScope.launch { bootstrapSession() }
     }
 
@@ -2194,6 +2272,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
         LauncherIcons.apply(getApplication(), merged.level)
         loadAvatarBitmap()
+        refreshCheckIn()
     }
 
     private fun loadAvatarBitmap() {
@@ -2249,6 +2328,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     fun logout() {
         sessionStore.clear()
         _session.value = null
+        _checkIn.value = CheckInState()
         _avatarBitmap.value = null
         _avatarBusy.value = false
         LauncherIcons.apply(getApplication(), 0)
