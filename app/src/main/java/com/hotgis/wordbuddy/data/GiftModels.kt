@@ -69,3 +69,43 @@ data class GiftRedeemResult(
     val totalPoints: Int,
     val checkIn: CheckInState,
 )
+
+data class WithdrawChannel(
+    val id: String,
+    val name: String,
+    val accountLabel: String,
+    val accountHint: String = "",
+)
+
+data class WithdrawConfig(
+    val sandbox: Boolean = true,
+    val amountFen: Int = 1,
+    val amountYuan: String = "0.01",
+    val pointsCost: Int = 1,
+    val channels: List<WithdrawChannel> = emptyList(),
+    val note: String = "",
+)
+
+data class WithdrawalItem(
+    val id: Long,
+    val channel: String,
+    val channelLabel: String = "",
+    val account: String = "",
+    val amountFen: Int = 0,
+    val amountYuan: String = "0.00",
+    val pointsSpent: Int = 0,
+    val status: String = "pending",
+    val statusLabel: String = "",
+    val providerTradeNo: String? = null,
+    val errorMessage: String? = null,
+    val remark: String? = null,
+    val sandbox: Boolean = true,
+    val createdAt: String? = null,
+)
+
+data class WithdrawResult(
+    val message: String,
+    val item: WithdrawalItem,
+    val totalPoints: Int,
+    val checkIn: CheckInState,
+)

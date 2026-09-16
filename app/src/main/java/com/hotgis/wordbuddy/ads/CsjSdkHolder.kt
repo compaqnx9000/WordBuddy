@@ -23,6 +23,8 @@ object CsjSdkHolder {
     var ready: Boolean = false
         private set
 
+    private val readyWaiters = java.util.ArrayList<(Boolean) -> Unit>()
+
     val isConfigured: Boolean
         get() = BuildConfig.CSJ_APP_ID.isNotBlank() &&
             BuildConfig.CSJ_SPLASH_CODE_ID.isNotBlank()
@@ -47,11 +49,11 @@ object CsjSdkHolder {
             onReady(false)
             return
         }
-        if (starting) {
-            onReady(ready)
-            return
+        synchronized(readyWaiters) {
+            readyWaiters += onReady
+            if (starting) return
+            starting = true
         }
-        starting = true
         val app = context.applicationContext
         try {
             val config = TTAdConfig.Builder()
@@ -93,14 +95,14 @@ object CsjSdkHolder {
                         runCatching {
                             Log.i(TAG, "Pangle SDK ready, version=${TTAdSdk.getAdManager().sdkVersion}")
                         }
-                        onReady(true)
+                        flushReady(true)
                     }
 
                     override fun fail(code: Int, msg: String?) {
                         starting = false
                         ready = false
                         Log.e(TAG, "Pangle SDK start failed: $code $msg")
-                        onReady(false)
+                        flushReady(false)
                     }
                 },
             )
@@ -108,7 +110,18 @@ object CsjSdkHolder {
             starting = false
             ready = false
             Log.e(TAG, "Pangle SDK init/start crashed", t)
-            onReady(false)
+            flushReady(false)
+        }
+    }
+
+    private fun flushReady(ok: Boolean) {
+        val waiters = synchronized(readyWaiters) {
+            val copy = readyWaiters.toList()
+            readyWaiters.clear()
+            copy
+        }
+        waiters.forEach { waiter ->
+            runCatching { waiter(ok) }
         }
     }
 }

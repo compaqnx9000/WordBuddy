@@ -91,6 +91,7 @@ fun PointsMallScreen(
     onOpenOrders: () -> Unit,
     onOpenGift: (Long) -> Unit,
     onOpenCheckIn: () -> Unit,
+    onOpenWithdraw: () -> Unit,
     onLogin: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -144,6 +145,9 @@ fun PointsMallScreen(
                         if (loggedIn) onOpenOrders() else onLogin()
                     },
                     onOpenCheckIn = onOpenCheckIn,
+                    onOpenWithdraw = {
+                        if (loggedIn) onOpenWithdraw() else onLogin()
+                    },
                     onPointsOnly = {
                         category = "points_only"
                         reload("points_only")
@@ -221,6 +225,7 @@ private fun MallHeader(
     loggedIn: Boolean,
     onOpenOrders: () -> Unit,
     onOpenCheckIn: () -> Unit,
+    onOpenWithdraw: () -> Unit,
     onPointsOnly: () -> Unit,
 ) {
     Column(
@@ -246,7 +251,7 @@ private fun MallHeader(
             fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(10.sdp()))
-        Row(verticalAlignment = Alignment.Bottom) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text("我的积分", color = Stellar.OnSurfaceVariant, fontSize = 13.ssp())
             Spacer(Modifier.width(8.sdp()))
             Text(
@@ -266,7 +271,7 @@ private fun MallHeader(
         Spacer(Modifier.height(14.sdp()))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             QuickAction(Icons.Outlined.LocalMall, "0元起兑", onClick = onPointsOnly)
-            QuickAction(Icons.Outlined.CardGiftcard, "精选好物", onClick = {})
+            QuickAction(Icons.Outlined.CardGiftcard, "积分提现", onClick = onOpenWithdraw)
             QuickAction(Icons.Outlined.ReceiptLong, "我的订单", onClick = onOpenOrders)
             QuickAction(Icons.Outlined.EventAvailable, "每日签到", onClick = onOpenCheckIn)
         }
@@ -389,6 +394,10 @@ fun GiftDetailScreen(
     onBack: () -> Unit,
     onRedeemed: () -> Unit,
     onLogin: () -> Unit,
+    initialShippingName: String = "",
+    initialShippingPhone: String = "",
+    initialShippingDetail: String = "",
+    onSaveShipping: (name: String, phone: String, detail: String) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val api = remember { HotWordsApi() }
@@ -399,9 +408,15 @@ fun GiftDetailScreen(
     var busy by remember { mutableStateOf(false) }
     var showAddress by remember { mutableStateOf(false) }
     var confirmRedeem by remember { mutableStateOf(false) }
-    var name by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
-    var detail by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf(initialShippingName) }
+    var phone by remember { mutableStateOf(initialShippingPhone) }
+    var detail by remember { mutableStateOf(initialShippingDetail) }
+
+    LaunchedEffect(giftId, initialShippingName, initialShippingPhone, initialShippingDetail) {
+        if (name.isBlank() && initialShippingName.isNotBlank()) name = initialShippingName
+        if (phone.isBlank() && initialShippingPhone.isNotBlank()) phone = initialShippingPhone
+        if (detail.isBlank() && initialShippingDetail.isNotBlank()) detail = initialShippingDetail
+    }
 
     LaunchedEffect(giftId) {
         loading = true
@@ -429,6 +444,9 @@ fun GiftDetailScreen(
             runCatching {
                 api.redeemGift(t, g.id, name.ifBlank { null }, phone.ifBlank { null }, detail.ifBlank { null })
             }.onSuccess { result ->
+                if (g.needAddress && name.isNotBlank() && phone.isNotBlank() && detail.isNotBlank()) {
+                    onSaveShipping(name, phone, detail)
+                }
                 Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
                 onRedeemed()
             }.onFailure {
@@ -622,13 +640,13 @@ private fun AddressDialog(
                 .border(1.dp, Stellar.Cyan.copy(alpha = 0.4f), shape)
                 .padding(20.sdp()),
         ) {
-            Text("收货信息", color = Stellar.CyanSoft, fontSize = 20.ssp(), fontWeight = FontWeight.Bold)
+            Text("收货地址", color = Stellar.CyanSoft, fontSize = 20.ssp(), fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(12.sdp()))
-            Field("姓名", name, onName)
+            Field(label = "收件人", placeholder = "请填写收件人姓名", value = name, onChange = onName)
             Spacer(Modifier.height(8.sdp()))
-            Field("手机号", phone, onPhone)
+            Field(label = "电话", placeholder = "请填写联系电话", value = phone, onChange = onPhone)
             Spacer(Modifier.height(8.sdp()))
-            Field("详细地址", detail, onDetail)
+            Field(label = "地址", placeholder = "省市区 + 详细地址", value = detail, onChange = onDetail)
             Spacer(Modifier.height(16.sdp()))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 Text(
@@ -654,25 +672,41 @@ private fun AddressDialog(
 }
 
 @Composable
-private fun Field(hint: String, value: String, onChange: (String) -> Unit) {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.sdp()))
-            .background(Stellar.SurfaceHigh)
-            .padding(12.sdp()),
-    ) {
-        BasicTextField(
-            value = value,
-            onValueChange = onChange,
-            textStyle = TextStyle(color = Stellar.OnSurface, fontSize = 14.ssp()),
-            cursorBrush = SolidColor(Stellar.Cyan),
-            decorationBox = { inner ->
-                if (value.isEmpty()) Text(hint, color = Stellar.OnSurfaceVariant, fontSize = 14.ssp())
-                inner()
-            },
-            modifier = Modifier.fillMaxWidth(),
+private fun Field(
+    label: String,
+    placeholder: String,
+    value: String,
+    onChange: (String) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            color = Stellar.OnSurfaceVariant,
+            fontSize = 13.ssp(),
+            fontWeight = FontWeight.Medium,
         )
+        Spacer(Modifier.height(6.sdp()))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.sdp()))
+                .background(Stellar.SurfaceHigh)
+                .padding(12.sdp()),
+        ) {
+            BasicTextField(
+                value = value,
+                onValueChange = onChange,
+                textStyle = TextStyle(color = Stellar.OnSurface, fontSize = 14.ssp()),
+                cursorBrush = SolidColor(Stellar.Cyan),
+                decorationBox = { inner ->
+                    if (value.isEmpty()) {
+                        Text(placeholder, color = Stellar.OnSurfaceVariant, fontSize = 14.ssp())
+                    }
+                    inner()
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 

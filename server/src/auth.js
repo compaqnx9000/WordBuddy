@@ -1,7 +1,7 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import jwt from 'jsonwebtoken'
 import { query } from './db.js'
-import { extractDeviceInfo, normalizeIp, resolveIpLocation } from './device.js'
+import { extractDeviceInfo, isPrivateIp, normalizeIp, resolveIpLocation } from './device.js'
 
 const TOKEN_TTL = '30d'
 export const SESSION_REPLACED_CODE = 'SESSION_REPLACED'
@@ -141,9 +141,14 @@ export function verifyPassword(password, stored) {
 
 export function clientIp(req) {
   const forwarded = String(req.headers['x-forwarded-for'] || '')
-    .split(',')[0]
-    .trim()
-  return normalizeIp(forwarded || req.socket?.remoteAddress || '')
+    .split(',')
+    .map((part) => normalizeIp(part.trim()))
+    .filter(Boolean)
+  const realIp = normalizeIp(req.headers['x-real-ip'])
+  const remote = normalizeIp(req.socket?.remoteAddress || '')
+  const candidates = [...forwarded, realIp, remote]
+  const publicIp = candidates.find((ip) => ip && !isPrivateIp(ip))
+  return publicIp || remote || ''
 }
 
 export async function recordLoginEvent(req, { userId = null, phone, method, success }) {

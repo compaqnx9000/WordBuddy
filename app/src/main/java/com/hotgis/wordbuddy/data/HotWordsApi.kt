@@ -171,22 +171,8 @@ class HotWordsApi {
             return AuthResult(session = null, isNewUser = isNewUser)
         }
         val user = root.getJSONObject("user")
-        val avatarUrl = optNullableString(root, "avatarUrl")
-            ?: optNullableString(user, "avatarUrl")
-        val level = when {
-            user.has("level") && !user.isNull("level") -> user.optInt("level", 0)
-            root.has("level") && !root.isNull("level") -> root.optInt("level", 0)
-            else -> 0
-        }
         return AuthResult(
-            session = UserSession(
-                token = root.getString("token"),
-                userId = user.getLong("id"),
-                phone = user.getString("phone"),
-                vocabNotebookId = root.getLong("vocabNotebookId"),
-                avatarUrl = avatarUrl,
-                level = level.coerceIn(0, 7),
-            ),
+            session = parseUserSession(token = root.getString("token"), root = root, user = user),
             isNewUser = isNewUser,
         )
     }
@@ -206,6 +192,50 @@ class HotWordsApi {
     suspend fun fetchMe(token: String): UserSession? = withContext(Dispatchers.IO) {
         val root = request("GET", "/me", auth = token)
         val user = root.optJSONObject("user") ?: return@withContext null
+        parseUserSession(token = token, root = root, user = user)
+    }
+
+    suspend fun updateProfile(
+        token: String,
+        nickname: String? = null,
+        shippingName: String? = null,
+        shippingPhone: String? = null,
+        shippingDetail: String? = null,
+        gender: String? = null,
+        region: String? = null,
+        signature: String? = null,
+        email: String? = null,
+    ): UserSession = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+        if (nickname != null) body.put("nickname", nickname)
+        if (gender != null) body.put("gender", gender)
+        if (region != null) body.put("region", region)
+        if (signature != null) body.put("signature", signature)
+        if (email != null) body.put("email", email)
+        if (shippingName != null || shippingPhone != null || shippingDetail != null) {
+            body.put(
+                "shipping",
+                JSONObject()
+                    .put("name", shippingName ?: "")
+                    .put("phone", shippingPhone ?: "")
+                    .put("detail", shippingDetail ?: ""),
+            )
+        }
+        val root = request("PATCH", "/me", auth = token, body = body)
+        val user = root.getJSONObject("user")
+        parseUserSession(token = token, root = root, user = user)
+    }
+
+    suspend fun refreshNetworkRegion(token: String): Pair<UserSession, String> =
+        withContext(Dispatchers.IO) {
+            val root = request("POST", "/me/network-region/refresh", auth = token, body = JSONObject())
+            val user = root.getJSONObject("user")
+            val session = parseUserSession(token = token, root = root, user = user)
+            val message = root.optString("message").ifBlank { "网络属地已刷新" }
+            session to message
+        }
+
+    private fun parseUserSession(token: String, root: JSONObject, user: JSONObject): UserSession {
         val avatarUrl = optNullableString(root, "avatarUrl")
             ?: optNullableString(user, "avatarUrl")
         val level = when {
@@ -213,13 +243,24 @@ class HotWordsApi {
             root.has("level") && !root.isNull("level") -> root.optInt("level", 0)
             else -> 0
         }.coerceIn(0, 7)
-        UserSession(
+        return UserSession(
             token = token,
             userId = user.optLong("id"),
             phone = user.optString("phone"),
             vocabNotebookId = root.optLong("vocabNotebookId"),
             avatarUrl = avatarUrl,
             level = level,
+            nickname = optNullableString(user, "nickname"),
+            shippingName = optNullableString(user, "shippingName"),
+            shippingPhone = optNullableString(user, "shippingPhone"),
+            shippingDetail = optNullableString(user, "shippingDetail"),
+            gender = optNullableString(user, "gender"),
+            region = optNullableString(user, "region"),
+            buddyId = optNullableString(user, "buddyId"),
+            signature = optNullableString(user, "signature"),
+            email = optNullableString(user, "email"),
+            networkRegion = optNullableString(user, "networkRegion"),
+            networkRegionDetail = optNullableString(user, "networkRegionDetail"),
         )
     }
 
@@ -240,6 +281,24 @@ class HotWordsApi {
                 totalPoints = root.optInt("totalPoints", checkIn.totalPoints),
             )
         }
+    }
+
+    suspend fun makeupCheckIn(token: String, date: String): CheckInResult = withContext(Dispatchers.IO) {
+        val root = request(
+            "POST",
+            "/me/checkin/makeup",
+            auth = token,
+            body = JSONObject().put("date", date),
+        )
+        if (!root.optBoolean("ok", false)) {
+            if (root.optBoolean("already", false)) return@withContext CheckInResult.AlreadyCheckedIn
+            throw IllegalStateException(root.optString("error").ifBlank { "补签失败" })
+        }
+        CheckInResult.Success(
+            pointsEarned = root.optInt("pointsEarned", 1),
+            streakDays = root.optInt("streakDays", 0),
+            totalPoints = root.optInt("totalPoints", 0),
+        )
     }
 
     suspend fun listGiftCategories(): List<GiftCategory> = withContext(Dispatchers.IO) {
@@ -303,6 +362,84 @@ class HotWordsApi {
             }
         }
 
+    suspend fun fetchWithdrawConfig(token: String): WithdrawConfig = withContext(Dispatchers.IO) {
+        val root = request("GET", "/me/withdrawals/config", auth = token)
+        parseWithdrawConfig(root.getJSONObject("config"))
+    }
+
+    suspend fun listWithdrawals(token: String, page: Int = 1): List<WithdrawalItem> =
+        withContext(Dispatchers.IO) {
+            val root = request("GET", "/me/withdrawals?page=$page&pageSize=50", auth = token)
+            val items = root.optJSONArray("items") ?: JSONArray()
+            buildList {
+                for (i in 0 until items.length()) {
+                    val obj = items.optJSONObject(i) ?: continue
+                    add(parseWithdrawal(obj))
+                }
+            }
+        }
+
+    suspend fun createWithdrawal(
+        token: String,
+        channel: String,
+        account: String,
+    ): WithdrawResult = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("channel", channel)
+            .put("account", account)
+        val root = request("POST", "/me/withdrawals", auth = token, body = body)
+        WithdrawResult(
+            message = root.optString("message").ifBlank { "提现成功" },
+            item = parseWithdrawal(root.getJSONObject("item")),
+            totalPoints = root.optInt("totalPoints"),
+            checkIn = parseCheckIn(root.optJSONObject("checkIn")),
+        )
+    }
+
+    private fun parseWithdrawConfig(obj: JSONObject): WithdrawConfig {
+        val channelsArr = obj.optJSONArray("channels") ?: JSONArray()
+        val channels = buildList {
+            for (i in 0 until channelsArr.length()) {
+                val c = channelsArr.optJSONObject(i) ?: continue
+                add(
+                    WithdrawChannel(
+                        id = c.optString("id"),
+                        name = c.optString("name"),
+                        accountLabel = c.optString("accountLabel"),
+                        accountHint = c.optString("accountHint"),
+                    ),
+                )
+            }
+        }
+        return WithdrawConfig(
+            sandbox = obj.optBoolean("sandbox", true),
+            amountFen = obj.optInt("amountFen", 1),
+            amountYuan = obj.optString("amountYuan").ifBlank { "0.01" },
+            pointsCost = obj.optInt("pointsCost", 1),
+            channels = channels,
+            note = obj.optString("note"),
+        )
+    }
+
+    private fun parseWithdrawal(obj: JSONObject): WithdrawalItem {
+        return WithdrawalItem(
+            id = obj.optLong("id"),
+            channel = obj.optString("channel"),
+            channelLabel = obj.optString("channelLabel"),
+            account = obj.optString("account"),
+            amountFen = obj.optInt("amountFen"),
+            amountYuan = obj.optString("amountYuan").ifBlank { "0.00" },
+            pointsSpent = obj.optInt("pointsSpent"),
+            status = obj.optString("status"),
+            statusLabel = obj.optString("statusLabel"),
+            providerTradeNo = optNullableString(obj, "providerTradeNo"),
+            errorMessage = optNullableString(obj, "errorMessage"),
+            remark = optNullableString(obj, "remark"),
+            sandbox = obj.optBoolean("sandbox", true),
+            createdAt = optNullableString(obj, "createdAt"),
+        )
+    }
+
     private fun parseGift(obj: JSONObject): GiftItem {
         return GiftItem(
             id = obj.optLong("id"),
@@ -344,12 +481,25 @@ class HotWordsApi {
 
     private fun parseCheckIn(obj: JSONObject?): CheckInState {
         if (obj == null) return CheckInState()
+        val datesArr = obj.optJSONArray("recentDates")
+        val recentDates = buildList {
+            if (datesArr != null) {
+                for (i in 0 until datesArr.length()) {
+                    val d = datesArr.optString(i).trim()
+                    if (d.isNotEmpty()) add(d)
+                }
+            }
+        }
+        val last = optNullableString(obj, "lastCheckInDate")
+        val checkedInToday = obj.optBoolean("checkedInToday", false) ||
+            recentDates.contains(CheckInStore.todayShanghai().toString())
         return CheckInState(
             totalPoints = obj.optInt("totalPoints", 0).coerceAtLeast(0),
             streakDays = obj.optInt("streakDays", 0).coerceAtLeast(0),
-            lastCheckInDate = optNullableString(obj, "lastCheckInDate"),
-            checkedInToday = obj.optBoolean("checkedInToday", false),
+            lastCheckInDate = last,
+            checkedInToday = checkedInToday,
             todayReward = obj.optInt("todayReward", 1).coerceIn(1, 7),
+            recentDates = recentDates,
         )
     }
 

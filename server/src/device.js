@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 const geoCache = new Map()
 const GEO_TTL_MS = 24 * 60 * 60 * 1000
+const GEO_FAIL_TTL_MS = 30 * 1000
 
 function clean(value, max = 80) {
   const text = String(value || '')
@@ -132,19 +133,27 @@ export function extractDeviceInfo(req) {
   }
 }
 
-async function lookupIpApi(ip) {
-  const url = `http://ip-api.com/json/${encodeURIComponent(ip)}?lang=zh-CN&fields=status,message,country,regionName,city,isp,query`
+async function fetchJson(url, { timeoutMs = 2500, encoding } = {}) {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 2500)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const res = await fetch(url, { signal: controller.signal })
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'WordBuddy/1.0' },
+    })
     if (!res.ok) return null
-    const data = await res.json()
-    if (data.status !== 'success') return null
-    const bits = [data.country, data.regionName, data.city].filter(Boolean)
-    const place = [...new Set(bits)].join(' ')
-    const isp = data.isp ? ` · ${data.isp}` : ''
-    return clean(`${place}${isp}`, 160) || null
+    if (encoding) {
+      const buf = Buffer.from(await res.arrayBuffer())
+      let text
+      try {
+        text = new TextDecoder(encoding).decode(buf)
+      } catch {
+        text = buf.toString('utf8')
+      }
+      const jsonStart = text.indexOf('{')
+      return JSON.parse(jsonStart >= 0 ? text.slice(jsonStart) : text)
+    }
+    return await res.json()
   } catch {
     return null
   } finally {
@@ -152,19 +161,78 @@ async function lookupIpApi(ip) {
   }
 }
 
-export async function resolveIpLocation(ip) {
+function formatLocation({ country, province, city, isp }) {
+  const place = [...new Set([country, province, city].filter(Boolean))].join(' ')
+  const ispBit = isp ? ` · ${isp}` : ''
+  return clean(`${place}${ispBit}`, 160) || null
+}
+
+async function lookupIp9(ip) {
+  const data = await fetchJson(`https://ip9.com.cn/get?ip=${encodeURIComponent(ip)}`)
+  if (!data || Number(data.ret) !== 200 || !data.data) return null
+  const row = data.data
+  return formatLocation({
+    country: row.country,
+    province: row.prov || row.province,
+    city: row.city,
+    isp: row.isp,
+  })
+}
+
+async function lookupPconline(ip) {
+  const data = await fetchJson(
+    `https://whois.pconline.com.cn/ipJson.jsp?ip=${encodeURIComponent(ip)}&json=true`,
+    { encoding: 'gb18030' },
+  )
+  if (!data || data.err) return null
+  const province = clean(data.pro)
+  const city = clean(data.city)
+  const addr = clean(data.addr, 120)
+  const isp = addr && province && addr.includes(province)
+    ? clean(addr.replace(province, '').replace(city, '').replace(/\s+/g, ' '))
+    : ''
+  return formatLocation({
+    country: '中国',
+    province,
+    city,
+    isp,
+  })
+}
+
+async function lookupIpApi(ip) {
+  const data = await fetchJson(
+    `http://ip-api.com/json/${encodeURIComponent(ip)}?lang=zh-CN&fields=status,message,country,regionName,city,isp,query`,
+  )
+  if (!data || data.status !== 'success') return null
+  return formatLocation({
+    country: data.country,
+    province: data.regionName,
+    city: data.city,
+    isp: data.isp,
+  })
+}
+
+export async function resolveIpLocation(ip, { force = false } = {}) {
   const value = normalizeIp(ip)
   if (!value) return null
   if (isPrivateIp(value)) return '本地/内网'
   const cached = geoCache.get(value)
-  if (cached && Date.now() - cached.at < GEO_TTL_MS) return cached.value
-  const location = (await lookupIpApi(value)) || '归属地未知'
-  geoCache.set(value, { value: location, at: Date.now() })
+  const now = Date.now()
+  if (!force && cached) {
+    const ttl = cached.ok ? GEO_TTL_MS : GEO_FAIL_TTL_MS
+    if (now - cached.at < ttl) return cached.value
+  }
+  const location =
+    (await lookupIp9(value)) ||
+    (await lookupPconline(value)) ||
+    (await lookupIpApi(value))
+  const resolved = location || '归属地未知'
+  geoCache.set(value, { value: resolved, at: now, ok: Boolean(location) })
   if (geoCache.size > 5000) {
     const first = geoCache.keys().next().value
     geoCache.delete(first)
   }
-  return location
+  return resolved
 }
 
 export function mapDeviceRow(row) {

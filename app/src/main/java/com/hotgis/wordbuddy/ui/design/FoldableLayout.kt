@@ -216,20 +216,26 @@ fun FoldableDualPaneRow(
         when (foldable.formFactor) {
             FoldableFormFactor.TriFold -> {
                 val gutters = foldable.hingeGutters
-                Box(Modifier.weight(1f)) { listPane() }
+                Box(Modifier.weight(1f)) {
+                    DesignScaleProvider { listPane() }
+                }
                 gutters.getOrNull(0)?.let { FoldableHingeGutter(it) }
                 Box(
                     Modifier
                         .weight(2f)
                         .padding(start = gutters.getOrNull(1)?.widthDp?.dp ?: 0.dp),
                 ) {
-                    detailPane()
+                    DesignScaleProvider { detailPane() }
                 }
             }
             else -> {
-                Box(Modifier.weight(listWeight)) { listPane() }
+                Box(Modifier.weight(listWeight)) {
+                    DesignScaleProvider { listPane() }
+                }
                 foldable.hingeGutters.forEach { FoldableHingeGutter(it) }
-                Box(Modifier.weight(detailWeight)) { detailPane() }
+                Box(Modifier.weight(detailWeight)) {
+                    DesignScaleProvider { detailPane() }
+                }
             }
         }
     }

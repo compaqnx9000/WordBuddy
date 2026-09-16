@@ -25,6 +25,8 @@ fun escapeBuildConfig(value: String): String =
 val csjAppId = localProperties.getProperty("csj.appId", "").trim()
 val csjSplashCodeId = localProperties.getProperty("csj.splashCodeId", "").trim()
 val csjSplashFallbackCodeId = localProperties.getProperty("csj.splashFallbackCodeId", "").trim()
+val csjDrawCodeId = localProperties.getProperty("csj.drawCodeId", "104539577").trim()
+val csjRewardCodeId = localProperties.getProperty("csj.rewardCodeId", "104540414").trim()
 
 android {
     namespace = "com.hotgis.wordbuddy"
@@ -34,8 +36,8 @@ android {
         applicationId = "com.hotgis.wordbuddy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 39
-        versionName = "0.48"
+        versionCode = 63
+        versionName = "0.72"
         ndk {
             // Pangle AAR only ships armeabi-v7a / arm64-v8a (no x86_64).
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
@@ -50,6 +52,8 @@ android {
             "CSJ_SPLASH_FALLBACK_CODE_ID",
             "\"${escapeBuildConfig(csjSplashFallbackCodeId)}\"",
         )
+        buildConfigField("String", "CSJ_DRAW_CODE_ID", "\"${escapeBuildConfig(csjDrawCodeId)}\"")
+        buildConfigField("String", "CSJ_REWARD_CODE_ID", "\"${escapeBuildConfig(csjRewardCodeId)}\"")
     }
 
     signingConfigs {
@@ -126,6 +130,7 @@ dependencies {
     implementation(libs.pangle.mediation.sdk)
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.zxing:core:3.5.3")
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
 

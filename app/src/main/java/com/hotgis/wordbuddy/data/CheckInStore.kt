@@ -13,6 +13,8 @@ data class CheckInState(
     val checkedInToday: Boolean = false,
     /** Points awarded if the user checks in now (or already earned today). */
     val todayReward: Int = 1,
+    /** Real check-in dates (yyyy-MM-dd) in the recent window from server logs. */
+    val recentDates: List<String> = emptyList(),
 )
 
 sealed class CheckInResult {
@@ -51,6 +53,7 @@ class CheckInStore(context: Context) {
             lastCheckInDate = lastRaw,
             checkedInToday = checkedToday,
             todayReward = todayReward,
+            recentDates = emptyList(),
         )
     }
 

@@ -91,9 +91,10 @@
             <meta-data
                 android:name="android.allow_multiple_resumed_activities"
                 android:value="true" />
+            <!-- Custom Compose dual-pane; do not enable system activity embedding splits. -->
             <meta-data
                 android:name="android.window.PROPERTY_ACTIVITY_EMBEDDING_SPLITS_ENABLED"
-                android:value="true" />
+                android:value="false" />
         </activity>
 
         <!-- Launcher icons by user level (only one alias enabled at a time). -->

@@ -46,6 +46,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import com.hotgis.wordbuddy.ads.DrawFeedController
 import com.hotgis.wordbuddy.auth.BiometricAuth
 import com.hotgis.wordbuddy.data.Accent
 import com.hotgis.wordbuddy.data.AppTheme
@@ -76,8 +77,11 @@ import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackgroundColor
 import com.hotgis.wordbuddy.ui.gifts.GiftDetailScreen
 import com.hotgis.wordbuddy.ui.gifts.GiftOrdersScreen
 import com.hotgis.wordbuddy.ui.gifts.PointsMallScreen
+import com.hotgis.wordbuddy.ui.gifts.PointsWithdrawScreen
+import com.hotgis.wordbuddy.ui.profile.AccountProfileScreen
 import com.hotgis.wordbuddy.ui.profile.ProfileScreen
 import com.hotgis.wordbuddy.ui.settings.AppSettingsScreen
+import com.hotgis.wordbuddy.ui.settings.SwitchAccountScreen
 import com.hotgis.wordbuddy.ui.shorts.ShortsScreen
 import com.hotgis.wordbuddy.ui.theme.HotWordsTheme
 import kotlinx.coroutines.delay
@@ -93,8 +97,12 @@ fun HotWordsRoot(
     var tab by remember { mutableStateOf(MainTab.Home) }
     var overlay by remember { mutableStateOf(Overlay.None) }
     var showAppSettings by remember { mutableStateOf(false) }
+    var showSwitchAccount by remember { mutableStateOf(false) }
     var showPointsMall by remember { mutableStateOf(false) }
     var showGiftOrders by remember { mutableStateOf(false) }
+    var showPointsWithdraw by remember { mutableStateOf(false) }
+    var showAccountProfile by remember { mutableStateOf(false) }
+    var showShortsLookup by remember { mutableStateOf(false) }
     var giftDetailId by remember { mutableStateOf<Long?>(null) }
     var showLogin by remember { mutableStateOf(false) }
     var loginHint by remember { mutableStateOf<String?>(null) }
@@ -110,6 +118,8 @@ fun HotWordsRoot(
     val checkIn by viewModel.checkIn.collectAsStateWithLifecycle()
     val avatarBitmap by viewModel.avatarBitmap.collectAsStateWithLifecycle()
     val avatarBusy by viewModel.avatarBusy.collectAsStateWithLifecycle()
+    val rememberedAccounts by viewModel.rememberedAccounts.collectAsStateWithLifecycle()
+    val accountSwitching by viewModel.accountSwitching.collectAsStateWithLifecycle()
     val login by viewModel.login.collectAsStateWithLifecycle()
     val alphabetLetterIndex by viewModel.alphabetLetterIndex.collectAsStateWithLifecycle()
     val pendingListScrollEntryId by viewModel.pendingListScrollEntryId.collectAsStateWithLifecycle()
@@ -189,10 +199,18 @@ fun HotWordsRoot(
             }
             showLogin = false
             loginHint = null
+            showSwitchAccount = false
+            tab = MainTab.Me
         } else {
             biometricUnlocked = false
             biometricError = null
+            showAccountProfile = false
+            showShortsLookup = false
         }
+    }
+
+    LaunchedEffect(activity) {
+        activity?.let(DrawFeedController::start)
     }
 
     LaunchedEffect(Unit) {
@@ -203,6 +221,8 @@ fun HotWordsRoot(
             tab = MainTab.Home
             overlay = Overlay.None
             showAppSettings = false
+            showAccountProfile = false
+            showShortsLookup = false
         }
     }
 
@@ -246,13 +266,29 @@ fun HotWordsRoot(
                 showLogin = false
                 loginHint = null
             }
+            showSwitchAccount -> {
+                pendingExit = false
+                showSwitchAccount = false
+            }
             showAppSettings -> {
                 pendingExit = false
                 showAppSettings = false
             }
+            showAccountProfile -> {
+                pendingExit = false
+                showAccountProfile = false
+            }
+            showShortsLookup -> {
+                pendingExit = false
+                showShortsLookup = false
+            }
             giftDetailId != null -> {
                 pendingExit = false
                 giftDetailId = null
+            }
+            showPointsWithdraw -> {
+                pendingExit = false
+                showPointsWithdraw = false
             }
             showGiftOrders -> {
                 pendingExit = false
@@ -296,8 +332,12 @@ fun HotWordsRoot(
             // Include Me: otherwise Scaffold uses a solid theme color behind MainBottomBar,
             // which reads as a separate opaque strip (unlike NotebookBottomBar drawn on wallpaper).
             val stellarChrome = showAppSettings ||
+                showSwitchAccount ||
+                showAccountProfile ||
+                showShortsLookup ||
                 showPointsMall ||
                 showGiftOrders ||
+                showPointsWithdraw ||
                 giftDetailId != null ||
                 overlay == Overlay.Card ||
                 overlay == Overlay.Settings ||
@@ -327,6 +367,10 @@ fun HotWordsRoot(
                     onBack = {
                         showLogin = false
                         loginHint = null
+                        // Cancelled "add account" — return to switch list if still logged in.
+                        if (session != null) {
+                            showSwitchAccount = true
+                        }
                     },
                     onPhoneChange = viewModel::setLoginPhone,
                     onCodeChange = viewModel::setLoginCode,
@@ -335,6 +379,57 @@ fun HotWordsRoot(
                     onModeChange = viewModel::setLoginMode,
                     onSendCode = viewModel::sendLoginCode,
                     onLogin = viewModel::submitLogin,
+                )
+                return@HotWordsTheme
+            }
+            if (showSwitchAccount) {
+                LaunchedEffect(Unit) {
+                    viewModel.refreshSwitchAccounts()
+                }
+                SwitchAccountScreen(
+                    modifier = Modifier.fillMaxSize(),
+                    accounts = rememberedAccounts.ifEmpty {
+                        session?.let { listOf(com.hotgis.wordbuddy.data.RememberedAccount(it)) }
+                            ?: emptyList()
+                    }.let { listed ->
+                        val cur = session
+                        if (cur == null) listed
+                        else if (listed.any { it.userId == cur.userId }) listed
+                        else listOf(com.hotgis.wordbuddy.data.RememberedAccount(cur)) + listed
+                    },
+                    currentUserId = session?.userId,
+                    switching = accountSwitching,
+                    onBack = { showSwitchAccount = false },
+                    onSelectAccount = { account ->
+                        viewModel.switchToAccount(
+                            userId = account.userId,
+                            onNeedLogin = { phone ->
+                                showSwitchAccount = false
+                                viewModel.setLoginPhone(phone)
+                                loginHint = "请重新登录该账号"
+                                showLogin = true
+                            },
+                            onDone = { result ->
+                                result
+                                    .onSuccess { showSwitchAccount = false }
+                                    .onFailure { err ->
+                                        if (err.message?.contains("重新登录") != true) {
+                                            Toast.makeText(
+                                                context,
+                                                err.message ?: "切换失败",
+                                                Toast.LENGTH_LONG,
+                                            ).show()
+                                        }
+                                    }
+                            },
+                        )
+                    },
+                    onAddAccount = {
+                        showSwitchAccount = false
+                        viewModel.prepareAddAccount()
+                        loginHint = "登录其他账号"
+                        showLogin = true
+                    },
                 )
                 return@HotWordsTheme
             }
@@ -375,16 +470,22 @@ fun HotWordsRoot(
                     if (overlay == Overlay.None &&
                         tab != MainTab.Notebook &&
                         !showAppSettings &&
+                        !showAccountProfile &&
+                        !showShortsLookup &&
                         !showPointsMall &&
                         !showGiftOrders &&
+                        !showPointsWithdraw &&
                         giftDetailId == null
                     ) {
                         MainBottomBar(
                             selected = tab,
                             onSelect = {
                                 showAppSettings = false
+                                showAccountProfile = false
+                                showShortsLookup = false
                                 showPointsMall = false
                                 showGiftOrders = false
+                                showPointsWithdraw = false
                                 giftDetailId = null
                                 tab = it
                             },
@@ -397,11 +498,104 @@ fun HotWordsRoot(
                 },
             ) { padding ->
             when {
+                showShortsLookup -> {
+                    LookupScreen(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .hotWordsScreen(padding, consumeStatusBars = false)
+                            .foldableCenteredContent(),
+                        ui = ui,
+                        wordCount = activeWordCount,
+                        userName = ui.settings.displayName,
+                        onToggleTheme = {
+                            viewModel.updateSettings { settings ->
+                                settings.copy(
+                                    appTheme = if (settings.appTheme == AppTheme.Light) {
+                                        AppTheme.Dark
+                                    } else {
+                                        AppTheme.Light
+                                    },
+                                )
+                            }
+                        },
+                        onQuery = viewModel::setLookupQuery,
+                        onSubmit = viewModel::submitLookup,
+                        onToggleStar = {
+                            if (requireLogin("收藏生词需要先登录或注册")) {
+                                viewModel.toggleStar()
+                            }
+                        },
+                        onSpeak = viewModel::speak,
+                        onSpeakText = viewModel::speakText,
+                        onChangeAccent = { accent ->
+                            viewModel.updateSettings { it.copy(accent = accent) }
+                        },
+                        onToggleRelatedStar = { entry ->
+                            if (requireLogin("收藏生词需要先登录或注册")) {
+                                viewModel.toggleSaveRelatedWord(entry)
+                            }
+                        },
+                        isRelatedWordSaved = viewModel::isWordSaved,
+                        onPickLookupImage = viewModel::setLookupImage,
+                        onGenerateAiForLookup = viewModel::generateAiForLookup,
+                        onClearImageError = viewModel::clearImageError,
+                        onUpdateDefinitions = viewModel::updateDefinitions,
+                        homophones = homophones,
+                        onLoadHomophones = viewModel::loadHomophones,
+                        onSubmitHomophone = viewModel::submitHomophone,
+                        onToggleHomophoneLike = viewModel::toggleHomophoneLike,
+                        onLoadHomophoneLikers = { id, offset ->
+                            viewModel.loadHomophoneLikers(id, offset)
+                        },
+                        onBack = { showShortsLookup = false },
+                    )
+                }
+                showAccountProfile && session != null -> {
+                    AccountProfileScreen(
+                        userName = session?.displayNickname ?: ui.settings.displayName,
+                        phone = session?.phone.orEmpty(),
+                        userId = session?.userId ?: 0L,
+                        nickname = session?.nickname,
+                        gender = session?.gender,
+                        region = session?.region,
+                        buddyId = session?.buddyId,
+                        signature = session?.signature,
+                        email = session?.email,
+                        shippingSummary = session?.shippingSummary,
+                        shippingName = session?.shippingName,
+                        shippingPhone = session?.shippingPhone,
+                        shippingDetail = session?.shippingDetail,
+                        avatarBitmap = avatarBitmap,
+                        avatarBusy = avatarBusy,
+                        onBack = { showAccountProfile = false },
+                        onUploadAvatar = viewModel::uploadAvatar,
+                        onUpdateAccountProfile = { nickname, gender, region, signature, email, onResult ->
+                            viewModel.updateAccountProfile(
+                                nickname = nickname,
+                                gender = gender,
+                                region = region,
+                                signature = signature,
+                                email = email,
+                                onResult = onResult,
+                            )
+                        },
+                        onUpdateShipping = viewModel::updateShippingAddress,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .hotWordsScreen(padding, consumeStatusBars = false),
+                    )
+                }
                 giftDetailId != null -> {
                     GiftDetailScreen(
                         giftId = giftDetailId!!,
                         totalPoints = checkIn.totalPoints,
                         token = session?.token,
+                        initialShippingName = session?.shippingName.orEmpty(),
+                        initialShippingPhone = session?.shippingPhone.orEmpty(),
+                        initialShippingDetail = session?.shippingDetail.orEmpty(),
+                        onSaveShipping = { name, phone, detail ->
+                            viewModel.updateShippingAddress(name, phone, detail) { }
+                        },
                         onBack = { giftDetailId = null },
                         onRedeemed = {
                             viewModel.refreshCheckIn()
@@ -412,6 +606,21 @@ fun HotWordsRoot(
                             loginHint = "登录后可兑换礼品"
                             showLogin = true
                         },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .hotWordsScreen(padding, consumeStatusBars = false),
+                    )
+                }
+                showPointsWithdraw -> {
+                    PointsWithdrawScreen(
+                        totalPoints = checkIn.totalPoints,
+                        token = session?.token,
+                        onBack = { showPointsWithdraw = false },
+                        onLogin = {
+                            loginHint = "登录后可提现"
+                            showLogin = true
+                        },
+                        onSuccess = { viewModel.refreshCheckIn() },
                         modifier = Modifier
                             .fillMaxSize()
                             .hotWordsScreen(padding, consumeStatusBars = false),
@@ -442,6 +651,7 @@ fun HotWordsRoot(
                             showPointsMall = false
                             tab = MainTab.Me
                         },
+                        onOpenWithdraw = { showPointsWithdraw = true },
                         onLogin = {
                             loginHint = "登录后可兑换礼品"
                             showLogin = true
@@ -462,13 +672,14 @@ fun HotWordsRoot(
                     onChange = viewModel::updateSettings,
                     loggedIn = session != null,
                     onBiometricLoginChange = ::setBiometricLoginEnabled,
+                    onChangePassword = viewModel::changePassword,
                     onLogout = {
                         showAppSettings = false
                         viewModel.logout()
                     },
                     onSwitchAccount = {
                         showAppSettings = false
-                        viewModel.logout()
+                        showSwitchAccount = true
                     },
                 )
             }
@@ -502,13 +713,13 @@ fun HotWordsRoot(
                         onChange = viewModel::updateSettings,
                         loggedIn = session != null,
                         onBiometricLoginChange = ::setBiometricLoginEnabled,
+                        onChangePassword = viewModel::changePassword,
                         onLogout = {
-                            overlay = Overlay.Card
+                            overlay = Overlay.None
                             viewModel.logout()
                         },
                         onSwitchAccount = {
-                            overlay = Overlay.Card
-                            viewModel.logout()
+                            showSwitchAccount = true
                         },
                     )
                 }
@@ -574,7 +785,7 @@ fun HotWordsRoot(
                             onOpenWord = { word ->
                                 viewModel.setLookupQuery(word)
                                 viewModel.submitLookup()
-                                tab = MainTab.Home
+                                showShortsLookup = true
                             },
                             onShare = {
                                 Toast.makeText(context, "分享即将上线", Toast.LENGTH_SHORT).show()
@@ -717,22 +928,26 @@ fun HotWordsRoot(
                                 .fillMaxSize()
                                 .hotWordsScreen(padding),
                             wordCount = activeWordCount,
-                            userName = ui.settings.displayName,
+                            userName = session?.displayNickname ?: ui.settings.displayName,
                             exportFileName = viewModel.suggestedExportFileName(),
                             onOpenSettings = { showAppSettings = true },
                             onExportContent = viewModel::exportNotebookJson,
                             onImportContent = viewModel::importNotebookJson,
                             phone = session?.phone,
                             level = session?.level ?: 0,
+                            networkRegion = session?.networkRegion,
+                            networkRegionDetail = session?.networkRegionDetail,
                             checkIn = checkIn,
                             onRefreshCheckIn = viewModel::refreshCheckIn,
                             onCheckIn = viewModel::performCheckIn,
+                            onMakeupCheckIn = viewModel::performMakeupCheckIn,
                             onOpenPointsMall = { showPointsMall = true },
                             onLogin = {
                                 loginHint = "登录后可同步收藏与生词本"
                                 showLogin = true
                             },
-                            onChangePassword = viewModel::changePassword,
+                            onOpenAccountProfile = { showAccountProfile = true },
+                            onRefreshNetworkRegion = viewModel::refreshNetworkRegion,
                             avatarBitmap = avatarBitmap,
                             avatarBusy = avatarBusy,
                             onUploadAvatar = viewModel::uploadAvatar,

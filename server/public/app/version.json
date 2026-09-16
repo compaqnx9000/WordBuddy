@@ -1,8 +1,8 @@
 {
-  "versionCode": 39,
-  "versionName": "0.48",
+  "versionCode": 63,
+  "versionName": "0.72",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "修复每日签到可重复领取；签到区改为日历日期展示（今天/已领取/待签到）。",
-  "releasedAt": "2026-09-14T10:25:00.000Z"
+  "notes": "短视频点词独立查词页；折叠屏 Draw 广告全屏铺满并恢复自动播放（TextureView）。",
+  "releasedAt": "2026-09-16T13:50:00.000Z"
 }

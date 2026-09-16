@@ -28,16 +28,16 @@ val LocalFontScale = compositionLocalOf { 1f }
 fun DesignScaleProvider(
     modifier: Modifier = Modifier,
     fontScale: Float = 1f,
+    /** When set, ignore ambient window heuristics and scale to this width (dp). */
+    forceReferenceWidthDp: Float? = null,
     content: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
-        val foldable = LocalFoldableLayout.current
-        val referenceWidth = if (foldable.designReferenceWidthDp > 0f) {
-            foldable.designReferenceWidthDp
-        } else {
-            maxWidth.value
-        }
-        val scale = (referenceWidth / DesignSpec.WIDTH_DP).coerceIn(0.72f, 1.35f)
+        // Always scale to the actual constraints of this provider.
+        // Dual-pane panes nest their own provider so each half scales like a phone;
+        // full-bleed pages (e.g. Shorts) see the real window width and fill it.
+        val referenceWidth = forceReferenceWidthDp?.takeIf { it > 0f } ?: maxWidth.value
+        val scale = (referenceWidth / DesignSpec.WIDTH_DP).coerceIn(0.72f, 1.6f)
         CompositionLocalProvider(
             LocalDesignScale provides scale,
             LocalFontScale provides fontScale.coerceIn(0.8f, 1.4f),

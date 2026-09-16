@@ -33,6 +33,8 @@ import com.hotgis.wordbuddy.data.WordHomophone
 import com.hotgis.wordbuddy.data.HomophoneLikersPage
 import com.hotgis.wordbuddy.data.WordPage
 import com.hotgis.wordbuddy.data.SessionStore
+import com.hotgis.wordbuddy.data.AccountStore
+import com.hotgis.wordbuddy.data.RememberedAccount
 import com.hotgis.wordbuddy.data.UserSession
 import com.hotgis.wordbuddy.data.VocabRepository
 import com.hotgis.wordbuddy.data.WordFilter
@@ -130,6 +132,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private val repo = VocabRepository(application)
     private val settingsStore = SettingsStore(application)
     private val sessionStore = SessionStore(application)
+    private val accountStore = AccountStore(application)
     private val checkInStore = CheckInStore(application)
     private val api = HotWordsApi()
     private val dictionary = DictionaryClient()
@@ -141,6 +144,10 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     val notebooks: StateFlow<List<Notebook>> = repo.notebooks
     private val _session = MutableStateFlow(sessionStore.load())
     val session: StateFlow<UserSession?> = _session.asStateFlow()
+    private val _rememberedAccounts = MutableStateFlow(accountStore.list())
+    val rememberedAccounts: StateFlow<List<RememberedAccount>> = _rememberedAccounts.asStateFlow()
+    private val _accountSwitching = MutableStateFlow(false)
+    val accountSwitching: StateFlow<Boolean> = _accountSwitching.asStateFlow()
     private val _checkIn = MutableStateFlow(checkInStore.load())
     val checkIn: StateFlow<CheckInState> = _checkIn.asStateFlow()
     private val _sessionReplacedMessages = MutableSharedFlow<String>(extraBufferCapacity = 1)
@@ -225,6 +232,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             activeNotebookId = startNotebook,
         )
         if (session != null) {
+            accountStore.upsert(session)
+            refreshRememberedAccounts()
             LauncherIcons.apply(getApplication(), session.level)
             loadAvatarBitmap()
             viewModelScope.launch { bootstrapSession() }
@@ -1917,6 +1926,32 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun performMakeupCheckIn(date: String, onResult: (CheckInResult) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(CheckInResult.NeedLogin)
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.makeupCheckIn(token, date) }
+                .onSuccess { result ->
+                    runCatching { api.fetchCheckIn(token) }
+                        .onSuccess { remote ->
+                            checkInStore.applyRemoteRaw(
+                                totalPoints = remote.totalPoints,
+                                streakDays = remote.streakDays,
+                                lastCheckInDate = remote.lastCheckInDate,
+                            )
+                            _checkIn.value = remote
+                        }
+                    onResult(result)
+                }
+                .onFailure { error ->
+                    onResult(CheckInResult.Failed(error.message ?: "补签失败，请稍后重试"))
+                }
+        }
+    }
+
     fun updateSettings(transform: (StudySettings) -> StudySettings) {
         _ui.update { state ->
             val next = transform(state.settings)
@@ -2211,19 +2246,140 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun enterSession(session: UserSession) {
+        val previousUserId = _session.value?.userId
+        if (previousUserId != null && previousUserId != session.userId) {
+            // Switching to a different account via login — drop previous user's local cache.
+            repo.wipeCache()
+            headsReady.clear()
+            headsCache.clear()
+            letterIndexByNotebook.clear()
+            _checkIn.value = CheckInState()
+            _avatarBitmap.value = null
+        }
         sessionStore.save(session)
         _session.value = session
+        accountStore.upsert(session)
+        refreshRememberedAccounts()
         LauncherIcons.apply(getApplication(), session.level)
         settingsStore.saveActiveNotebookId(session.vocabNotebookId)
         _ui.update {
             it.copy(
                 activeNotebookId = session.vocabNotebookId,
-                settings = it.settings.copy(defaultNotebookId = session.vocabNotebookId),
+                settings = it.settings.copy(
+                    defaultNotebookId = session.vocabNotebookId,
+                    displayName = session.displayNickname,
+                ),
+                lookupResult = null,
+                listError = null,
             )
         }
+        settingsStore.saveSettings(_ui.value.settings)
         loadAvatarBitmap()
         refreshCheckIn()
         viewModelScope.launch { bootstrapSession() }
+    }
+
+    private fun refreshRememberedAccounts() {
+        _rememberedAccounts.value = accountStore.list()
+    }
+
+    /** Accounts shown on the WeChat-style switch screen (always includes current). */
+    fun refreshSwitchAccounts(): List<RememberedAccount> {
+        val current = _session.value
+        if (current != null) accountStore.upsert(current)
+        refreshRememberedAccounts()
+        return _rememberedAccounts.value
+    }
+
+    /**
+     * Remember current account only — do not clear the active session.
+     * Caller opens the login screen; canceling login keeps the current user.
+     */
+    fun prepareAddAccount() {
+        _session.value?.let {
+            accountStore.upsert(it)
+            refreshRememberedAccounts()
+        }
+        _login.value = LoginUi()
+    }
+
+    fun switchToAccount(userId: Long, onNeedLogin: (phone: String) -> Unit, onDone: (Result<Unit>) -> Unit) {
+        val target = accountStore.find(userId)
+        if (target == null) {
+            onDone(Result.failure(IllegalStateException("账号不存在")))
+            return
+        }
+        if (_session.value?.userId == userId) {
+            onDone(Result.success(Unit))
+            return
+        }
+        if (_accountSwitching.value) return
+        _accountSwitching.value = true
+        viewModelScope.launch {
+            // Remember current before wipe.
+            _session.value?.let { accountStore.upsert(it) }
+            clearActiveSessionKeepingAccounts()
+            val probe = runCatching { api.fetchMe(target.session.token) }
+            if (probe.isFailure) {
+                accountStore.clearToken(userId)
+                refreshRememberedAccounts()
+                _accountSwitching.value = false
+                onNeedLogin(target.phone)
+                onDone(Result.failure(probe.exceptionOrNull() ?: IllegalStateException("请重新登录")))
+                return@launch
+            }
+            val remote = probe.getOrNull()
+            val merged = if (remote != null) {
+                target.session.copy(
+                    phone = remote.phone.ifBlank { target.session.phone },
+                    avatarUrl = remote.avatarUrl ?: target.session.avatarUrl,
+                    level = remote.level,
+                    vocabNotebookId = remote.vocabNotebookId.takeIf { it > 0L } ?: target.session.vocabNotebookId,
+                    userId = remote.userId.takeIf { it > 0L } ?: target.session.userId,
+                    nickname = remote.nickname ?: target.session.nickname,
+                    shippingName = remote.shippingName ?: target.session.shippingName,
+                    shippingPhone = remote.shippingPhone ?: target.session.shippingPhone,
+                    shippingDetail = remote.shippingDetail ?: target.session.shippingDetail,
+                    gender = remote.gender ?: target.session.gender,
+                    region = remote.region ?: target.session.region,
+                    buddyId = remote.buddyId ?: target.session.buddyId,
+                    signature = remote.signature ?: target.session.signature,
+                    email = remote.email ?: target.session.email,
+                    networkRegion = remote.networkRegion ?: target.session.networkRegion,
+                    networkRegionDetail = remote.networkRegionDetail ?: target.session.networkRegionDetail,
+                )
+            } else {
+                target.session
+            }
+            enterSession(merged)
+            _accountSwitching.value = false
+            onDone(Result.success(Unit))
+        }
+    }
+
+    private fun clearActiveSessionKeepingAccounts() {
+        sessionStore.clear()
+        _session.value = null
+        _checkIn.value = CheckInState()
+        _avatarBitmap.value = null
+        _avatarBusy.value = false
+        LauncherIcons.apply(getApplication(), 0)
+        repo.wipeCache()
+        headsReady.clear()
+        headsCache.clear()
+        letterIndexByNotebook.clear()
+        _login.value = LoginUi()
+        val guestSettings = _ui.value.settings.copy(displayName = "词搭子")
+        settingsStore.saveSettings(guestSettings)
+        _ui.update {
+            it.copy(
+                settings = guestSettings,
+                activeNotebookId = Notebook.DEFAULT_ID,
+                lookupResult = null,
+                listError = null,
+            )
+        }
+        viewModelScope.launch { bootstrapGuestCatalogs() }
     }
 
     fun uploadAvatar(uri: Uri, onResult: (Result<Unit>) -> Unit) {
@@ -2242,6 +2398,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 val updated = _session.value?.copy(avatarUrl = url) ?: error("未登录")
                 sessionStore.save(updated)
                 _session.value = updated
+                accountStore.upsert(updated)
+                refreshRememberedAccounts()
                 _avatarBitmap.value = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             }
                 .onSuccess { onResult(Result.success(Unit)) }
@@ -2265,14 +2423,167 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             level = remote.level,
             vocabNotebookId = remote.vocabNotebookId.takeIf { it > 0L } ?: current.vocabNotebookId,
             userId = remote.userId.takeIf { it > 0L } ?: current.userId,
+            nickname = remote.nickname ?: current.nickname,
+            shippingName = remote.shippingName ?: current.shippingName,
+            shippingPhone = remote.shippingPhone ?: current.shippingPhone,
+            shippingDetail = remote.shippingDetail ?: current.shippingDetail,
+            gender = remote.gender ?: current.gender,
+            region = remote.region ?: current.region,
+            buddyId = remote.buddyId ?: current.buddyId,
+            signature = remote.signature ?: current.signature,
+            email = remote.email ?: current.email,
+            networkRegion = remote.networkRegion ?: current.networkRegion,
+            networkRegionDetail = remote.networkRegionDetail ?: current.networkRegionDetail,
         )
         if (merged != current) {
             sessionStore.save(merged)
             _session.value = merged
         }
+        accountStore.upsert(merged)
+        refreshRememberedAccounts()
+        merged.nickname?.trim()?.takeIf { it.isNotEmpty() }?.let { name ->
+            if (_ui.value.settings.displayName != name) {
+                updateSettings { it.copy(displayName = name) }
+            }
+        }
         LauncherIcons.apply(getApplication(), merged.level)
         loadAvatarBitmap()
         refreshCheckIn()
+    }
+
+    fun updateNickname(nickname: String, onResult: (Result<Unit>) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        val name = nickname.trim()
+        if (name.isEmpty()) {
+            onResult(Result.failure(IllegalArgumentException("昵称不能为空")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.updateProfile(token, nickname = name) }
+                .onSuccess { remote ->
+                    applyProfileSession(remote)
+                    onResult(Result.success(Unit))
+                }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun updateAccountProfile(
+        nickname: String? = null,
+        gender: String? = null,
+        region: String? = null,
+        signature: String? = null,
+        email: String? = null,
+        onResult: (Result<Unit>) -> Unit,
+    ) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        val nextGender = gender?.trim()
+        if (nextGender != null && nextGender.isNotEmpty() &&
+            nextGender != "男" && nextGender != "女" && nextGender != "未知"
+        ) {
+            onResult(Result.failure(IllegalArgumentException("请选择男、女或未知")))
+            return
+        }
+        val nextEmail = email?.trim()
+        if (nextEmail != null && nextEmail.isNotEmpty() &&
+            !Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$").matches(nextEmail)
+        ) {
+            onResult(Result.failure(IllegalArgumentException("请输入有效的邮箱地址")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                api.updateProfile(
+                    token = token,
+                    nickname = nickname,
+                    gender = nextGender,
+                    region = region,
+                    signature = signature,
+                    email = nextEmail,
+                )
+            }.onSuccess { remote ->
+                applyProfileSession(remote)
+                onResult(Result.success(Unit))
+            }.onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun updateShippingAddress(
+        name: String,
+        phone: String,
+        detail: String,
+        onResult: (Result<Unit>) -> Unit,
+    ) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                api.updateProfile(
+                    token = token,
+                    shippingName = name.trim(),
+                    shippingPhone = phone.trim(),
+                    shippingDetail = detail.trim(),
+                )
+            }.onSuccess { remote ->
+                applyProfileSession(remote)
+                onResult(Result.success(Unit))
+            }.onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun refreshNetworkRegion(onResult: (Result<String>) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.refreshNetworkRegion(token) }
+                .onSuccess { (remote, message) ->
+                    applyProfileSession(remote)
+                    onResult(Result.success(message))
+                }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    private fun applyProfileSession(remote: UserSession) {
+        val current = _session.value ?: return
+        val merged = current.copy(
+            phone = remote.phone.ifBlank { current.phone },
+            avatarUrl = remote.avatarUrl ?: current.avatarUrl,
+            level = remote.level,
+            vocabNotebookId = remote.vocabNotebookId.takeIf { it > 0L } ?: current.vocabNotebookId,
+            userId = remote.userId.takeIf { it > 0L } ?: current.userId,
+            nickname = remote.nickname,
+            shippingName = remote.shippingName,
+            shippingPhone = remote.shippingPhone,
+            shippingDetail = remote.shippingDetail,
+            gender = remote.gender,
+            region = remote.region,
+            buddyId = remote.buddyId,
+            signature = remote.signature,
+            email = remote.email,
+            networkRegion = remote.networkRegion,
+            networkRegionDetail = remote.networkRegionDetail,
+        )
+        sessionStore.save(merged)
+        _session.value = merged
+        remote.nickname?.trim()?.takeIf { it.isNotEmpty() }?.let { name ->
+            updateSettings { it.copy(displayName = name) }
+        }
+        LauncherIcons.apply(getApplication(), merged.level)
     }
 
     private fun loadAvatarBitmap() {
@@ -2326,25 +2637,9 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logout() {
-        sessionStore.clear()
-        _session.value = null
-        _checkIn.value = CheckInState()
-        _avatarBitmap.value = null
-        _avatarBusy.value = false
-        LauncherIcons.apply(getApplication(), 0)
-        repo.wipeCache()
-        headsReady.clear()
-        headsCache.clear()
-        letterIndexByNotebook.clear()
-        _login.value = LoginUi()
-        _ui.update {
-            it.copy(
-                activeNotebookId = Notebook.DEFAULT_ID,
-                lookupResult = null,
-                listError = null,
-            )
-        }
-        viewModelScope.launch { bootstrapGuestCatalogs() }
+        _session.value?.let { accountStore.remove(it.userId) }
+        refreshRememberedAccounts()
+        clearActiveSessionKeepingAccounts()
     }
 
     private fun startCountdown() {

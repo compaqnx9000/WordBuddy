@@ -1,5 +1,7 @@
 package com.hotgis.wordbuddy.ui.shorts
 
+import android.app.Activity
+import android.util.Log
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -33,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,9 +47,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -56,9 +60,23 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.hotgis.wordbuddy.ads.DrawFeedController
+import com.hotgis.wordbuddy.ads.findActivity
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.runtime.CompositionLocalProvider
+import android.view.View
+import com.hotgis.wordbuddy.ui.design.DesignSpec
+import com.hotgis.wordbuddy.ui.design.LocalDesignScale
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
 import com.hotgis.wordbuddy.ui.lookup.Stellar
+import kotlin.random.Random
+
+private sealed interface ShortFeedItem {
+    val key: String
+    data class Video(val clip: ShortClip, override val key: String) : ShortFeedItem
+    data class Ad(override val key: String) : ShortFeedItem
+}
 
 @Composable
 fun ShortsScreen(
@@ -66,24 +84,226 @@ fun ShortsScreen(
     onOpenWord: (String) -> Unit = {},
     onShare: () -> Unit = {},
 ) {
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
     val clips = FakeShorts.clips
-    val pagerState = rememberPagerState(pageCount = { clips.size })
-    Box(
+    var feed by remember {
+        mutableStateOf(initialVideoFeed(clips))
+    }
+    val pagerState = rememberPagerState(pageCount = { feed.size })
+    val readyAdKeys by DrawFeedController.readyKeys.collectAsState()
+
+    LaunchedEffect(activity) {
+        activity?.let { act ->
+            DrawFeedController.start(act)
+        }
+    }
+
+    LaunchedEffect(pagerState.settledPage, feed.size, readyAdKeys, clips) {
+        var next = appendClipsIfNeeded(feed, pagerState.settledPage, clips)
+        next = insertUpcomingAds(
+            current = next,
+            settledPage = pagerState.settledPage,
+            readyKeys = readyAdKeys,
+            clips = clips,
+        )
+        if (next !== feed) feed = next
+    }
+
+    LaunchedEffect(pagerState.settledPage, feed, readyAdKeys, activity) {
+        val unusedAds = readyAdKeys.size - feed.count { it is ShortFeedItem.Ad }
+        val adsAhead = feed.drop(pagerState.settledPage + 1).count { it is ShortFeedItem.Ad }
+        if (unusedAds < 2 || adsAhead < 1) {
+            activity?.let(DrawFeedController::loadMore)
+        }
+        Log.i(
+            "ShortsFeed",
+            "page=${pagerState.settledPage}/${feed.size} " +
+                "videos=${feed.count { it is ShortFeedItem.Video }} " +
+                "draw=${feed.count { it is ShortFeedItem.Ad }}",
+        )
+    }
+
+    BoxWithConstraints(
         modifier
             .fillMaxSize()
             .background(Color.Black),
     ) {
-        VerticalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxSize(),
-        ) { page ->
-            ShortVideoPage(
-                clip = clips[page],
-                active = pagerState.settledPage == page,
-                onOpenWord = onOpenWord,
-                onShare = onShare,
+        // Foldable dual-pane mode shrinks designReferenceWidth to ~half screen for list+card.
+        // Shorts must scale against the real full window so the pager fills edge-to-edge.
+        val fullScale = (maxWidth.value / DesignSpec.WIDTH_DP).coerceIn(0.72f, 1.6f)
+        CompositionLocalProvider(LocalDesignScale provides fullScale) {
+            VerticalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+                beyondViewportPageCount = 1,
+                userScrollEnabled = true,
+                flingBehavior = PagerDefaults.flingBehavior(
+                    state = pagerState,
+                    snapPositionalThreshold = 0.28f,
+                ),
+                key = { page -> feed.getOrNull(page)?.key ?: page },
+            ) { page ->
+                when (val item = feed[page]) {
+                    is ShortFeedItem.Video -> ShortVideoPage(
+                        clip = item.clip,
+                        active = pagerState.settledPage == page,
+                        onOpenWord = onOpenWord,
+                        onShare = onShare,
+                    )
+                    is ShortFeedItem.Ad -> DrawAdPage(
+                        activity = activity,
+                        adKey = item.key,
+                        active = pagerState.settledPage == page,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun initialVideoFeed(clips: List<ShortClip>): List<ShortFeedItem> =
+    clips.mapIndexed { index, clip -> ShortFeedItem.Video(clip, "v-0-$index-${clip.id}") }
+
+private fun appendClipsIfNeeded(
+    current: List<ShortFeedItem>,
+    settledPage: Int,
+    clips: List<ShortClip>,
+): List<ShortFeedItem> {
+    if (clips.isEmpty() || current.isEmpty()) return current
+    if (current.size >= MAX_FEED_SIZE) return current
+    if (settledPage < current.lastIndex - 1) return current
+    val stamp = current.size
+    return current + clips.mapIndexed { index, clip ->
+        ShortFeedItem.Video(clip, "v-$stamp-$index-${clip.id}")
+    }
+}
+
+private fun insertUpcomingAds(
+    current: List<ShortFeedItem>,
+    settledPage: Int,
+    readyKeys: List<String>,
+    clips: List<ShortClip>,
+): List<ShortFeedItem> {
+    if (clips.isEmpty()) return current
+    val used = current.mapNotNull { item ->
+        (item as? ShortFeedItem.Ad)?.key
+    }.toSet()
+    val pending = readyKeys.filter { it !in used }.take(1)
+    if (pending.isEmpty()) return current
+    // Keep at most one unused ad ahead of the viewer so fill rate stays visible.
+    val adsAhead = current.drop((settledPage + 1).coerceAtLeast(0)).count { it is ShortFeedItem.Ad }
+    if (adsAhead >= 1) return current
+
+    val result = current.toMutableList()
+    var index = (settledPage + 1).coerceAtLeast(1)
+    val firstAdInFeed = result.none { it is ShortFeedItem.Ad }
+    pending.forEach { key ->
+        // First ad sooner (after ~2 clips); later ones every 2–3 clips.
+        var videosToSkip = if (firstAdInFeed) 2 else Random.nextInt(2, 4)
+        while (videosToSkip > 0) {
+            if (result.size >= MAX_FEED_SIZE) return result
+            if (index >= result.size) {
+                val round = result.size
+                clips.forEachIndexed { clipIndex, clip ->
+                    result += ShortFeedItem.Video(clip, "v-$round-$clipIndex-${clip.id}")
+                }
+            }
+            when (result.getOrNull(index)) {
+                is ShortFeedItem.Video -> {
+                    videosToSkip--
+                    index++
+                }
+                is ShortFeedItem.Ad -> index++
+                null -> break
+            }
+        }
+        if (result.size >= MAX_FEED_SIZE) return result
+        if (index > result.size) index = result.size
+        result.add(index, ShortFeedItem.Ad(key))
+        Log.i("DrawFeedAd", "inserted ad key=$key at index=$index feedSize=${result.size}")
+        index++
+    }
+    return result
+}
+
+private const val MAX_FEED_SIZE = 80
+
+@Composable
+private fun DrawAdPage(
+    activity: Activity?,
+    adKey: String,
+    active: Boolean,
+) {
+    var failed by remember(adKey) { mutableStateOf(false) }
+    var attached by remember(adKey) { mutableStateOf(false) }
+    var host by remember { mutableStateOf<FrameLayout?>(null) }
+
+    LaunchedEffect(adKey, active) {
+        DrawFeedController.setPageActive(adKey, active)
+    }
+    LaunchedEffect(adKey, active, host, activity) {
+        val container = host
+        if (!active || activity == null || container == null) return@LaunchedEffect
+        DrawFeedController.attachTo(activity, adKey, container) { ok ->
+            attached = ok
+            failed = !ok
+        }
+    }
+    DisposableEffect(adKey) {
+        onDispose { DrawFeedController.setPageActive(adKey, false) }
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        if (activity != null) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    FrameLayout(ctx).apply {
+                        layoutParams = FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        )
+                        clipChildren = true
+                        clipToPadding = true
+                        setBackgroundColor(android.graphics.Color.BLACK)
+                        post { host = this }
+                    }
+                },
+                update = { view ->
+                    if (host !== view) host = view
+                },
             )
         }
+        if (!attached && !failed) {
+            Text(
+                text = "广告加载中…",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 13.ssp(),
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
+        if (failed) {
+            Text(
+                text = "本条暂无法播放，继续上滑",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 13.ssp(),
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
+        Text(
+            text = "Draw 信息流",
+            color = Color.White,
+            fontSize = 12.ssp(),
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(start = 16.sdp(), top = 8.sdp())
+                .clip(RoundedCornerShape(8.sdp()))
+                .background(Color(0xFF2563EB))
+                .padding(horizontal = 10.sdp(), vertical = 5.sdp()),
+        )
     }
 }
 
@@ -212,7 +432,7 @@ private fun ShortVideoPage(
 
 @Composable
 private fun ShortAction(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     label: String,
     tint: Color = Color.White,
     onClick: () -> Unit,
@@ -283,11 +503,13 @@ private fun ShortVideoPlayer(
         }
     }
     AndroidView(
-        modifier = modifier,
+        modifier = modifier.fillMaxSize(),
         factory = { ctx ->
             PlayerView(ctx).apply {
                 useController = false
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                setShutterBackgroundColor(android.graphics.Color.BLACK)
+                setBackgroundColor(android.graphics.Color.BLACK)
                 layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -296,6 +518,25 @@ private fun ShortVideoPlayer(
         },
         update = { view ->
             view.player = player
+            view.useController = false
+            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            view.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            // Some foldable OEMs remeasure AspectRatioFrameLayout after unfold; force cover.
+            view.post {
+                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                (view.parent as? ViewGroup)?.let { parent ->
+                    if (parent.width > 0 && parent.height > 0) {
+                        view.measure(
+                            View.MeasureSpec.makeMeasureSpec(parent.width, View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(parent.height, View.MeasureSpec.EXACTLY),
+                        )
+                        view.layout(0, 0, parent.width, parent.height)
+                    }
+                }
+            }
         },
     )
 }

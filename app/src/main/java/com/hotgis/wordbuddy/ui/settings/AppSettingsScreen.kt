@@ -39,9 +39,12 @@ import androidx.compose.runtime.setValue
 import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,10 +55,12 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import android.widget.Toast
 import com.hotgis.wordbuddy.data.AccentStyle
 import com.hotgis.wordbuddy.data.AppTheme
 import com.hotgis.wordbuddy.data.Notebook
@@ -69,6 +74,7 @@ import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.stellarGlass
+import com.hotgis.wordbuddy.ui.profile.ChangePasswordDialog
 
 @Composable
 fun AppSettingsScreen(
@@ -80,21 +86,59 @@ fun AppSettingsScreen(
     onSwitchAccount: () -> Unit = {},
     loggedIn: Boolean = false,
     onBiometricLoginChange: (Boolean) -> Unit = {},
+    onChangePassword: (
+        oldPassword: String,
+        newPassword: String,
+        confirmPassword: String,
+        onResult: (Result<Unit>) -> Unit,
+    ) -> Unit = { _, _, _, _ -> },
     modifier: Modifier = Modifier,
     title: String = "设置",
 ) {
+    val context = LocalContext.current
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    var showChangePassword by remember { mutableStateOf(false) }
+    var changePasswordBusy by remember { mutableStateOf(false) }
+    var changePasswordError by remember { mutableStateOf<String?>(null) }
 
     if (showLogoutConfirm) {
         StellarConfirmDialog(
             title = "退出登录",
-            message = "退出后将清除本机登录状态与词库缓存，需要重新登录。",
+            message = "退出后将清除本机登录状态与词库缓存，可继续以游客身份使用。再次使用需重新登录。",
             confirmText = "退出",
             destructive = true,
             onDismiss = { showLogoutConfirm = false },
             onConfirm = {
                 showLogoutConfirm = false
                 onLogout()
+            },
+        )
+    }
+
+    if (showChangePassword) {
+        ChangePasswordDialog(
+            busy = changePasswordBusy,
+            error = changePasswordError,
+            onDismiss = {
+                if (!changePasswordBusy) {
+                    showChangePassword = false
+                    changePasswordError = null
+                }
+            },
+            onConfirm = { oldPassword, newPassword, confirmPassword ->
+                changePasswordBusy = true
+                changePasswordError = null
+                onChangePassword(oldPassword, newPassword, confirmPassword) { result ->
+                    changePasswordBusy = false
+                    result
+                        .onSuccess {
+                            showChangePassword = false
+                            Toast.makeText(context, "密码已更新", Toast.LENGTH_SHORT).show()
+                        }
+                        .onFailure {
+                            changePasswordError = it.message ?: "修改失败"
+                        }
+                }
             },
         )
     }
@@ -158,28 +202,36 @@ fun AppSettingsScreen(
                     autoPronounce = settings.speakOnPageChange,
                     dailyReminder = settings.dailyReminder,
                     aiImageAutoGen = settings.aiImageAutoGen,
-                    biometricLogin = settings.biometricLogin,
-                    showBiometricLogin = loggedIn,
                     notebooks = notebooks,
                     defaultNotebookId = settings.defaultNotebookId,
                     onAutoPronounce = { enabled -> onChange { it.copy(speakOnPageChange = enabled) } },
                     onDailyReminder = { enabled -> onChange { it.copy(dailyReminder = enabled) } },
                     onAiImageAutoGen = { enabled -> onChange { it.copy(aiImageAutoGen = enabled) } },
-                    onBiometricLogin = onBiometricLoginChange,
                     onDefaultNotebook = { id -> onChange { it.copy(defaultNotebookId = id) } },
                 )
 
-                SettingsActionGroup {
-                    SettingsActionRow(
-                        title = "切换账号",
-                        onClick = onSwitchAccount,
+                if (loggedIn) {
+                    AccountSecurityCard(
+                        biometricLogin = settings.biometricLogin,
+                        onBiometricLogin = onBiometricLoginChange,
+                        onChangePassword = {
+                            changePasswordError = null
+                            showChangePassword = true
+                        },
                     )
-                    SettingsGroupDivider()
-                    SettingsActionRow(
-                        title = "退出登录",
-                        onClick = { showLogoutConfirm = true },
-                        destructive = true,
-                    )
+
+                    SettingsActionGroup {
+                        SettingsActionRow(
+                            title = "切换账号",
+                            onClick = onSwitchAccount,
+                        )
+                        SettingsGroupDivider()
+                        SettingsActionRow(
+                            title = "退出登录",
+                            onClick = { showLogoutConfirm = true },
+                            destructive = true,
+                        )
+                    }
                 }
             }
         }
@@ -392,14 +444,11 @@ private fun PreferencesCard(
     autoPronounce: Boolean,
     dailyReminder: Boolean,
     aiImageAutoGen: Boolean,
-    biometricLogin: Boolean,
-    showBiometricLogin: Boolean,
     notebooks: List<Notebook>,
     defaultNotebookId: Long,
     onAutoPronounce: (Boolean) -> Unit,
     onDailyReminder: (Boolean) -> Unit,
     onAiImageAutoGen: (Boolean) -> Unit,
-    onBiometricLogin: (Boolean) -> Unit,
     onDefaultNotebook: (Long) -> Unit,
 ) {
     Column(
@@ -452,22 +501,103 @@ private fun PreferencesCard(
             accentOnHover = Stellar.Pink,
             onChecked = onAiImageAutoGen,
         )
-        if (showBiometricLogin) {
-            PreferenceDivider()
-            PreferenceToggle(
-                icon = Icons.Filled.Fingerprint,
-                title = "指纹解锁",
-                subtitle = "下次打开应用时验证指纹；密码/验证码登录后不会再要求",
-                checked = biometricLogin,
-                accentOnHover = Stellar.Cyan,
-                onChecked = onBiometricLogin,
-            )
-        }
         PreferenceDivider()
         DefaultNotebookPicker(
             notebooks = notebooks,
             selectedId = defaultNotebookId,
             onSelect = onDefaultNotebook,
+        )
+    }
+}
+
+@Composable
+private fun AccountSecurityCard(
+    biometricLogin: Boolean,
+    onBiometricLogin: (Boolean) -> Unit,
+    onChangePassword: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .stellarGlass()
+            .padding(16.sdp()),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.sdp()),
+        ) {
+            Icon(
+                Icons.Filled.Security,
+                contentDescription = null,
+                tint = Stellar.Cyan,
+                modifier = Modifier.size(22.sdp()),
+            )
+            Text(
+                text = "账号与安全",
+                color = Stellar.OnSurface,
+                fontSize = 20.ssp(),
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.height(18.sdp()))
+        PreferenceAction(
+            icon = Icons.Filled.Lock,
+            title = "修改密码",
+            subtitle = "用当前密码设置新密码",
+            onClick = onChangePassword,
+        )
+        PreferenceDivider()
+        PreferenceToggle(
+            icon = Icons.Filled.Fingerprint,
+            title = "指纹解锁",
+            subtitle = "下次打开应用时验证指纹；密码/验证码登录后不会再要求",
+            checked = biometricLogin,
+            accentOnHover = Stellar.Cyan,
+            onChecked = onBiometricLogin,
+        )
+    }
+}
+
+@Composable
+private fun PreferenceAction(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 2.sdp()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = Stellar.OnSurfaceVariant.copy(alpha = 0.65f),
+            modifier = Modifier.size(22.sdp()),
+        )
+        Spacer(Modifier.width(12.sdp()))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = Stellar.OnSurface,
+                fontSize = 15.ssp(),
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(2.sdp()))
+            Text(
+                text = subtitle,
+                color = Stellar.OnSurfaceVariant.copy(alpha = 0.85f),
+                fontSize = 13.ssp(),
+            )
+        }
+        Icon(
+            Icons.Outlined.ChevronRight,
+            contentDescription = null,
+            tint = Stellar.OnSurfaceVariant.copy(alpha = 0.55f),
+            modifier = Modifier.size(18.sdp()),
         )
     }
 }

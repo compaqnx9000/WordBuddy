@@ -16,6 +16,7 @@
       --muted: #8aa89a;
       --danger: #fb7185;
       --warn: #fbbf24;
+      --control-h: 40px;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
@@ -31,20 +32,35 @@
       border-radius: 18px; padding: 28px;
     }
     h1 { margin: 0 0 6px; font-size: 24px; color: var(--cyan-soft); }
-    .sub { color: var(--muted); margin-bottom: 20px; }
+    .sub { color: var(--muted); margin: 0 0 20px; }
     label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
     input, select, textarea {
       width: 100%; background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
-      border-radius: 10px; padding: 10px 12px; outline: none;
+      border-radius: 10px; padding: 0 12px; outline: none;
+      height: var(--control-h); line-height: var(--control-h);
+    }
+    textarea {
+      height: auto; min-height: 96px; line-height: 1.5; padding: 10px 12px; resize: vertical;
+    }
+    select {
+      appearance: none;
+      background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+        linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+      background-position: calc(100% - 16px) calc(50% - 3px), calc(100% - 11px) calc(50% - 3px);
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+      padding-right: 28px;
     }
     input:focus, select:focus, textarea:focus { border-color: var(--cyan); }
     .btn {
-      border: 0; border-radius: 10px; padding: 10px 14px; cursor: pointer;
+      border: 0; border-radius: 10px; padding: 0 14px; cursor: pointer;
       background: var(--cyan); color: #062016; font-weight: 700;
+      height: var(--control-h); display: inline-flex; align-items: center; justify-content: center;
+      white-space: nowrap; flex: 0 0 auto;
     }
     .btn.ghost { background: var(--panel-2); color: var(--cyan-soft); border: 1px solid var(--line); }
     .btn.danger { background: #be123c; color: #fff; }
-    .btn.small { padding: 6px 10px; font-size: 12px; }
+    .btn.small { height: 32px; padding: 0 10px; font-size: 12px; }
     .error { color: var(--danger); min-height: 20px; margin-top: 10px; }
     #app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
     aside {
@@ -60,10 +76,32 @@
     .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
     .stat b { display: block; font-size: 26px; color: var(--cyan); }
     .stat span { color: var(--muted); font-size: 13px; }
-    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .toolbar {
+      display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+      margin-bottom: 12px;
+    }
+    .toolbar > input,
+    .toolbar > select,
+    .toolbar > .btn {
+      width: auto;
+      flex: 0 0 auto;
+    }
+    .toolbar > input { min-width: 160px; max-width: 240px; }
+    .field-inline {
+      display: inline-flex; align-items: center; gap: 8px;
+      margin: 0; color: var(--muted); font-size: 13px; white-space: nowrap;
+      height: var(--control-h);
+    }
+    .field-inline select {
+      width: auto; min-width: 96px;
+    }
     table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 12px; overflow: hidden; }
-    th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; vertical-align: middle; }
-    th { color: var(--muted); font-weight: 600; background: #0a1c14; }
+    th, td {
+      padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left;
+      font-size: 13px; vertical-align: middle; line-height: 1.4;
+    }
+    th { color: var(--muted); font-weight: 600; background: #0a1c14; white-space: nowrap; }
+    td.wrap { white-space: normal; word-break: break-word; }
     tr:hover td { background: rgba(110, 231, 183, 0.04); }
     .avatar {
       width: 64px; height: 64px; border-radius: 12px; object-fit: contain;
@@ -78,11 +116,29 @@
       background: #081810;
     }
     .user-head { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 8px; }
+    .profile-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px;
+      margin: 12px 0 18px; padding: 14px 16px; border-radius: 12px;
+      border: 1px solid var(--line); background: var(--panel-2);
+    }
+    .profile-grid .item { min-width: 0; }
+    .profile-grid .k { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+    .profile-grid .v { color: var(--text); word-break: break-word; }
+    @media (max-width: 700px) {
+      .profile-grid { grid-template-columns: 1fr; }
+    }
     .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; color: var(--muted); }
-    .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--panel-2); color: var(--cyan-soft); }
+    .tag {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 2px 8px; border-radius: 999px; font-size: 12px;
+      background: var(--panel-2); color: var(--cyan-soft); white-space: nowrap;
+    }
     .tag.bad { color: var(--danger); }
     .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: grid; place-items: center; padding: 20px; z-index: 20; }
     .modal { width: min(980px, 100%); max-height: 90vh; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px; }
+    .modal table { table-layout: auto; }
+    .modal td, .modal th { white-space: nowrap; }
+    .modal td.wrap { white-space: normal; word-break: break-word; }
     pre { white-space: pre-wrap; word-break: break-all; color: var(--cyan-soft); font-size: 12px; }
     @media (max-width: 800px) {
       #app { grid-template-columns: 1fr; }
@@ -134,7 +190,7 @@
 <script>
 const titles = {
   overview: ['总览', '注册用户、登录、词书与短信概况'],
-  users: ['用户', '头像、注册、登录与改密，可删用户或重置密码'],
+  users: ['用户', '账号资料、头像、搭子号、收货地址、登录与改密'],
   logins: ['登录记录', '验证码 / 密码登录，成功与失败'],
   sms: ['短信记录', '验证码发送与是否已核销（不展示明文验证码）'],
   notebooks: ['词书 / 生词本', '系统词书可下架与改词；用户生词本可查看删除'],
@@ -259,7 +315,7 @@ async function render() {
       const d = await api(`/users?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
       el.innerHTML = `
         <div class="toolbar">
-          <input style="max-width:240px" placeholder="搜索手机号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('users',{q:this.value,page:1})" />
+          <input style="max-width:280px" placeholder="搜索手机号 / 昵称 / 搭子号 / 邮箱 / 收货人" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('users',{q:this.value,page:1})" />
           <button class="btn" onclick="go('users',{q:document.querySelector('main input').value,page:1})">搜索</button>
         </div>
         ${userTable(d.items, true)}
@@ -436,21 +492,36 @@ async function render() {
   }
 }
 
+function genderHtml(g) {
+  if (g === '男') return '<span style="color:#3B82F6;font-weight:700">♂</span> 男';
+  if (g === '女') return '<span style="color:#EC4899;font-weight:700">♀</span> 女';
+  if (g === '未知') return '<span style="color:#9CA3AF;font-weight:700">○</span> 未知';
+  return esc(g || '—');
+}
+function shippingText(u) {
+  const parts = [u.shippingName, u.shippingPhone, u.shippingDetail].filter(Boolean);
+  return parts.length ? parts.join(' · ') : '—';
+}
 function userTable(items, actions) {
   return `<table><thead><tr>
-    <th>头像</th><th>ID</th><th>手机号</th><th>等级</th><th>注册时间</th><th>最近登录</th><th>最近设备</th><th>归属地</th><th>设备数</th>
-    <th>登录次数</th><th>生词本</th><th>生词</th>${actions?'<th></th>':''}
+    <th>头像</th><th>ID</th><th>手机号</th><th>昵称</th><th>搭子号</th><th>邮箱</th><th>性别</th><th>地区</th><th>等级</th>
+    <th>注册时间</th><th>最近登录</th><th>归属地</th><th>设备数</th>
+    <th>登录次数</th>${actions?'<th></th>':''}
   </tr></thead><tbody>${items.map(u => `<tr>
     <td>${avatarCell(u.avatarUrl)}</td>
-    <td>${u.id}</td><td>${esc(u.phone)}</td>
+    <td>${u.id}</td>
+    <td>${esc(u.phone)}</td>
+    <td>${esc(u.nickname || '—')}</td>
+    <td>${esc(u.buddyId || '—')}</td>
+    <td class="wrap">${esc(u.email || '—')}</td>
+    <td>${genderHtml(u.gender)}</td>
+    <td>${esc(u.region || '—')}</td>
     <td><span class="tag">Lv.${u.level ?? 0}</span></td>
     <td>${fmt(u.createdAt)}</td>
     <td>${fmt(u.lastLoginAt)}<div class="sub">${methodLabel(u.lastLoginMethod)}</div></td>
-    <td>${esc(u.lastDeviceLabel || '—')}${u.lastDevicePlatform?`<div class="sub">${esc(u.lastDevicePlatform)}</div>`:''}</td>
     <td>${esc(u.lastIpLocation || '—')}${u.lastIp?`<div class="sub">${esc(u.lastIp)}</div>`:''}</td>
     <td>${u.deviceCount ?? 0}</td>
     <td>${u.loginCount}</td>
-    <td>${u.notebookCount ?? '—'}</td><td>${u.wordCount ?? '—'}</td>
     ${actions?`<td>
       <button class="btn small" onclick="openUser(${u.id})">详情</button>
       <button class="btn danger small" onclick="delUser(${u.id},'${esc(u.phone)}')">删除</button>
@@ -490,29 +561,41 @@ async function openUser(id) {
   showModal(`<div class="user-head">
       ${avatarCell(u.avatarUrl, true)}
       <div>
-        <h2 style="margin:0">${esc(u.phone)} <span class="tag">Lv.${u.level ?? 0}</span></h2>
-        <p class="sub" style="margin:8px 0 0">注册 ${fmt(u.createdAt)} · 最近登录 ${fmt(u.lastLoginAt)} · 改密 ${fmt(u.passwordChangedAt)}</p>
+        <h2 style="margin:0">${esc(u.nickname || u.phone)} <span class="tag">Lv.${u.level ?? 0}</span></h2>
+        <p class="sub" style="margin:8px 0 0">手机 ${esc(u.phone)} · 搭子号 ${esc(u.buddyId || '—')}</p>
+        <p class="sub" style="margin:6px 0 0">注册 ${fmt(u.createdAt)} · 最近登录 ${fmt(u.lastLoginAt)} · 改密 ${fmt(u.passwordChangedAt)}</p>
         <p class="sub" style="margin:6px 0 0">最近设备：${esc(u.lastDeviceLabel || '—')} · ${esc(u.lastIpLocation || '归属地未知')}${u.lastIp ? ' · ' + esc(u.lastIp) : ''}</p>
         <p class="sub" style="margin:6px 0 0">签到积分：累计 <b>${d.checkIn?.totalPoints ?? 0}</b> · 连续 ${d.checkIn?.streakDays ?? 0} 天 · 最近 ${esc(d.checkIn?.lastCheckInDate || '—')}</p>
       </div>
     </div>
+    <h3>账号资料</h3>
+    <div class="profile-grid">
+      <div class="item"><div class="k">昵称</div><div class="v">${esc(u.nickname || '—')}</div></div>
+      <div class="item"><div class="k">搭子号</div><div class="v">${esc(u.buddyId || '—')}</div></div>
+      <div class="item"><div class="k">邮箱</div><div class="v">${esc(u.email || '—')}</div></div>
+      <div class="item"><div class="k">性别</div><div class="v">${genderHtml(u.gender)}</div></div>
+      <div class="item"><div class="k">地区</div><div class="v">${esc(u.region || '—')}</div></div>
+      <div class="item"><div class="k">手机号</div><div class="v">${esc(u.phone || '—')}</div></div>
+      <div class="item"><div class="k">签名</div><div class="v">${esc(u.signature || '—')}</div></div>
+      <div class="item" style="grid-column:1 / -1"><div class="k">收货地址</div><div class="v">${esc(shippingText(u))}</div></div>
+    </div>
     <div class="toolbar">
-      <input id="newPhone" placeholder="改手机号" value="${esc(u.phone)}" style="max-width:180px" />
-      <label class="sub" style="display:flex;align-items:center;gap:6px">等级
-        <select id="newLevel" style="max-width:100px">
+      <input id="newPhone" placeholder="改手机号" value="${esc(u.phone)}" />
+      <label class="field-inline">等级
+        <select id="newLevel">
           ${[0,1,2,3,4,5,6,7].map(lv => `<option value="${lv}" ${(u.level??0)===lv?'selected':''}>Lv.${lv}</option>`).join('')}
         </select>
       </label>
-      <input id="newPass" type="password" placeholder="重置密码（可空）" style="max-width:180px" />
+      <input id="newPass" type="password" placeholder="重置密码（可空）" />
       <button class="btn" onclick="saveUser(${u.id})">保存</button>
       <button class="btn danger" onclick="delUser(${u.id},'${esc(u.phone)}')">删除用户</button>
     </div>
     <h3>使用过的设备</h3>
     <table><thead><tr><th>设备</th><th>平台</th><th>最近 IP / 归属地</th><th>首次出现</th><th>最近使用</th><th>登录次数</th><th></th></tr></thead>
     <tbody>${(d.devices||[]).map(dev => `<tr>
-      <td>${esc(dev.label)}${dev.model?`<div class="sub">${esc([dev.brand,dev.model].filter(Boolean).join(' '))}</div>`:''}</td>
-      <td>${esc(dev.platform||'—')}${dev.osVersion?`<div class="sub">${esc(dev.osVersion)}</div>`:''}</td>
-      <td>${esc(dev.lastIp||'—')}${dev.lastIpLocation?`<div class="sub">${esc(dev.lastIpLocation)}</div>`:''}</td>
+      <td class="wrap">${esc(dev.label)}${dev.model?`<div class="sub" style="margin:4px 0 0">${esc([dev.brand,dev.model].filter(Boolean).join(' '))}</div>`:''}</td>
+      <td>${esc(dev.platform||'—')}${dev.osVersion?`<div class="sub" style="margin:4px 0 0">${esc(dev.osVersion)}</div>`:''}</td>
+      <td class="wrap">${esc(dev.lastIp||'—')}${dev.lastIpLocation?`<div class="sub" style="margin:4px 0 0">${esc(dev.lastIpLocation)}</div>`:''}</td>
       <td>${fmt(dev.firstSeenAt)}</td>
       <td>${fmt(dev.lastSeenAt)}</td>
       <td>${dev.loginCount}</td>
@@ -532,9 +615,9 @@ async function openUser(id) {
     <h3>登录记录</h3>
     <table><thead><tr><th>时间</th><th>方式</th><th>结果</th><th>设备</th><th>IP / 归属地</th></tr></thead>
     <tbody>${d.logins.map(r => `<tr><td>${fmt(r.createdAt)}</td><td>${methodLabel(r.method)}</td>
-      <td>${r.success?'成功':'失败'}</td>
+      <td><span class="tag ${r.success?'':'bad'}">${r.success?'成功':'失败'}</span></td>
       <td>${esc(r.deviceLabel || '—')}</td>
-      <td>${esc(r.ip||'')}${r.ipLocation?`<div class="sub">${esc(r.ipLocation)}</div>`:''}</td></tr>`).join('') || '<tr><td colspan="5">无</td></tr>'}</tbody></table>
+      <td class="wrap">${esc(r.ip||'')}${r.ipLocation?`<div class="sub" style="margin:4px 0 0">${esc(r.ipLocation)}</div>`:''}</td></tr>`).join('') || '<tr><td colspan="5">无</td></tr>'}</tbody></table>
     <h3>改密记录</h3>
     <table><thead><tr><th>时间</th><th>原因</th><th>IP</th></tr></thead>
     <tbody>${d.passwordEvents.map(r => `<tr><td>${fmt(r.createdAt)}</td><td>${methodLabel(r.reason)}</td><td>${esc(r.ip||'')}</td></tr>`).join('') || '<tr><td colspan="3">无</td></tr>'}</tbody></table>

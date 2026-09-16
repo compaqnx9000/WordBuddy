@@ -36,6 +36,16 @@ export async function ensureSchema() {
   await query(`UPDATE users SET user_level = 0 WHERE user_level IS NULL OR user_level < 0 OR user_level > 7`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0`)
   await query(`UPDATE users SET session_version = 0 WHERE session_version IS NULL`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS shipping_name TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS shipping_phone TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS shipping_detail TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS gender TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS region TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS buddy_id TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS signature TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`)
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS users_buddy_id_unique ON users (buddy_id) WHERE buddy_id IS NOT NULL`)
   await query(`
     CREATE TABLE IF NOT EXISTS login_events (
       id BIGSERIAL PRIMARY KEY,
@@ -208,4 +218,23 @@ export async function ensureSchema() {
   `)
   await query('CREATE INDEX IF NOT EXISTS gift_orders_user ON gift_orders (user_id, created_at DESC)')
   await query('CREATE INDEX IF NOT EXISTS gift_orders_created ON gift_orders (created_at DESC)')
+  await query(`
+    CREATE TABLE IF NOT EXISTS withdrawals (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+      channel TEXT NOT NULL,
+      account TEXT NOT NULL,
+      amount_fen INTEGER NOT NULL DEFAULT 1,
+      points_spent INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      provider_trade_no TEXT,
+      error_message TEXT,
+      remark TEXT,
+      sandbox BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query('CREATE INDEX IF NOT EXISTS withdrawals_user ON withdrawals (user_id, created_at DESC)')
+  await query('CREATE INDEX IF NOT EXISTS withdrawals_status ON withdrawals (status, created_at DESC)')
 }

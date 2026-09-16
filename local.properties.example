@@ -6,3 +6,5 @@
 ##          流量变现 → 代码位 → 开屏代码位 ID（8 开头）
 csj.appId=
 csj.splashCodeId=
+csj.drawCodeId=
+csj.rewardCodeId=

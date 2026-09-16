@@ -60,6 +60,15 @@ function mapUser(row) {
     lastIpLocation: row.last_ip_location || null,
     deviceCount: Number(row.device_count || 0),
     level: Math.min(7, Math.max(0, Number.isFinite(Number(row.user_level)) ? Number(row.user_level) : 0)),
+    nickname: row.nickname || null,
+    gender: row.gender || null,
+    region: row.region || null,
+    buddyId: row.buddy_id || null,
+    signature: row.signature || null,
+    email: row.email || null,
+    shippingName: row.shipping_name || null,
+    shippingPhone: row.shipping_phone || null,
+    shippingDetail: row.shipping_detail || null,
   }
 }
 
@@ -167,6 +176,8 @@ adminRouter.get('/overview', adminRequired, async (_req, res) => {
   const recentUsers = await query(
     `SELECT id, phone, avatar_url, created_at, last_login_at, login_count,
             last_device_label, last_device_platform, last_ip, last_ip_location, user_level,
+            nickname, gender, region, buddy_id, signature, email,
+            shipping_name, shipping_phone, shipping_detail,
             (password_hash IS NOT NULL) AS has_password,
             (SELECT count(*)::int FROM user_devices d WHERE d.user_id = users.id) AS device_count
      FROM users ORDER BY created_at DESC LIMIT 8`,
@@ -192,9 +203,8 @@ adminRouter.get('/users', adminRequired, async (req, res) => {
   const params = []
   let where = 'TRUE'
   if (q) {
-    params.push(`%${q.replace(/\D/g, q)}%`)
-    params[params.length - 1] = `%${q}%`
-    where = '(u.phone ILIKE $1)'
+    params.push(`%${q}%`)
+    where = `(u.phone ILIKE $1 OR u.nickname ILIKE $1 OR u.buddy_id ILIKE $1 OR u.email ILIKE $1 OR u.shipping_name ILIKE $1 OR u.shipping_phone ILIKE $1)`
   }
   const total = (
     await query(`SELECT count(*)::int AS n FROM users u WHERE ${where}`, params)
@@ -205,6 +215,8 @@ adminRouter.get('/users', adminRequired, async (req, res) => {
     SELECT u.id, u.phone, u.avatar_url, u.created_at, u.last_login_at, u.last_login_method,
            u.password_changed_at, u.login_count,
            u.last_device_label, u.last_device_platform, u.last_ip, u.last_ip_location, u.user_level,
+           u.nickname, u.gender, u.region, u.buddy_id, u.signature, u.email,
+           u.shipping_name, u.shipping_phone, u.shipping_detail,
            (u.password_hash IS NOT NULL) AS has_password,
            (SELECT count(*)::int FROM notebooks n WHERE n.owner_user_id = u.id) AS notebook_count,
            (SELECT count(*)::int FROM words w
@@ -228,6 +240,8 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
       `SELECT id, phone, avatar_url, created_at, last_login_at, last_login_method,
               password_changed_at, login_count,
               last_device_label, last_device_platform, last_ip, last_ip_location, user_level,
+              nickname, gender, region, buddy_id, signature, email,
+              shipping_name, shipping_phone, shipping_detail,
               (password_hash IS NOT NULL) AS has_password,
               (SELECT count(*)::int FROM user_devices d WHERE d.user_id = users.id) AS device_count
        FROM users WHERE id = $1`,
@@ -367,6 +381,8 @@ adminRouter.patch('/users/:id', adminRequired, async (req, res) => {
       `SELECT id, phone, avatar_url, created_at, last_login_at, last_login_method,
               password_changed_at, login_count,
               last_device_label, last_device_platform, last_ip, last_ip_location, user_level,
+              nickname, gender, region, buddy_id, signature, email,
+              shipping_name, shipping_phone, shipping_detail,
               (password_hash IS NOT NULL) AS has_password,
               (SELECT count(*)::int FROM user_devices d WHERE d.user_id = users.id) AS device_count
        FROM users WHERE id = $1`,

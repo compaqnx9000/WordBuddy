@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { Router } from 'express'
 import { query } from './db.js'
@@ -15,9 +16,11 @@ import {
   rotateSessionVersion,
   signToken,
   verifyPassword,
+  clientIp,
 } from './auth.js'
 import { newLoginCode, sendCode, skipVerify } from './sms.js'
-import { getUserCheckIn, performUserCheckIn } from './checkin.js'
+import { getUserCheckIn, performUserCheckIn, performMakeupCheckIn } from './checkin.js'
+import { resolveIpLocation } from './device.js'
 import {
   GIFT_CATEGORIES,
   getGift,
@@ -25,12 +28,91 @@ import {
   mapOrder,
   redeemGift,
 } from './gifts.js'
+import {
+  createWithdrawal,
+  listWithdrawals,
+  withdrawConfig,
+} from './withdrawals.js'
 
 export const router = Router()
 
 const uploadsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../uploads')
 
 const PAGE_SIZE_MAX = 200
+
+const USER_PROFILE_SQL = `id, phone, avatar_url, user_level, nickname,
+              shipping_name, shipping_phone, shipping_detail,
+              gender, region, buddy_id, signature, email,
+              last_ip, last_ip_location`
+
+async function loadUserProfileRow(userId) {
+  let row = (await query(`SELECT ${USER_PROFILE_SQL} FROM users WHERE id = $1`, [userId])).rows[0]
+  if (!row) return null
+  const current = String(row.buddy_id || '').trim()
+  if (!current || isLegacyAutoBuddyId(current)) {
+    try {
+      row = (await assignRandomBuddyId(userId, current)) || row
+    } catch (err) {
+      console.error('assignRandomBuddyId failed', userId, err)
+      throw err
+    }
+  }
+  return row
+}
+
+/** Random 8-char a-z0-9 → ~2.8e12 combinations, enough for 10M+ users. */
+function randomBuddyId() {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  const bytes = crypto.randomBytes(8)
+  let out = ''
+  for (let i = 0; i < 8; i += 1) out += alphabet[bytes[i] % alphabet.length]
+  return out
+}
+
+function isLegacyAutoBuddyId(buddyId) {
+  const id = String(buddyId || '').trim().toLowerCase()
+  if (!id) return true
+  // Previous auto formats: dz1 / dz0000000001
+  return /^dz\d+$/.test(id)
+}
+
+async function assignRandomBuddyId(userId, current) {
+  const legacyPhoneKey = `dz${userId}`
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const buddyId = randomBuddyId()
+    const taken = (
+      await query('SELECT id FROM users WHERE buddy_id = $1 LIMIT 1', [buddyId])
+    ).rows[0]
+    if (taken) continue
+    try {
+      const assigned = (
+        await query(
+          `UPDATE users SET buddy_id = $2
+           WHERE id = $1
+             AND (
+               buddy_id IS NULL
+               OR btrim(buddy_id) = ''
+               OR lower(btrim(buddy_id)) = $3
+               OR buddy_id ~ '^dz[0-9]+$'
+             )
+           RETURNING ${USER_PROFILE_SQL}`,
+          [userId, buddyId, legacyPhoneKey],
+        )
+      ).rows[0]
+      if (assigned) return assigned
+      // Another request already assigned a non-legacy id.
+      const fresh = (await query(`SELECT ${USER_PROFILE_SQL} FROM users WHERE id = $1`, [userId])).rows[0]
+      if (fresh && String(fresh.buddy_id || '').trim() && !isLegacyAutoBuddyId(fresh.buddy_id)) {
+        return fresh
+      }
+    } catch (err) {
+      // Unique index collision under race — retry with a new id.
+      if (err?.code === '23505') continue
+      throw err
+    }
+  }
+  throw new Error('无法分配唯一搭子号，请稍后重试')
+}
 
 function wordInitialLetterSql(column = 'word') {
   return `
@@ -168,18 +250,15 @@ async function finishLogin(req, res, user, method) {
     method,
     success: true,
   })
-  const profile = (
-    await query('SELECT avatar_url, user_level FROM users WHERE id = $1', [user.id])
-  ).rows[0]
-  const avatarUrl = user.avatar_url || profile?.avatar_url || null
-  const level = Math.min(7, Math.max(0, Number.isFinite(Number(user.user_level ?? profile?.user_level)) ? Number(user.user_level ?? profile?.user_level) : 0))
+  const profileRow = await loadUserProfileRow(user.id)
+  const profile = mapUserProfile(profileRow, user)
   res.json({
     isNewUser: false,
     token: signToken(user, sessionVersion),
-    user: { id: Number(user.id), phone: user.phone, avatarUrl, level },
+    user: profile,
     vocabNotebookId: Number(vocabNotebookId),
-    avatarUrl,
-    level,
+    avatarUrl: profile.avatarUrl,
+    level: profile.level,
   })
 }
 
@@ -283,24 +362,197 @@ router.post('/auth/register', async (req, res) => {
 
 router.get('/me', authRequired, async (req, res) => {
   const vocabNotebookId = await ensureUserNotebook(req.user.id)
-  const row = (
-    await query('SELECT id, phone, avatar_url, user_level FROM users WHERE id = $1', [req.user.id])
-  ).rows[0]
-  const level = Math.min(7, Math.max(0, Number.isFinite(Number(row?.user_level)) ? Number(row.user_level) : 0))
+  const row = await loadUserProfileRow(req.user.id)
+  if (!row) {
+    res.status(404).json({ error: '用户不存在' })
+    return
+  }
+  const level = Math.min(7, Math.max(0, Number.isFinite(Number(row.user_level)) ? Number(row.user_level) : 0))
   const checkIn = await getUserCheckIn(req.user.id)
+  const profile = mapUserProfile(row, req.user)
   res.json({
-    user: {
-      id: Number(row?.id || req.user.id),
-      phone: row?.phone || req.user.phone,
-      avatarUrl: row?.avatar_url || null,
-      level,
-    },
+    user: profile,
     vocabNotebookId: Number(vocabNotebookId),
-    avatarUrl: row?.avatar_url || null,
+    avatarUrl: profile.avatarUrl,
     level,
     checkIn,
   })
 })
+
+router.patch('/me', authRequired, async (req, res) => {
+  const row = await loadUserProfileRow(req.user.id)
+  if (!row) {
+    res.status(404).json({ error: '用户不存在' })
+    return
+  }
+
+  let nickname = row.nickname
+  if (req.body?.nickname != null) {
+    nickname = String(req.body.nickname).trim().slice(0, 24)
+    if (!nickname) {
+      res.status(400).json({ error: '昵称不能为空' })
+      return
+    }
+  }
+
+  let shippingName = row.shipping_name
+  let shippingPhone = row.shipping_phone
+  let shippingDetail = row.shipping_detail
+  if (req.body?.shipping != null && typeof req.body.shipping === 'object') {
+    const s = req.body.shipping
+    shippingName = String(s.name ?? s.shippingName ?? '').trim().slice(0, 40) || null
+    shippingPhone = String(s.phone ?? s.shippingPhone ?? '').trim().slice(0, 20) || null
+    shippingDetail = String(s.detail ?? s.shippingDetail ?? '').trim().slice(0, 200) || null
+    if (shippingName || shippingPhone || shippingDetail) {
+      if (!shippingName || !shippingPhone || !shippingDetail) {
+        res.status(400).json({ error: '请完整填写收货姓名、手机号和地址' })
+        return
+      }
+    }
+  } else {
+    if (req.body?.shippingName != null) {
+      shippingName = String(req.body.shippingName).trim().slice(0, 40) || null
+    }
+    if (req.body?.shippingPhone != null) {
+      shippingPhone = String(req.body.shippingPhone).trim().slice(0, 20) || null
+    }
+    if (req.body?.shippingDetail != null) {
+      shippingDetail = String(req.body.shippingDetail).trim().slice(0, 200) || null
+    }
+  }
+
+  let gender = row.gender
+  if (req.body?.gender != null) {
+    const next = String(req.body.gender).trim()
+    if (next && !['男', '女', '未知'].includes(next)) {
+      res.status(400).json({ error: '请选择男、女或未知' })
+      return
+    }
+    gender = next || null
+  }
+
+  let region = row.region
+  if (req.body?.region != null) {
+    region = String(req.body.region).trim().slice(0, 40) || null
+  }
+
+  let signature = row.signature
+  if (req.body?.signature != null) {
+    signature = String(req.body.signature).trim().slice(0, 40) || null
+  }
+
+  let email = row.email
+  if (req.body?.email != null) {
+    const next = String(req.body.email).trim().slice(0, 80)
+    if (next) {
+      // Basic RFC-ish check; empty string clears email.
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next)) {
+        res.status(400).json({ error: '请输入有效的邮箱地址' })
+        return
+      }
+      email = next.toLowerCase()
+    } else {
+      email = null
+    }
+  }
+
+  // 搭子号为系统唯一识别码，禁止用户修改
+  const buddyId = row.buddy_id
+  if (req.body?.buddyId != null) {
+    res.status(400).json({ error: '搭子号由系统分配，不可修改' })
+    return
+  }
+
+  const updated = (
+    await query(
+      `UPDATE users SET
+         nickname = $2,
+         shipping_name = $3,
+         shipping_phone = $4,
+         shipping_detail = $5,
+         gender = $6,
+         region = $7,
+         buddy_id = $8,
+         signature = $9,
+         email = $10
+       WHERE id = $1
+       RETURNING ${USER_PROFILE_SQL}`,
+      [
+        req.user.id,
+        nickname,
+        shippingName,
+        shippingPhone,
+        shippingDetail,
+        gender,
+        region,
+        buddyId,
+        signature,
+        email,
+      ],
+    )
+  ).rows[0]
+  const profile = mapUserProfile(updated, req.user)
+  res.json({
+    user: profile,
+    vocabNotebookId: Number(await ensureUserNotebook(req.user.id)),
+    avatarUrl: profile.avatarUrl,
+    level: profile.level,
+  })
+})
+
+router.post('/me/network-region/refresh', authRequired, async (req, res) => {
+  const ip = clientIp(req)
+  const location = await resolveIpLocation(ip, { force: true })
+  const updated = (
+    await query(
+      `UPDATE users SET last_ip = $2, last_ip_location = $3
+       WHERE id = $1
+       RETURNING ${USER_PROFILE_SQL}`,
+      [req.user.id, ip || null, location],
+    )
+  ).rows[0]
+  res.json({
+    ok: true,
+    user: mapUserProfile(updated, req.user),
+    message: location ? `已更新为「${shortNetworkRegion(location)}」` : '暂时无法识别网络属地',
+  })
+})
+
+function shortNetworkRegion(location) {
+  if (!location) return null
+  const text = String(location).trim()
+  if (!text) return null
+  if (text === '本地/内网' || text === '归属地未知') return text
+  const main = text.split('·')[0].trim()
+  const parts = main.split(/\s+/).filter(Boolean)
+  if (parts[0] === '中国' || parts[0] === '中华人民共和国') {
+    if (parts.length >= 3) return parts[2]
+    if (parts.length >= 2) return parts[1]
+  }
+  return parts[parts.length - 1] || text
+}
+
+function mapUserProfile(row, fallbackUser = {}) {
+  const level = Math.min(7, Math.max(0, Number.isFinite(Number(row?.user_level)) ? Number(row.user_level) : 0))
+  const location = row?.last_ip_location || null
+  return {
+    id: Number(row?.id || fallbackUser.id),
+    phone: row?.phone || fallbackUser.phone,
+    avatarUrl: row?.avatar_url || null,
+    level,
+    nickname: row?.nickname || null,
+    shippingName: row?.shipping_name || null,
+    shippingPhone: row?.shipping_phone || null,
+    shippingDetail: row?.shipping_detail || null,
+    gender: row?.gender || null,
+    region: row?.region || null,
+    buddyId: row?.buddy_id || null,
+    signature: row?.signature || null,
+    email: row?.email || null,
+    networkRegion: shortNetworkRegion(location),
+    networkRegionDetail: location,
+  }
+}
 
 router.get('/me/checkin', authRequired, async (req, res) => {
   const checkIn = await getUserCheckIn(req.user.id)
@@ -325,6 +577,32 @@ router.post('/me/checkin', authRequired, async (req, res) => {
   } catch (error) {
     console.error('[me/checkin]', error)
     res.status(500).json({ error: '签到失败，请稍后重试' })
+  }
+})
+
+router.post('/me/checkin/makeup', authRequired, async (req, res) => {
+  try {
+    const date = String(req.body?.date || '').trim()
+    const result = await performMakeupCheckIn(req.user.id, date)
+    if (!result.ok) {
+      res.json({
+        ok: false,
+        already: !!result.already,
+        error: result.error || '补签失败',
+        checkIn: result.state,
+      })
+      return
+    }
+    res.json({
+      ok: true,
+      pointsEarned: result.pointsEarned,
+      streakDays: result.streakDays,
+      totalPoints: result.totalPoints,
+      checkIn: result.state,
+    })
+  } catch (error) {
+    console.error('[me/checkin/makeup]', error)
+    res.status(500).json({ error: '补签失败，请稍后重试' })
   }
 })
 
@@ -388,6 +666,52 @@ router.get('/me/gift-orders', authRequired, async (req, res) => {
     [req.user.id, pageSize, offset],
   )
   res.json({ items: result.rows.map(mapOrder), total, page, pageSize })
+})
+
+router.get('/me/withdrawals/config', authRequired, async (_req, res) => {
+  res.json({ config: withdrawConfig() })
+})
+
+router.get('/me/withdrawals', authRequired, async (req, res) => {
+  try {
+    const data = await listWithdrawals(req.user.id, {
+      page: req.query.page,
+      pageSize: req.query.pageSize,
+    })
+    res.json(data)
+  } catch (error) {
+    console.error('[withdrawals/list]', error)
+    res.status(500).json({ error: '加载提现记录失败' })
+  }
+})
+
+router.post('/me/withdrawals', authRequired, async (req, res) => {
+  try {
+    const result = await createWithdrawal(req.user.id, {
+      channel: req.body?.channel,
+      account: req.body?.account,
+    })
+    if (!result.ok) {
+      res.status(400).json({
+        error: result.error,
+        item: result.item || null,
+        totalPoints: result.totalPoints,
+      })
+      return
+    }
+    const checkIn = await getUserCheckIn(req.user.id)
+    res.json({
+      ok: true,
+      message: result.message,
+      item: result.item,
+      totalPoints: result.totalPoints,
+      checkIn,
+      config: result.config,
+    })
+  } catch (error) {
+    console.error('[withdrawals/create]', error)
+    res.status(500).json({ error: '提现失败，请稍后重试' })
+  }
 })
 
 router.post('/me/avatar', authRequired, async (req, res) => {

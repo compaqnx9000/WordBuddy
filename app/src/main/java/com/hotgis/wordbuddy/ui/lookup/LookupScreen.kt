@@ -90,6 +90,7 @@ fun LookupScreen(
     onSubmitHomophone: (String, String) -> Unit = { _, _ -> },
     onToggleHomophoneLike: (Long) -> Unit = {},
     onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var showImageDialog by remember { mutableStateOf(false) }
@@ -133,7 +134,7 @@ fun LookupScreen(
                 .fillMaxSize()
                 .imePadding(),
         ) {
-            HomeProfileHeader()
+            HomeProfileHeader(onBack = onBack)
             Column(
                 Modifier
                     .weight(1f)

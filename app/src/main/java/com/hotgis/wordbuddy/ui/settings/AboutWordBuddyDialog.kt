@@ -256,28 +256,25 @@ fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
                 Spacer(Modifier.height(36.sdp()))
                 AboutLegalFooter(
                     onOpenAgreement = {
-                        detailTitle = "软件许可及服务协议"
+                        detailTitle = LegalDocuments.AGREEMENT_TITLE
                         detailConfirm = "知道了"
                         detailDismiss = ""
                         pendingUpdate = null
-                        detailMessage =
-                            "使用词搭子即表示你同意遵守本软件的使用规范。请勿将本应用用于违法用途。词库与查词服务可能依赖第三方数据源，结果仅供学习参考。"
+                        detailMessage = LegalDocuments.agreement
                     },
                     onOpenPrivacySummary = {
-                        detailTitle = "隐私保护指引摘要"
+                        detailTitle = LegalDocuments.PRIVACY_SUMMARY_TITLE
                         detailConfirm = "知道了"
                         detailDismiss = ""
                         pendingUpdate = null
-                        detailMessage =
-                            "我们仅收集账号登录与学习所需的最少信息（如手机号、词库数据）。使用广告服务（穿山甲）时，可能使用设备标识等信息用于广告投放与反作弊。不会出售你的个人信息。详细说明见《隐私保护指引》。"
+                        detailMessage = LegalDocuments.privacySummary
                     },
                     onOpenPrivacy = {
-                        detailTitle = "隐私保护指引"
+                        detailTitle = LegalDocuments.PRIVACY_TITLE
                         detailConfirm = "知道了"
                         detailDismiss = ""
                         pendingUpdate = null
-                        detailMessage =
-                            "词搭子会本地缓存部分词条以便离线浏览，并在登录后将你的生词本同步至服务器。你可以随时退出登录清除本机缓存。\n\n应用内可能展示由穿山甲提供的广告；广告 SDK 可能使用设备与网络相关信息用于投放与反作弊。你可以在首次启动时选择是否同意。\n\n如需删除账号数据，请联系 hi@wordbuddy.cc。"
+                        detailMessage = LegalDocuments.privacy
                     },
                 )
             }
@@ -405,13 +402,14 @@ private fun AboutLegalFooter(
         AboutLegalLink("《隐私保护指引》", onOpenPrivacy)
         Spacer(Modifier.height(4.sdp()))
         Text(
-            text = "客服邮箱：hi@wordbuddy.cc",
+            text = "运营者：北京博冠鸿图科技有限公司\n联系电话：18500090601\n客服邮箱：hi@wordbuddy.cc",
             color = Stellar.OnSurface.copy(alpha = 0.88f),
             fontSize = 12.ssp(),
             textAlign = TextAlign.Center,
+            lineHeight = 18.ssp(),
         )
         Text(
-            text = "HotGIS 版权所有\nCopyright © 2024-$year HotGIS. All Rights Reserved.",
+            text = "北京博冠鸿图科技有限公司 版权所有\nCopyright © 2024-$year 北京博冠鸿图科技有限公司. All Rights Reserved.",
             color = Stellar.OnSurface.copy(alpha = 0.72f),
             fontSize = 11.ssp(),
             textAlign = TextAlign.Center,

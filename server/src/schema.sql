@@ -13,8 +13,20 @@ CREATE TABLE IF NOT EXISTS users (
     last_ip_location TEXT,
     user_level INTEGER NOT NULL DEFAULT 0,
     session_version INTEGER NOT NULL DEFAULT 0,
+    nickname TEXT,
+    shipping_name TEXT,
+    shipping_phone TEXT,
+    shipping_detail TEXT,
+    gender TEXT,
+    region TEXT,
+    buddy_id TEXT,
+    signature TEXT,
+    email TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_buddy_id_unique
+    ON users (buddy_id) WHERE buddy_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS sms_codes (
     id BIGSERIAL PRIMARY KEY,
@@ -247,3 +259,25 @@ CREATE INDEX IF NOT EXISTS gift_orders_user
 
 CREATE INDEX IF NOT EXISTS gift_orders_created
     ON gift_orders (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS withdrawals (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,
+    account TEXT NOT NULL,
+    amount_fen INTEGER NOT NULL DEFAULT 1,
+    points_spent INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    provider_trade_no TEXT,
+    error_message TEXT,
+    remark TEXT,
+    sandbox BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS withdrawals_user
+    ON withdrawals (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS withdrawals_status
+    ON withdrawals (status, created_at DESC);

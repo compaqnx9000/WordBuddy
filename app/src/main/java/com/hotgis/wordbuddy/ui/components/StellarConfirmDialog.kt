@@ -11,7 +11,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
@@ -87,6 +90,10 @@ fun StellarConfirmDialog(
                 color = Stellar.OnSurfaceVariant.copy(alpha = 0.92f),
                 fontSize = 15.ssp(),
                 lineHeight = 22.ssp(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.sdp())
+                    .verticalScroll(rememberScrollState()),
             )
             Spacer(Modifier.height(22.sdp()))
             Row(

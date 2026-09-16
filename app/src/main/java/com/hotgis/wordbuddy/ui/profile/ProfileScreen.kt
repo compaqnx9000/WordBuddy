@@ -1,8 +1,6 @@
 package com.hotgis.wordbuddy.ui.profile
 
 import android.Manifest
-import android.app.Activity
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -29,6 +27,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,27 +41,23 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.EventAvailable
 import java.time.LocalDate
+import java.time.YearMonth
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.PhotoCamera
-import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -77,24 +75,23 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import java.io.File
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hotgis.wordbuddy.BuildConfig
-import com.hotgis.wordbuddy.data.AppUpdater
-import com.hotgis.wordbuddy.data.AppUpdateInfo
+import com.hotgis.wordbuddy.ads.RewardVideoController
+import com.hotgis.wordbuddy.ads.findActivity
 import com.hotgis.wordbuddy.data.CheckInResult
 import com.hotgis.wordbuddy.data.CheckInState
 import com.hotgis.wordbuddy.data.CheckInStore
-import com.hotgis.wordbuddy.data.HotWordsApi
 import com.hotgis.wordbuddy.data.NotebookImportResult
 import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
 import com.hotgis.wordbuddy.ui.components.WordBuddyAvatarIcon
 import com.hotgis.wordbuddy.ui.components.rememberImagePickerLauncher
+import com.hotgis.wordbuddy.ui.design.FoldableDualPaneRow
+import com.hotgis.wordbuddy.ui.design.LocalFoldableLayout
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
 import com.hotgis.wordbuddy.ui.lookup.Stellar
@@ -116,17 +113,18 @@ fun ProfileScreen(
     onImportContent: suspend (String) -> NotebookImportResult,
     phone: String? = null,
     level: Int = 1,
+    networkRegion: String? = null,
+    networkRegionDetail: String? = null,
     checkIn: CheckInState = CheckInState(),
     onRefreshCheckIn: () -> Unit = {},
     onCheckIn: (onResult: (CheckInResult) -> Unit) -> Unit = { it(CheckInResult.AlreadyCheckedIn) },
+    onMakeupCheckIn: (date: String, onResult: (CheckInResult) -> Unit) -> Unit = { _, cb ->
+        cb(CheckInResult.Failed("未实现"))
+    },
     onOpenPointsMall: () -> Unit = {},
     onLogin: () -> Unit = {},
-    onChangePassword: (
-        oldPassword: String,
-        newPassword: String,
-        confirmPassword: String,
-        onResult: (Result<Unit>) -> Unit,
-    ) -> Unit = { _, _, _, _ -> },
+    onOpenAccountProfile: () -> Unit = {},
+    onRefreshNetworkRegion: ((Result<String>) -> Unit) -> Unit = { it(Result.failure(IllegalStateException("未实现"))) },
     avatarBitmap: Bitmap? = null,
     avatarBusy: Boolean = false,
     onUploadAvatar: (Uri, (Result<Unit>) -> Unit) -> Unit = { _, _ -> },
@@ -134,104 +132,133 @@ fun ProfileScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val api = remember { HotWordsApi() }
     var showHelp by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
-    var showChangePassword by remember { mutableStateOf(false) }
     var showAvatarSource by remember { mutableStateOf(false) }
-    var changePasswordBusy by remember { mutableStateOf(false) }
-    var changePasswordError by remember { mutableStateOf<String?>(null) }
+    var showNetworkRegion by remember { mutableStateOf(false) }
+    var networkRefreshBusy by remember { mutableStateOf(false) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
-    var checkingUpdate by remember { mutableStateOf(false) }
-    var updateDownloading by remember { mutableStateOf(false) }
-    var updateProgress by remember { mutableFloatStateOf(0f) }
-    var updateTitle by remember { mutableStateOf<String?>(null) }
-    var updateMessage by remember { mutableStateOf("") }
-    var updateConfirm by remember { mutableStateOf("知道了") }
-    var updateDismiss by remember { mutableStateOf("") }
-    var pendingUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
-    var pendingApk by remember { mutableStateOf<File?>(null) }
     var checkInSuccess by remember { mutableStateOf<CheckInResult.Success?>(null) }
     var checkInBusy by remember { mutableStateOf(false) }
+    var makeupDate by remember { mutableStateOf<LocalDate?>(null) }
+    var makeupConfirmDate by remember { mutableStateOf<LocalDate?>(null) }
     val loggedIn = !phone.isNullOrBlank()
-    val activity = context as? Activity
+    val activity = remember(context) { context.findActivity() }
 
     LaunchedEffect(Unit) {
         onRefreshCheckIn()
     }
+    LaunchedEffect(loggedIn, activity) {
+        if (loggedIn) {
+            activity?.let(RewardVideoController::preload)
+        }
+    }
 
-    fun installPendingApk(file: File) {
-        if (!AppUpdater.canRequestInstall(context)) {
-            pendingApk = file
-            activity?.let { AppUpdater.openInstallPermissionSettings(it) }
-                ?: Toast.makeText(context, "请允许安装未知应用后再试", Toast.LENGTH_LONG).show()
+    fun applyCheckInResult(result: CheckInResult, makeup: Boolean = false) {
+        when (result) {
+            is CheckInResult.Success -> {
+                checkInSuccess = result
+                if (makeup) {
+                    Toast.makeText(context, "补签成功 +${result.pointsEarned} 分", Toast.LENGTH_SHORT).show()
+                }
+            }
+            CheckInResult.AlreadyCheckedIn -> {
+                Toast.makeText(
+                    context,
+                    if (makeup) "该日已经签到过了" else "今天已经签到过了",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            CheckInResult.NeedLogin -> onLogin()
+            is CheckInResult.Failed -> {
+                Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    fun startMakeupWithReward(date: LocalDate) {
+        val act = activity
+        if (act == null) {
+            Toast.makeText(context, "无法播放广告，请稍后重试", Toast.LENGTH_SHORT).show()
             return
         }
-        runCatching { AppUpdater.installApk(context, file) }
-            .onFailure {
-                Toast.makeText(context, it.message ?: "无法打开安装程序", Toast.LENGTH_LONG).show()
-            }
-    }
-
-    fun startInAppDownload(info: AppUpdateInfo) {
-        if (updateDownloading) return
-        updateDownloading = true
-        updateProgress = 0f
-        Toast.makeText(context, "开始下载 ${info.versionName}…", Toast.LENGTH_SHORT).show()
-        scope.launch {
-            runCatching {
-                AppUpdater.downloadApk(context, info) { progress ->
-                    scope.launch(Dispatchers.Main.immediate) { updateProgress = progress }
-                }
-            }.onSuccess { file ->
-                updateDownloading = false
-                Toast.makeText(context, "下载完成，正在打开安装…", Toast.LENGTH_SHORT).show()
-                installPendingApk(file)
-            }.onFailure { error ->
-                updateDownloading = false
-                Toast.makeText(context, error.message ?: "下载失败", Toast.LENGTH_LONG).show()
+        if (checkInBusy) return
+        checkInBusy = true
+        makeupDate = date
+        var rewarded = false
+        fun finishMakeupApi() {
+            onMakeupCheckIn(date.toString()) { result ->
+                checkInBusy = false
+                makeupDate = null
+                applyCheckInResult(result, makeup = true)
+                act.runOnUiThread { RewardVideoController.preload(act) }
             }
         }
-    }
-
-    fun checkForUpdate() {
-        if (checkingUpdate || updateDownloading) return
-        checkingUpdate = true
-        Toast.makeText(context, "正在检测更新…", Toast.LENGTH_SHORT).show()
-        scope.launch {
-            runCatching { AppUpdater.fetchLatest(api) }
-                .onSuccess { info ->
-                    if (info.hasUpdate) {
-                        updateTitle = "发现新版本"
-                        updateConfirm = "立即更新"
-                        updateDismiss = "稍后"
-                        pendingUpdate = info
-                        updateMessage = buildString {
-                            append("当前版本 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）\n")
-                            append("最新版本 ${info.versionName}（${info.versionCode}）\n\n")
-                            if (info.notes.isNotBlank()) {
-                                append(info.notes)
-                                append("\n\n")
-                            }
-                            append("将在应用内下载并安装，无需打开浏览器。")
-                        }
-                    } else {
-                        updateTitle = "检测更新"
-                        updateConfirm = "知道了"
-                        updateDismiss = ""
-                        pendingUpdate = null
-                        updateMessage =
-                            "当前版本 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）\n\n已是最新版本。"
+        RewardVideoController.preload(act)
+        act.runOnUiThread {
+            if (!RewardVideoController.hasReadyAd()) {
+                // Wait briefly for preload then show or fail.
+                scope.launch {
+                    var waits = 0
+                    while (!RewardVideoController.hasReadyAd() && waits < 25) {
+                        kotlinx.coroutines.delay(200)
+                        waits++
+                    }
+                    if (!RewardVideoController.hasReadyAd()) {
+                        checkInBusy = false
+                        makeupDate = null
+                        Toast.makeText(context, "广告暂未填充，请稍后再试", Toast.LENGTH_LONG).show()
+                        return@launch
+                    }
+                    act.runOnUiThread {
+                        RewardVideoController.show(
+                            act,
+                            object : RewardVideoController.Callbacks {
+                                override fun onShown() = Unit
+                                override fun onRewarded() {
+                                    rewarded = true
+                                    finishMakeupApi()
+                                }
+                                override fun onClosed() {
+                                    if (!rewarded) {
+                                        checkInBusy = false
+                                        makeupDate = null
+                                        Toast.makeText(context, "需看完广告才能补签", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                                override fun onFailed(reason: String) {
+                                    checkInBusy = false
+                                    makeupDate = null
+                                    Toast.makeText(context, "广告播放失败：$reason", Toast.LENGTH_LONG).show()
+                                }
+                            },
+                        )
                     }
                 }
-                .onFailure { error ->
-                    Toast.makeText(
-                        context,
-                        error.message?.ifBlank { "检测更新失败" } ?: "检测更新失败",
-                        Toast.LENGTH_LONG,
-                    ).show()
-                }
-            checkingUpdate = false
+                return@runOnUiThread
+            }
+            RewardVideoController.show(
+                act,
+                object : RewardVideoController.Callbacks {
+                    override fun onShown() = Unit
+                    override fun onRewarded() {
+                        rewarded = true
+                        finishMakeupApi()
+                    }
+                    override fun onClosed() {
+                        if (!rewarded) {
+                            checkInBusy = false
+                            makeupDate = null
+                            Toast.makeText(context, "需看完广告才能补签", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    override fun onFailed(reason: String) {
+                        checkInBusy = false
+                        makeupDate = null
+                        Toast.makeText(context, "广告播放失败：$reason", Toast.LENGTH_LONG).show()
+                    }
+                },
+            )
         }
     }
 
@@ -341,48 +368,16 @@ fun ProfileScreen(
             onConfirm = { checkInSuccess = null },
         )
     }
-    updateTitle?.let { title ->
+    makeupConfirmDate?.let { date ->
         StellarConfirmDialog(
-            title = title,
-            message = updateMessage,
-            confirmText = updateConfirm,
-            dismissText = updateDismiss,
-            onDismiss = {
-                updateTitle = null
-                pendingUpdate = null
-            },
+            title = "补签 ${date.monthValue}月${date.dayOfMonth}日",
+            message = "观看完整激励视频后即可完成补签，并获得 1 积分。",
+            confirmText = "观看广告",
+            dismissText = "取消",
+            onDismiss = { if (!checkInBusy) makeupConfirmDate = null },
             onConfirm = {
-                val info = pendingUpdate
-                updateTitle = null
-                pendingUpdate = null
-                if (info != null) startInAppDownload(info)
-            },
-        )
-    }
-    if (showChangePassword) {
-        ChangePasswordDialog(
-            busy = changePasswordBusy,
-            error = changePasswordError,
-            onDismiss = {
-                if (!changePasswordBusy) {
-                    showChangePassword = false
-                    changePasswordError = null
-                }
-            },
-            onConfirm = { oldPassword, newPassword, confirmPassword ->
-                changePasswordBusy = true
-                changePasswordError = null
-                onChangePassword(oldPassword, newPassword, confirmPassword) { result ->
-                    changePasswordBusy = false
-                    result
-                        .onSuccess {
-                            showChangePassword = false
-                            Toast.makeText(context, "密码已更新", Toast.LENGTH_SHORT).show()
-                        }
-                        .onFailure {
-                            changePasswordError = it.message ?: "修改失败"
-                        }
-                }
+                makeupConfirmDate = null
+                startMakeupWithReward(date)
             },
         )
     }
@@ -401,21 +396,37 @@ fun ProfileScreen(
             },
         )
     }
+    if (showNetworkRegion) {
+        NetworkRegionDialog(
+            regionLabel = networkRegion,
+            regionDetail = networkRegionDetail,
+            avatarBitmap = avatarBitmap,
+            busy = networkRefreshBusy,
+            onDismiss = { if (!networkRefreshBusy) showNetworkRegion = false },
+            onRefresh = {
+                networkRefreshBusy = true
+                onRefreshNetworkRegion { result ->
+                    networkRefreshBusy = false
+                    result
+                        .onSuccess {
+                            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+                        }
+                        .onFailure {
+                            Toast.makeText(context, it.message ?: "校准失败", Toast.LENGTH_LONG).show()
+                        }
+                }
+            },
+        )
+    }
     Column(
         modifier
             .fillMaxSize()
-            .stellarScreenBackground()
-            .verticalScroll(rememberScrollState())
-            .padding(bottom = 24.sdp()),
+            .stellarScreenBackground(),
     ) {
         ProfileTopBar()
-
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.sdp()),
-            verticalArrangement = Arrangement.spacedBy(14.sdp()),
-        ) {
+        val foldable = LocalFoldableLayout.current
+        val useSplit = foldable.supportsDualPaneListCard
+        val hero: @Composable () -> Unit = {
             ProfileHeroCard(
                 userName = userName,
                 phone = phone,
@@ -433,18 +444,20 @@ fun ProfileScreen(
                 },
                 onAccountClick = {
                     if (loggedIn) {
-                        Toast.makeText(context, "账号：$phone", Toast.LENGTH_SHORT).show()
+                        onOpenAccountProfile()
                     } else {
                         onLogin()
                     }
                 },
                 onOpenSettings = onOpenSettings,
             )
-
+        }
+        val checkInBlock: @Composable (monthGrid: Boolean) -> Unit = { monthGrid ->
             DailyCheckInCard(
                 state = checkIn,
                 loggedIn = loggedIn,
                 busy = checkInBusy,
+                monthGrid = monthGrid,
                 onCheckIn = {
                     if (!loggedIn) {
                         onLogin()
@@ -454,20 +467,20 @@ fun ProfileScreen(
                     checkInBusy = true
                     onCheckIn { result ->
                         checkInBusy = false
-                        when (result) {
-                            is CheckInResult.Success -> checkInSuccess = result
-                            CheckInResult.AlreadyCheckedIn -> {
-                                Toast.makeText(context, "今天已经签到过了", Toast.LENGTH_SHORT).show()
-                            }
-                            CheckInResult.NeedLogin -> onLogin()
-                            is CheckInResult.Failed -> {
-                                Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
-                            }
-                        }
+                        applyCheckInResult(result)
                     }
                 },
+                onMakeupDay = { date ->
+                    if (!loggedIn) {
+                        onLogin()
+                        return@DailyCheckInCard
+                    }
+                    if (checkInBusy) return@DailyCheckInCard
+                    makeupConfirmDate = date
+                },
             )
-
+        }
+        val rightMenus: @Composable () -> Unit = {
             ProfileMenuCard {
                 ProfileMenuRow(
                     icon = Icons.Outlined.CardGiftcard,
@@ -477,23 +490,6 @@ fun ProfileScreen(
                     onClick = onOpenPointsMall,
                 )
             }
-
-            if (loggedIn) {
-                ProfileMenuCard {
-                    ProfileMenuRow(
-                        icon = Icons.Outlined.Lock,
-                        iconTint = Stellar.Cyan,
-                        title = "修改密码",
-                        trailing = "当前密码 + 新密码",
-                        onClick = {
-                            changePasswordError = null
-                            showChangePassword = true
-                        },
-                    )
-                }
-            }
-
-            // 原有内容保留：导出 / 导入 / 帮助 / 关于 / 更新
             ProfileMenuCard {
                 ProfileMenuRow(
                     icon = Icons.Outlined.FileUpload,
@@ -527,29 +523,19 @@ fun ProfileScreen(
                 )
                 ProfileMenuDivider()
                 ProfileMenuRow(
-                    icon = Icons.Outlined.SystemUpdate,
-                    iconTint = Stellar.Pink,
-                    title = when {
-                        updateDownloading -> "正在下载 ${(updateProgress * 100).toInt()}%"
-                        checkingUpdate -> "检测更新中…"
-                        else -> "检测更新"
+                    icon = Icons.Outlined.Public,
+                    iconTint = Stellar.Cyan,
+                    title = "网络属地",
+                    trailing = networkRegion?.takeIf { it.isNotBlank() } ?: "查看说明",
+                    onClick = {
+                        if (!loggedIn) {
+                            onLogin()
+                            return@ProfileMenuRow
+                        }
+                        showNetworkRegion = true
                     },
-                    trailing = "应用内升级",
-                    onClick = { checkForUpdate() },
                 )
             }
-
-            if (updateDownloading) {
-                LinearProgressIndicator(
-                    progress = { updateProgress.coerceIn(0f, 1f) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.sdp()),
-                    color = Stellar.Cyan,
-                    trackColor = Stellar.SurfaceHigh,
-                )
-            }
-
             Text(
                 text = "版本 ${BuildConfig.VERSION_NAME}",
                 color = Stellar.OnSurfaceVariant.copy(alpha = 0.65f),
@@ -559,6 +545,57 @@ fun ProfileScreen(
                     .fillMaxWidth()
                     .padding(top = 8.sdp(), bottom = 8.sdp()),
             )
+        }
+
+        if (useSplit) {
+            FoldableDualPaneRow(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                listWeight = 0.48f,
+                detailWeight = 0.52f,
+                listPane = {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 16.sdp())
+                            .padding(bottom = 24.sdp()),
+                        verticalArrangement = Arrangement.spacedBy(14.sdp()),
+                    ) {
+                        Spacer(Modifier.height(4.sdp()))
+                        hero()
+                        checkInBlock(true)
+                    }
+                },
+                detailPane = {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 16.sdp())
+                            .padding(bottom = 24.sdp()),
+                        verticalArrangement = Arrangement.spacedBy(14.sdp()),
+                    ) {
+                        Spacer(Modifier.height(4.sdp()))
+                        rightMenus()
+                    }
+                },
+            )
+        } else {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.sdp())
+                    .padding(bottom = 24.sdp()),
+                verticalArrangement = Arrangement.spacedBy(14.sdp()),
+            ) {
+                hero()
+                checkInBlock(false)
+                rightMenus()
+            }
         }
     }
 }
@@ -587,16 +624,35 @@ private fun DailyCheckInCard(
     state: CheckInState,
     loggedIn: Boolean,
     busy: Boolean = false,
+    monthGrid: Boolean = false,
     onCheckIn: () -> Unit,
+    onMakeupDay: (LocalDate) -> Unit = {},
 ) {
     val cardShape = RoundedCornerShape(18.sdp())
     val today = remember { CheckInStore.todayShanghai() }
-    val daySlots = remember(state.checkedInToday, state.streakDays, state.todayReward, today) {
+    val daySlots = remember(
+        state.checkedInToday,
+        state.streakDays,
+        state.todayReward,
+        state.recentDates,
+        state.lastCheckInDate,
+        today,
+    ) {
         buildCheckInDaySlots(today, state)
+    }
+    val listState = rememberLazyListState()
+    val todayIndex = remember(daySlots, today) {
+        daySlots.indexOfFirst { it.date == today }.coerceAtLeast(0)
+    }
+    LaunchedEffect(monthGrid, todayIndex, daySlots.size) {
+        if (!monthGrid && daySlots.isNotEmpty()) {
+            val target = (todayIndex - 2).coerceAtLeast(0)
+            listState.scrollToItem(target)
+        }
     }
     val buttonLabel = when {
         !loggedIn -> "登录签到"
-        busy -> "签到中…"
+        busy -> "请稍候…"
         state.checkedInToday -> "已签到"
         else -> "签到 +${state.todayReward}"
     }
@@ -635,7 +691,7 @@ private fun DailyCheckInCard(
             Spacer(Modifier.width(12.sdp()))
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = "每日签到",
+                    text = "每日签到 · ${today.monthValue}月",
                     color = Stellar.OnSurface,
                     fontSize = 16.ssp(),
                     fontWeight = FontWeight.SemiBold,
@@ -643,8 +699,14 @@ private fun DailyCheckInCard(
                 Text(
                     text = when {
                         !loggedIn -> "登录后签到，积分将同步到云端"
-                        state.streakDays > 0 -> "已连签 ${state.streakDays} 天 · 累计 ${state.totalPoints} 分"
-                        else -> "断签后从 1 分重新开始 · 累计 ${state.totalPoints} 分"
+                        monthGrid && state.streakDays > 0 ->
+                            "已连签 ${state.streakDays} 天 · 本月日历可补签 · 累计 ${state.totalPoints} 分"
+                        monthGrid ->
+                            "本月日期一览，漏签可看广告补签 · 累计 ${state.totalPoints} 分"
+                        state.streakDays > 0 ->
+                            "已连签 ${state.streakDays} 天 · 左右滑动查看本月 · 累计 ${state.totalPoints} 分"
+                        else ->
+                            "左右滑动查看本月，漏签可看广告补签 · 累计 ${state.totalPoints} 分"
                     },
                     color = Stellar.OnSurfaceVariant.copy(alpha = 0.9f),
                     fontSize = 12.ssp(),
@@ -676,15 +738,91 @@ private fun DailyCheckInCard(
             )
         }
 
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.sdp()),
-        ) {
-            daySlots.forEach { slot ->
-                CheckInDayCell(
-                    slot = slot,
+        if (monthGrid) {
+            CheckInMonthGrid(
+                daySlots = daySlots,
+                loggedIn = loggedIn,
+                onCheckIn = onCheckIn,
+                onMakeupDay = onMakeupDay,
+            )
+        } else {
+            LazyRow(
+                state = listState,
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.sdp()),
+                contentPadding = PaddingValues(horizontal = 2.sdp()),
+            ) {
+                items(daySlots, key = { it.date.toString() }) { slot ->
+                    CheckInDayCell(
+                        slot = slot,
+                        modifier = Modifier.width(48.sdp()),
+                        onClick = {
+                            when {
+                                !loggedIn -> onCheckIn()
+                                slot.claimed || slot.isFuture -> Unit
+                                slot.isClaimTarget -> onCheckIn()
+                                slot.canMakeup -> onMakeupDay(slot.date)
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CheckInMonthGrid(
+    daySlots: List<CheckInDaySlot>,
+    loggedIn: Boolean,
+    onCheckIn: () -> Unit,
+    onMakeupDay: (LocalDate) -> Unit,
+) {
+    val weekLabels = listOf("日", "一", "二", "三", "四", "五", "六")
+    val first = daySlots.firstOrNull()?.date ?: return
+    // Sunday-first: SUNDAY→0 … SATURDAY→6
+    val leading = first.dayOfWeek.value % 7
+    val cells: List<CheckInDaySlot?> = List(leading) { null } + daySlots.map { it }
+    Column(verticalArrangement = Arrangement.spacedBy(6.sdp())) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.sdp())) {
+            weekLabels.forEach { label ->
+                Text(
+                    text = label,
+                    color = Stellar.OnSurfaceVariant.copy(alpha = 0.75f),
+                    fontSize = 11.ssp(),
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
                     modifier = Modifier.weight(1f),
                 )
+            }
+        }
+        cells.chunked(7).forEach { week ->
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.sdp()),
+            ) {
+                week.forEach { slot ->
+                    if (slot == null) {
+                        Spacer(Modifier.weight(1f))
+                    } else {
+                        CheckInDayCell(
+                            slot = slot,
+                            compact = true,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                when {
+                                    !loggedIn -> onCheckIn()
+                                    slot.claimed || slot.isFuture -> Unit
+                                    slot.isClaimTarget -> onCheckIn()
+                                    slot.canMakeup -> onMakeupDay(slot.date)
+                                }
+                            },
+                        )
+                    }
+                }
+                repeat(7 - week.size) {
+                    Spacer(Modifier.weight(1f))
+                }
             }
         }
     }
@@ -696,62 +834,72 @@ private data class CheckInDaySlot(
     val isToday: Boolean,
     val claimed: Boolean,
     val isClaimTarget: Boolean,
+    val canMakeup: Boolean,
+    val isFuture: Boolean,
 )
 
 private fun buildCheckInDaySlots(today: LocalDate, state: CheckInState): List<CheckInDaySlot> {
-    val streak = state.streakDays.coerceAtLeast(0)
-    val lastCheckIn: LocalDate? = when {
-        state.checkedInToday -> today
-        streak > 0 -> today.minusDays(1)
-        else -> null
+    val claimedDates = buildSet {
+        state.recentDates.forEach { raw ->
+            runCatching { LocalDate.parse(raw) }.getOrNull()?.let { add(it) }
+        }
+        state.lastCheckInDate
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            ?.let { add(it) }
     }
-    val firstClaimed = lastCheckIn?.minusDays((streak - 1).coerceAtLeast(0).toLong())
-    // Show 7 calendar days centered on today: -3 … +3
-    return (-3..3).map { offset ->
-        val date = today.plusDays(offset.toLong())
-        val claimed = lastCheckIn != null &&
-            firstClaimed != null &&
-            !date.isBefore(firstClaimed) &&
-            !date.isAfter(lastCheckIn)
+    val streak = state.streakDays.coerceAtLeast(0)
+    val month = YearMonth.from(today)
+    val first = month.atDay(1)
+    val last = month.atEndOfMonth()
+    val days = (0L..(last.toEpochDay() - first.toEpochDay())).map { first.plusDays(it) }
+    return days.map { date ->
+        val isFuture = date.isAfter(today)
+        val claimed = date in claimedDates
+        val isToday = date == today
+        val isClaimTarget = isToday && !claimed && !state.checkedInToday
+        val canMakeup = !claimed && date.isBefore(today) && !date.isBefore(first)
         val reward = when {
-            claimed && firstClaimed != null -> {
-                val dayNum = (date.toEpochDay() - firstClaimed.toEpochDay()).toInt() + 1
-                CheckInStore.rewardForDay(dayNum.coerceAtLeast(1))
-            }
-            date == today && !state.checkedInToday -> state.todayReward
-            date.isAfter(today) -> {
+            claimed -> 0
+            isClaimTarget -> state.todayReward
+            canMakeup -> 1
+            isFuture -> {
                 val daysAhead = (date.toEpochDay() - today.toEpochDay()).toInt()
                 val afterClaimingToday = when {
-                    state.checkedInToday -> streak
+                    state.checkedInToday || claimedDates.contains(today) -> streak
                     streak > 0 -> streak + 1
                     else -> 1
                 }
                 CheckInStore.rewardForDay(afterClaimingToday + daysAhead)
             }
-            else -> CheckInStore.rewardForDay(1)
+            else -> 1
         }
         CheckInDaySlot(
             date = date,
-            reward = reward,
-            isToday = date == today,
-            claimed = claimed,
-            isClaimTarget = !state.checkedInToday && date == today,
+            reward = reward.coerceAtLeast(1),
+            isToday = isToday,
+            claimed = claimed || (isToday && state.checkedInToday),
+            isClaimTarget = isClaimTarget,
+            canMakeup = canMakeup,
+            isFuture = isFuture,
         )
     }
 }
 
 private fun formatCheckInDateLabel(date: LocalDate, today: LocalDate): String {
     if (date == today) return "今天"
-    return "${date.monthValue}.${date.dayOfMonth}"
+    return "${date.dayOfMonth}日"
 }
 
 @Composable
 private fun CheckInDayCell(
     slot: CheckInDaySlot,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
+    onClick: () -> Unit = {},
 ) {
     val today = remember { CheckInStore.todayShanghai() }
-    val shape = RoundedCornerShape(12.sdp())
+    val shape = RoundedCornerShape(if (compact) 10.sdp() else 12.sdp())
+    val clickable = slot.isClaimTarget || slot.canMakeup
     Column(
         modifier
             .clip(shape)
@@ -759,7 +907,8 @@ private fun CheckInDayCell(
                 when {
                     slot.isClaimTarget -> Stellar.Gold.copy(alpha = 0.14f)
                     slot.claimed -> Stellar.Cyan.copy(alpha = 0.10f)
-                    else -> Stellar.SurfaceHigh.copy(alpha = 0.75f)
+                    slot.canMakeup -> Stellar.SurfaceHigh.copy(alpha = 0.9f)
+                    else -> Stellar.SurfaceHigh.copy(alpha = 0.55f)
                 },
             )
             .border(
@@ -767,25 +916,31 @@ private fun CheckInDayCell(
                 color = if (slot.isToday) Stellar.Cyan.copy(alpha = 0.55f) else Color.Transparent,
                 shape = shape,
             )
-            .padding(vertical = 8.sdp(), horizontal = 2.sdp()),
+            .then(if (clickable) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(vertical = if (compact) 6.sdp() else 8.sdp(), horizontal = 2.sdp()),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = formatCheckInDateLabel(slot.date, today),
+            text = if (compact) {
+                if (slot.isToday) "今" else "${slot.date.dayOfMonth}"
+            } else {
+                formatCheckInDateLabel(slot.date, today)
+            },
             color = if (slot.isToday) Stellar.Cyan else Stellar.OnSurfaceVariant,
-            fontSize = 10.ssp(),
+            fontSize = if (compact) 11.ssp() else 10.ssp(),
             fontWeight = if (slot.isToday) FontWeight.Bold else FontWeight.Medium,
             maxLines = 1,
         )
-        Spacer(Modifier.height(6.sdp()))
+        Spacer(Modifier.height(if (compact) 4.sdp() else 6.sdp()))
         Box(
             Modifier
-                .size(28.sdp())
+                .size(if (compact) 24.sdp() else 28.sdp())
                 .clip(CircleShape)
                 .background(
                     when {
                         slot.claimed -> Stellar.Cyan
                         slot.isClaimTarget -> Stellar.Gold
+                        slot.canMakeup -> Stellar.OnSurfaceVariant.copy(alpha = 0.28f)
                         else -> Stellar.SurfaceContainer
                     },
                 ),
@@ -796,28 +951,36 @@ private fun CheckInDayCell(
                     Icons.Outlined.Check,
                     contentDescription = null,
                     tint = Stellar.OnPrimary,
-                    modifier = Modifier.size(16.sdp()),
+                    modifier = Modifier.size(if (compact) 14.sdp() else 16.sdp()),
                 )
             } else {
                 Text(
                     text = "${slot.reward}",
-                    color = if (slot.isClaimTarget) Stellar.OnPrimary else Stellar.OnSurfaceVariant,
-                    fontSize = 12.ssp(),
+                    color = when {
+                        slot.isClaimTarget -> Stellar.OnPrimary
+                        slot.canMakeup -> Stellar.OnSurfaceVariant
+                        else -> Stellar.OnSurfaceVariant.copy(alpha = 0.7f)
+                    },
+                    fontSize = if (compact) 11.ssp() else 12.ssp(),
                     fontWeight = FontWeight.Bold,
                 )
             }
         }
-        Spacer(Modifier.height(4.sdp()))
-        Text(
-            text = when {
-                slot.claimed -> "已领取"
-                slot.isClaimTarget -> "+${slot.reward}分"
-                else -> "待签到"
-            },
-            color = Stellar.OnSurfaceVariant.copy(alpha = 0.8f),
-            fontSize = 9.ssp(),
-            maxLines = 1,
-        )
+        if (!compact) {
+            Spacer(Modifier.height(4.sdp()))
+            Text(
+                text = when {
+                    slot.claimed -> "已领取"
+                    slot.isClaimTarget -> "+${slot.reward}分"
+                    slot.canMakeup -> "补签"
+                    slot.isFuture -> "待签到"
+                    else -> "未签"
+                },
+                color = Stellar.OnSurfaceVariant.copy(alpha = 0.8f),
+                fontSize = 9.ssp(),
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -834,6 +997,13 @@ private fun ProfileHeroCard(
     onAccountClick: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
+    val loggedIn = !phone.isNullOrBlank()
+    val titleName = if (loggedIn) userName else "未登录"
+    val statsText = if (loggedIn) {
+        "已收藏 $wordCount 词 · 积分 $totalPoints"
+    } else {
+        "登录后同步收藏与积分"
+    }
     val cardShape = RoundedCornerShape(20.sdp())
     Column(
         Modifier
@@ -970,7 +1140,7 @@ private fun ProfileHeroCard(
                 horizontalArrangement = Arrangement.spacedBy(8.sdp()),
             ) {
                 Text(
-                    text = userName,
+                    text = titleName,
                     color = Stellar.OnSurface,
                     fontSize = 22.ssp(),
                     fontWeight = FontWeight.Bold,
@@ -978,7 +1148,7 @@ private fun ProfileHeroCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                if (!phone.isNullOrBlank()) {
+                if (loggedIn) {
                     Text(
                         text = "Lv.$level",
                         color = Stellar.Cyan,
@@ -993,13 +1163,13 @@ private fun ProfileHeroCard(
                 }
             }
             Text(
-                text = phone?.let { "@$it" } ?: "@未登录",
+                text = if (loggedIn) "@$phone" else "@未登录",
                 color = Stellar.Cyan,
                 fontSize = 14.ssp(),
                 modifier = Modifier.offset(y = (-16).sdp()),
             )
             Text(
-                text = "已收藏 $wordCount 词 · 积分 $totalPoints",
+                text = statsText,
                 color = Stellar.OnSurfaceVariant,
                 fontSize = 12.ssp(),
                 modifier = Modifier.offset(y = (-10).sdp()),
@@ -1013,7 +1183,7 @@ private fun ProfileHeroCard(
             ) {
                 ProfilePillButton(
                     icon = Icons.Outlined.Person,
-                    label = if (phone.isNullOrBlank()) "登录账号" else "账号信息",
+                    label = if (loggedIn) "个人资料" else "登录账号",
                     onClick = onAccountClick,
                     modifier = Modifier.weight(1f),
                 )
@@ -1025,94 +1195,6 @@ private fun ProfileHeroCard(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun AvatarSourceDialog(
-    onDismiss: () -> Unit,
-    onCamera: () -> Unit,
-    onGallery: () -> Unit,
-) {
-    val shape = RoundedCornerShape(24.sdp())
-    val accent = Stellar.Cyan
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 28.sdp())
-                .shadow(
-                    elevation = 24.dp,
-                    shape = shape,
-                    ambientColor = accent.copy(alpha = 0.35f),
-                    spotColor = accent.copy(alpha = 0.28f),
-                )
-                .clip(shape)
-                .background(Stellar.SurfaceContainer.copy(alpha = 0.98f))
-                .border(1.dp, accent.copy(alpha = 0.45f), shape)
-                .padding(horizontal = 22.sdp(), vertical = 20.sdp()),
-        ) {
-            Text(
-                text = "更换头像",
-                color = Stellar.CyanSoft,
-                fontSize = 22.ssp(),
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.height(8.sdp()))
-            Text(
-                text = "自拍一张，或从相册选择图片，保存后会同步到服务器。",
-                color = Stellar.OnSurfaceVariant.copy(alpha = 0.92f),
-                fontSize = 15.ssp(),
-            )
-            Spacer(Modifier.height(16.sdp()))
-            AvatarSourceRow(
-                icon = Icons.Outlined.PhotoCamera,
-                title = "拍照",
-                onClick = onCamera,
-            )
-            Spacer(Modifier.height(8.sdp()))
-            AvatarSourceRow(
-                icon = Icons.Outlined.PhotoLibrary,
-                title = "从相册选择",
-                onClick = onGallery,
-            )
-            Spacer(Modifier.height(12.sdp()))
-            Text(
-                text = "取消",
-                color = Stellar.OnSurfaceVariant,
-                fontSize = 13.ssp(),
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier
-                    .align(Alignment.End)
-                    .clip(RoundedCornerShape(999.dp))
-                    .clickable(onClick = onDismiss)
-                    .padding(horizontal = 14.sdp(), vertical = 10.sdp()),
-            )
-        }
-    }
-}
-
-@Composable
-private fun AvatarSourceRow(
-    icon: ImageVector,
-    title: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.sdp()))
-            .background(Stellar.SurfaceHigh.copy(alpha = 0.7f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.sdp(), vertical = 12.sdp()),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, contentDescription = null, tint = Stellar.Cyan, modifier = Modifier.size(20.sdp()))
-        Spacer(Modifier.width(12.sdp()))
-        Text(title, color = Stellar.OnSurface, fontSize = 16.ssp(), fontWeight = FontWeight.Medium)
     }
 }
 
