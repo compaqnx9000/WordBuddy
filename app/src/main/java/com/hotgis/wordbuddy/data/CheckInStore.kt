@@ -85,5 +85,31 @@ class CheckInStore(context: Context) {
 
         /** Day 1→1 … day 7→7, then always 7. */
         fun rewardForDay(streakDay: Int): Int = streakDay.coerceIn(1, 7)
+
+        fun consecutiveEndingAt(claimed: Set<LocalDate>, date: LocalDate): Int {
+            var n = 0
+            var cursor = date
+            while (cursor in claimed) {
+                n += 1
+                cursor = cursor.minusDays(1)
+            }
+            return n
+        }
+
+        fun claimedDates(state: CheckInState): Set<LocalDate> = buildSet {
+            state.recentDates.forEach { raw ->
+                runCatching { LocalDate.parse(raw) }.getOrNull()?.let { add(it) }
+            }
+            state.lastCheckInDate
+                ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                ?.let { add(it) }
+        }
+
+        /** Points a makeup would award if that date is filled into the existing log. */
+        fun makeupReward(state: CheckInState, date: LocalDate): Int {
+            val claimed = claimedDates(state)
+            if (date in claimed) return 1
+            return rewardForDay(consecutiveEndingAt(claimed + date, date)).coerceAtLeast(1)
+        }
     }
 }

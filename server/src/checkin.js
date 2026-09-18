@@ -35,14 +35,31 @@ export function dateString(value) {
   return m ? m[1] : null
 }
 
-function yesterdayOf(todayYmd) {
-  const [y, m, d] = todayYmd.split('-').map(Number)
-  const utc = Date.UTC(y, m - 1, d)
-  const prev = new Date(utc - 24 * 60 * 60 * 1000)
-  const yy = prev.getUTCFullYear()
-  const mm = String(prev.getUTCMonth() + 1).padStart(2, '0')
-  const dd = String(prev.getUTCDate()).padStart(2, '0')
+function shiftDate(ymd, days) {
+  const [y, m, d] = ymd.split('-').map(Number)
+  const utc = Date.UTC(y, m - 1, d) + days * 24 * 60 * 60 * 1000
+  const next = new Date(utc)
+  const yy = next.getUTCFullYear()
+  const mm = String(next.getUTCMonth() + 1).padStart(2, '0')
+  const dd = String(next.getUTCDate()).padStart(2, '0')
   return `${yy}-${mm}-${dd}`
+}
+
+function yesterdayOf(todayYmd) {
+  return shiftDate(todayYmd, -1)
+}
+
+/** Consecutive claimed days ending at ymd (ymd itself must be in the set to count). */
+export function consecutiveEndingAt(dates, ymd) {
+  if (!ymd) return 0
+  const set = dates instanceof Set ? dates : new Set(dates)
+  let n = 0
+  let cursor = ymd
+  while (set.has(cursor)) {
+    n += 1
+    cursor = yesterdayOf(cursor)
+  }
+  return n
 }
 
 function monthStartOf(todayYmd) {
@@ -63,19 +80,15 @@ function monthEndOf(todayYmd) {
 /** Makeup is allowed for any missed day in the current Shanghai calendar month. */
 export const MAKEUP_LOOKBACK_DAYS = 31
 
-/** Makeup reward is fixed at 1 point (does not inflate streak reward). */
-export const MAKEUP_REWARD_POINTS = 1
-
 export function mapCheckInState(row, today = todayShanghai(), recentDates = []) {
   const last = dateString(row?.last_checkin_date)
-  const storedStreak = Math.max(0, Number(row?.streak_days || 0))
   const totalPoints = Math.max(0, Number(row?.total_points || 0))
-  const checkedInToday = last === today || recentDates.includes(today)
-  const continuous = last != null && (last === today || last === yesterdayOf(today))
-  const streakDays = continuous ? storedStreak : 0
-  let todayReward = 1
-  if (checkedInToday) todayReward = rewardForDay(Math.max(storedStreak, 1))
-  else if (last === yesterdayOf(today)) todayReward = rewardForDay(storedStreak + 1)
+  const dateSet = new Set((recentDates || []).filter(Boolean))
+  if (last) dateSet.add(last)
+  const checkedInToday = dateSet.has(today)
+  const yesterday = yesterdayOf(today)
+  const streakDays = consecutiveEndingAt(dateSet, checkedInToday ? today : yesterday)
+  const todayReward = rewardForDay(consecutiveEndingAt(new Set([...dateSet, today]), today))
   return {
     totalPoints,
     streakDays,
@@ -87,7 +100,8 @@ export function mapCheckInState(row, today = todayShanghai(), recentDates = []) 
 }
 
 async function loadRecentDates(userId, today = todayShanghai()) {
-  const from = monthStartOf(today)
+  // Include extra lookback so early-month makeup/streak can see previous month.
+  const from = shiftDate(monthStartOf(today), -40)
   const to = monthEndOf(today)
   const rows = (
     await query(
@@ -99,6 +113,13 @@ async function loadRecentDates(userId, today = todayShanghai()) {
     )
   ).rows
   return rows.map((r) => dateString(r.checkin_date)).filter(Boolean)
+}
+
+async function loadDatesSet(client, userId) {
+  const rows = (
+    await client.query(`SELECT checkin_date FROM user_checkin_logs WHERE user_id = $1`, [userId])
+  ).rows
+  return new Set(rows.map((r) => dateString(r.checkin_date)).filter(Boolean))
 }
 
 async function recomputeStreakFromLogs(client, userId, today = todayShanghai()) {
@@ -191,9 +212,11 @@ export async function performUserCheckIn(userId, today = todayShanghai()) {
       return { already: true, state }
     }
 
-    const storedStreak = Math.max(0, Number(existing?.streak_days || 0))
+    const dates = await loadDatesSet(client, userId)
+    if (last) dates.add(last)
+    dates.add(today)
     const prevPoints = Math.max(0, Number(existing?.total_points || 0))
-    const newStreak = last === yesterdayOf(today) ? storedStreak + 1 : 1
+    const newStreak = consecutiveEndingAt(dates, today)
     const earned = rewardForDay(newStreak)
     const newTotal = prevPoints + earned
 
@@ -292,8 +315,13 @@ export async function performMakeupCheckIn(userId, dateYmd, today = todayShangha
       return { ok: false, already: true, error: '该日已签到', state }
     }
 
+    const dates = await loadDatesSet(client, userId)
+    const last = dateString(existing?.last_checkin_date)
+    if (last) dates.add(last)
+    dates.add(date)
     const prevPoints = Math.max(0, Number(existing?.total_points || 0))
-    const earned = MAKEUP_REWARD_POINTS
+    const streakAtDate = consecutiveEndingAt(dates, date)
+    const earned = rewardForDay(streakAtDate)
     const newTotal = prevPoints + earned
 
     await client.query(
@@ -315,7 +343,7 @@ export async function performMakeupCheckIn(userId, dateYmd, today = todayShangha
        VALUES ($1, $2::date, $3, $4)
        ON CONFLICT (user_id, checkin_date) DO NOTHING
        RETURNING id`,
-      [userId, date, 0, earned],
+      [userId, date, streakAtDate, earned],
     )
     if (inserted.rowCount === 0) {
       await client.query('ROLLBACK')

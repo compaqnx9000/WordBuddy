@@ -45,7 +45,12 @@ export async function ensureSchema() {
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS buddy_id TEXT`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS signature TEXT`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS alipay_account TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_account TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_by_user_id BIGINT REFERENCES users (id) ON DELETE SET NULL`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_bound_at TIMESTAMPTZ`)
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS users_buddy_id_unique ON users (buddy_id) WHERE buddy_id IS NOT NULL`)
+  await query(`CREATE INDEX IF NOT EXISTS users_invited_by ON users (invited_by_user_id) WHERE invited_by_user_id IS NOT NULL`)
   await query(`
     CREATE TABLE IF NOT EXISTS login_events (
       id BIGSERIAL PRIMARY KEY,
@@ -197,6 +202,14 @@ export async function ensureSchema() {
     )
   `)
   await query('CREATE INDEX IF NOT EXISTS gifts_published_sort ON gifts (published, sort_order ASC, id DESC)')
+  // stock: -1 = unlimited; never allow values below -1 (guards against bad admin input / race leftovers)
+  await query(`UPDATE gifts SET stock = -1 WHERE stock < -1`)
+  await query(`
+    DO $$ BEGIN
+      ALTER TABLE gifts ADD CONSTRAINT gifts_stock_min CHECK (stock >= -1);
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+  `)
   await query(`
     CREATE TABLE IF NOT EXISTS gift_orders (
       id BIGSERIAL PRIMARY KEY,

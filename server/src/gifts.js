@@ -16,6 +16,8 @@ export function mapGift(row) {
     row.points_offset_fen == null
       ? Math.round(pointsCost * 2) // ~50 积分≈1 元 的展示用抵扣额
       : Math.max(0, Number(row.points_offset_fen))
+  const stockRaw = Number(row.stock)
+  const stock = !Number.isFinite(stockRaw) ? -1 : stockRaw < 0 ? -1 : Math.floor(stockRaw)
   return {
     id: Number(row.id),
     title: row.title,
@@ -30,14 +32,24 @@ export function mapGift(row) {
     originalPriceYuan: originalPriceFen == null ? null : (originalPriceFen / 100).toFixed(2),
     pointsOffsetFen,
     pointsOffsetYuan: (pointsOffsetFen / 100).toFixed(2),
-    stock: Number(row.stock ?? -1),
-    redeemedCount: Number(row.redeemed_count || 0),
+    stock,
+    stockLabel: stock < 0 ? '不限' : String(stock),
+    redeemedCount: Math.max(0, Number(row.redeemed_count || 0)),
     sortOrder: Number(row.sort_order || 0),
     published: Boolean(row.published),
     needAddress: Boolean(row.need_address),
     description: row.description || '',
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
   }
+}
+
+/** Normalize admin stock input: -1 = unlimited, otherwise >= 0. */
+export function normalizeGiftStock(raw) {
+  if (raw == null || raw === '') return -1
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return -1
+  if (n < 0) return -1
+  return Math.floor(n)
 }
 
 export function mapOrder(row) {
@@ -116,7 +128,8 @@ export async function redeemGift(userId, giftId, address = {}) {
       return { ok: false, error: '礼品不存在或已下架' }
     }
     const stock = Number(gift.stock ?? -1)
-    if (stock === 0) {
+    // stock < 0 means unlimited; stock === 0 (or NaN treated as 0) is sold out.
+    if (!Number.isFinite(stock) || stock === 0) {
       await client.query('ROLLBACK')
       return { ok: false, error: '库存不足' }
     }
@@ -192,11 +205,23 @@ export async function redeemGift(userId, giftId, address = {}) {
     ).rows[0]
 
     if (stock > 0) {
-      await client.query('UPDATE gifts SET stock = stock - 1, redeemed_count = redeemed_count + 1 WHERE id = $1', [
+      // Defense in depth: conditional decrement so stock never goes below 0
+      // even if another path bypassed FOR UPDATE.
+      const dec = await client.query(
+        `UPDATE gifts
+         SET stock = stock - 1, redeemed_count = redeemed_count + 1
+         WHERE id = $1 AND stock > 0
+         RETURNING stock`,
+        [gift.id],
+      )
+      if (dec.rowCount === 0) {
+        await client.query('ROLLBACK')
+        return { ok: false, error: '库存不足' }
+      }
+    } else {
+      await client.query('UPDATE gifts SET redeemed_count = redeemed_count + 1 WHERE id = $1', [
         gift.id,
       ])
-    } else {
-      await client.query('UPDATE gifts SET redeemed_count = redeemed_count + 1 WHERE id = $1', [gift.id])
     }
 
     await client.query('COMMIT')

@@ -30,6 +30,7 @@ class SettingsStore(context: Context) {
             accentStyle = runCatching { AccentStyle.valueOf(accentStyleName) }.getOrDefault(AccentStyle.CyberNeon),
             defaultNotebookId = prefs.getLong(KEY_DEFAULT_NOTEBOOK_ID, Notebook.DEFAULT_ID),
             biometricLogin = prefs.getBoolean(KEY_BIOMETRIC_LOGIN, false),
+            podcastPlayWhenScreenOff = prefs.getBoolean(KEY_PODCAST_SCREEN_OFF, false),
         )
     }
 
@@ -47,8 +48,13 @@ class SettingsStore(context: Context) {
             .putString(KEY_ACCENT_STYLE, settings.accentStyle.name)
             .putLong(KEY_DEFAULT_NOTEBOOK_ID, settings.defaultNotebookId)
             .putBoolean(KEY_BIOMETRIC_LOGIN, settings.biometricLogin)
+            .putBoolean(KEY_PODCAST_SCREEN_OFF, settings.podcastPlayWhenScreenOff)
             .apply()
     }
+
+    /** Fast read for the player service (avoids reconstructing full settings). */
+    fun isPodcastPlayWhenScreenOff(): Boolean =
+        prefs.getBoolean(KEY_PODCAST_SCREEN_OFF, false)
 
     fun loadActiveNotebookId(): Long = prefs.getLong(KEY_ACTIVE_NOTEBOOK_ID, Notebook.DEFAULT_ID)
 
@@ -73,5 +79,6 @@ class SettingsStore(context: Context) {
         const val KEY_DEFAULT_NOTEBOOK_ID = "default_notebook_id"
         const val KEY_ACTIVE_NOTEBOOK_ID = "active_notebook_id"
         const val KEY_BIOMETRIC_LOGIN = "biometric_login"
+        const val KEY_PODCAST_SCREEN_OFF = "podcast_play_when_screen_off"
     }
 }

@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBackIosNew
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.PhoneIphone
 import androidx.compose.material.icons.outlined.Sms
 import androidx.compose.material.icons.outlined.Visibility
@@ -73,6 +74,7 @@ fun LoginScreen(
     code: String,
     password: String,
     passwordConfirm: String,
+    inviteCode: String = "",
     mode: LoginMode,
     needPassword: Boolean,
     sending: Boolean,
@@ -83,6 +85,7 @@ fun LoginScreen(
     onCodeChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
     onPasswordConfirmChange: (String) -> Unit,
+    onInviteCodeChange: (String) -> Unit = {},
     onModeChange: (LoginMode) -> Unit,
     onSendCode: () -> Unit,
     onLogin: () -> Unit,
@@ -198,6 +201,15 @@ fun LoginScreen(
                     leading = Icons.Outlined.Lock,
                     keyboardType = KeyboardType.Password,
                     password = true,
+                    imeAction = ImeAction.Next,
+                )
+                Spacer(Modifier.height(12.sdp()))
+                LoginField(
+                    value = inviteCode,
+                    onValueChange = onInviteCodeChange,
+                    placeholder = "邀请码（选填，好友搭子号）",
+                    leading = Icons.Outlined.PersonAdd,
+                    keyboardType = KeyboardType.Text,
                     imeAction = ImeAction.Done,
                     onImeAction = onLogin,
                 )
@@ -279,7 +291,7 @@ fun LoginScreen(
         Spacer(Modifier.height(18.sdp()))
         Text(
             text = when {
-                needPassword -> "请牢记密码，之后可选择「密码登录」。"
+                needPassword -> "设置密码时可填写好友邀请码（选填），注册成功双方可获积分。"
                 smsMode -> "验证码将发送到您的手机，请注意查收。"
                 else -> "若尚未设置密码，请先用验证码登录。"
             },

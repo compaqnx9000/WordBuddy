@@ -33,6 +33,14 @@ import {
   listWithdrawals,
   withdrawConfig,
 } from './withdrawals.js'
+import {
+  INVITE_REWARD_INVITEE,
+  INVITE_REWARD_INVITER,
+  bindInviteCode,
+  findUserByBuddyId,
+  getInviteStats,
+  normalizeInviteCode,
+} from './invite.js'
 
 export const router = Router()
 
@@ -43,6 +51,7 @@ const PAGE_SIZE_MAX = 200
 const USER_PROFILE_SQL = `id, phone, avatar_url, user_level, nickname,
               shipping_name, shipping_phone, shipping_detail,
               gender, region, buddy_id, signature, email,
+              alipay_account, wechat_account,
               last_ip, last_ip_location`
 
 async function loadUserProfileRow(userId) {
@@ -240,7 +249,7 @@ async function consumeSms(smsId) {
   if (smsId) await query('UPDATE sms_codes SET consumed_at = now() WHERE id = $1', [smsId])
 }
 
-async function finishLogin(req, res, user, method) {
+async function finishLogin(req, res, user, method, invite = null) {
   const vocabNotebookId = await ensureUserNotebook(user.id)
   // Single-device policy: each successful login invalidates older JWTs.
   const sessionVersion = await rotateSessionVersion(user.id)
@@ -252,14 +261,23 @@ async function finishLogin(req, res, user, method) {
   })
   const profileRow = await loadUserProfileRow(user.id)
   const profile = mapUserProfile(profileRow, user)
-  res.json({
+  const payload = {
     isNewUser: false,
     token: signToken(user, sessionVersion),
     user: profile,
     vocabNotebookId: Number(vocabNotebookId),
     avatarUrl: profile.avatarUrl,
     level: profile.level,
-  })
+  }
+  if (invite?.ok) {
+    payload.invite = {
+      bound: true,
+      inviteeReward: invite.inviteeReward,
+      inviterReward: invite.inviterReward,
+      inviterBuddyId: invite.inviterBuddyId,
+    }
+  }
+  res.json(payload)
 }
 
 router.post('/auth/login', async (req, res) => {
@@ -324,6 +342,7 @@ router.post('/auth/register', async (req, res) => {
   const phone = normalizePhone(req.body?.phone)
   const code = String(req.body?.code || '').trim()
   const password = normalizePassword(req.body?.password)
+  const inviteCode = normalizeInviteCode(req.body?.inviteCode || req.body?.invite || '')
   if (!phone) {
     res.status(400).json({ error: '请输入正确的手机号' })
     return
@@ -357,7 +376,105 @@ router.post('/auth/register', async (req, res) => {
   ).rows[0]
   await recordPasswordEvent(req, user.id, 'register')
   await consumeSms(checked.smsId)
-  await finishLogin(req, res, user, 'register')
+
+  let invite = null
+  if (inviteCode) {
+    try {
+      invite = await bindInviteCode(user.id, inviteCode)
+      if (invite?.ok) {
+        console.log(
+          `[invite] user ${user.id} bound to ${invite.inviterId} (+${invite.inviteeReward}/+${invite.inviterReward})`,
+        )
+      }
+    } catch (err) {
+      console.error('[invite] bind failed', err)
+    }
+  }
+
+  // Ensure buddy id before responding so share works immediately.
+  await loadUserProfileRow(user.id)
+  await finishLogin(req, res, user, 'register', invite?.ok ? invite : null)
+})
+
+/** Public invite preview for landing page. */
+router.get('/invite/:code', async (req, res) => {
+  const code = normalizeInviteCode(req.params.code)
+  if (!code) {
+    res.status(400).json({ error: '邀请码无效' })
+    return
+  }
+  const inviter = await findUserByBuddyId(code)
+  if (!inviter) {
+    res.status(404).json({ error: '邀请人不存在' })
+    return
+  }
+  const displayName =
+    String(inviter.nickname || '').trim() ||
+    `搭子 ${String(inviter.buddy_id || code).slice(0, 4)}…`
+  res.json({
+    inviteCode: String(inviter.buddy_id || code).toLowerCase(),
+    displayName,
+    avatarUrl: inviter.avatar_url || null,
+    rewards: {
+      inviteePoints: INVITE_REWARD_INVITEE,
+      inviterPoints: INVITE_REWARD_INVITER,
+    },
+    downloadUrl: '/app/WordBuddy-release.apk',
+  })
+})
+
+router.get('/me/invite', authRequired, async (req, res) => {
+  const row = await loadUserProfileRow(req.user.id)
+  if (!row) {
+    res.status(404).json({ error: '用户不存在' })
+    return
+  }
+  const buddyId = String(row.buddy_id || '').trim()
+  const stats = await getInviteStats(req.user.id)
+  const base =
+    String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '') ||
+    `${req.protocol}://${req.get('host')}`
+  res.json({
+    buddyId,
+    inviteCode: buddyId,
+    inviteUrl: buddyId ? `${base}/i/${encodeURIComponent(buddyId)}` : null,
+    invitedCount: stats.invitedCount,
+    invitePointsEarned: stats.invitePointsEarned,
+    canBindInvite: Boolean(stats.canBindInvite),
+    invitedByBuddyId: stats.invitedByBuddyId,
+    rewards: {
+      inviteePoints: INVITE_REWARD_INVITEE,
+      inviterPoints: INVITE_REWARD_INVITER,
+    },
+  })
+})
+
+/** Bind invite code once after registration (makeup). */
+router.post('/me/invite/bind', authRequired, async (req, res) => {
+  try {
+    const result = await bindInviteCode(req.user.id, req.body?.inviteCode || req.body?.invite)
+    if (!result.ok) {
+      res.status(400).json({ error: result.error || '绑定失败' })
+      return
+    }
+    const checkIn = await getUserCheckIn(req.user.id)
+    const stats = await getInviteStats(req.user.id)
+    res.json({
+      ok: true,
+      message: `邀请码已填写，获得 ${result.inviteeReward} 积分`,
+      inviteeReward: result.inviteeReward,
+      inviterReward: result.inviterReward,
+      inviterBuddyId: result.inviterBuddyId,
+      canBindInvite: false,
+      invitedByBuddyId: result.inviterBuddyId,
+      invitedCount: stats.invitedCount,
+      checkIn,
+      totalPoints: checkIn.totalPoints,
+    })
+  } catch (error) {
+    console.error('[me/invite/bind]', error)
+    res.status(500).json({ error: '绑定失败，请稍后重试' })
+  }
 })
 
 router.get('/me', authRequired, async (req, res) => {
@@ -456,6 +573,26 @@ router.patch('/me', authRequired, async (req, res) => {
     }
   }
 
+  let alipayAccount = row.alipay_account
+  if (req.body?.alipayAccount != null) {
+    const next = String(req.body.alipayAccount).trim().slice(0, 64)
+    if (next && next.length < 3) {
+      res.status(400).json({ error: '支付宝账号至少 3 位' })
+      return
+    }
+    alipayAccount = next || null
+  }
+
+  let wechatAccount = row.wechat_account
+  if (req.body?.wechatAccount != null) {
+    const next = String(req.body.wechatAccount).trim().slice(0, 64)
+    if (next && next.length < 3) {
+      res.status(400).json({ error: '微信收款标识至少 3 位' })
+      return
+    }
+    wechatAccount = next || null
+  }
+
   // 搭子号为系统唯一识别码，禁止用户修改
   const buddyId = row.buddy_id
   if (req.body?.buddyId != null) {
@@ -474,7 +611,9 @@ router.patch('/me', authRequired, async (req, res) => {
          region = $7,
          buddy_id = $8,
          signature = $9,
-         email = $10
+         email = $10,
+         alipay_account = $11,
+         wechat_account = $12
        WHERE id = $1
        RETURNING ${USER_PROFILE_SQL}`,
       [
@@ -488,6 +627,8 @@ router.patch('/me', authRequired, async (req, res) => {
         buddyId,
         signature,
         email,
+        alipayAccount,
+        wechatAccount,
       ],
     )
   ).rows[0]
@@ -549,6 +690,8 @@ function mapUserProfile(row, fallbackUser = {}) {
     buddyId: row?.buddy_id || null,
     signature: row?.signature || null,
     email: row?.email || null,
+    alipayAccount: row?.alipay_account || null,
+    wechatAccount: row?.wechat_account || null,
     networkRegion: shortNetworkRegion(location),
     networkRegionDetail: location,
   }
@@ -769,6 +912,97 @@ router.post('/auth/change-password', authRequired, async (req, res) => {
   await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashPassword(newPassword), user.id])
   await recordPasswordEvent(req, user.id, 'change')
   res.json({ ok: true })
+})
+
+/** Re-check login password without rotating the session (used before change-phone). */
+router.post('/auth/verify-password', authRequired, async (req, res) => {
+  const password = normalizePassword(req.body?.password)
+  if (!password) {
+    res.status(400).json({ error: '请输入当前密码' })
+    return
+  }
+  const user = (
+    await query('SELECT id, password_hash FROM users WHERE id = $1', [req.user.id])
+  ).rows[0]
+  if (!user) {
+    res.status(404).json({ error: '用户不存在' })
+    return
+  }
+  if (!user.password_hash) {
+    res.status(400).json({ error: '尚未设置密码，请先设置登录密码' })
+    return
+  }
+  if (!verifyPassword(password, user.password_hash)) {
+    res.status(400).json({ error: '当前密码不正确' })
+    return
+  }
+  res.json({ ok: true })
+})
+
+/**
+ * Change login phone: current password + SMS code sent to the new number.
+ * Rotates session and returns a fresh JWT (phone claim updates).
+ */
+router.post('/auth/change-phone', authRequired, async (req, res) => {
+  const password = normalizePassword(req.body?.password)
+  const newPhone = normalizePhone(req.body?.newPhone ?? req.body?.phone)
+  const code = String(req.body?.code || '').trim()
+  if (!password) {
+    res.status(400).json({ error: '请输入当前密码' })
+    return
+  }
+  if (!newPhone) {
+    res.status(400).json({ error: '请输入正确的新手机号' })
+    return
+  }
+  const user = (
+    await query('SELECT id, phone, password_hash FROM users WHERE id = $1', [req.user.id])
+  ).rows[0]
+  if (!user) {
+    res.status(404).json({ error: '用户不存在' })
+    return
+  }
+  if (!user.password_hash || !verifyPassword(password, user.password_hash)) {
+    res.status(400).json({ error: '当前密码不正确' })
+    return
+  }
+  if (newPhone === user.phone) {
+    res.status(400).json({ error: '新手机号不能与当前号码相同' })
+    return
+  }
+  const taken = (
+    await query('SELECT id FROM users WHERE phone = $1 AND id <> $2 LIMIT 1', [newPhone, user.id])
+  ).rows[0]
+  if (taken) {
+    res.status(400).json({ error: '该手机号已被其他账号使用' })
+    return
+  }
+  const checked = await verifySmsCode(newPhone, code)
+  if (!checked.ok) {
+    res.status(400).json({ error: checked.error })
+    return
+  }
+  try {
+    await query('UPDATE users SET phone = $1 WHERE id = $2', [newPhone, user.id])
+  } catch (error) {
+    if (error?.code === '23505') {
+      res.status(400).json({ error: '该手机号已被其他账号使用' })
+      return
+    }
+    throw error
+  }
+  await consumeSms(checked.smsId)
+  const sessionVersion = await rotateSessionVersion(user.id)
+  const profileRow = await loadUserProfileRow(user.id)
+  const profile = mapUserProfile(profileRow, { id: user.id, phone: newPhone })
+  res.json({
+    ok: true,
+    token: signToken({ id: user.id, phone: newPhone }, sessionVersion),
+    user: profile,
+    vocabNotebookId: Number(await ensureUserNotebook(user.id)),
+    avatarUrl: profile.avatarUrl,
+    level: profile.level,
+  })
 })
 
 /** Public catalog list (中考 / 高考 / CET-4 / CET-6) — no login required. */

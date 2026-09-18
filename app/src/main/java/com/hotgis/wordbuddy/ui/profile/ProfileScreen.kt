@@ -40,8 +40,10 @@ import androidx.compose.material.icons.outlined.CardGiftcard
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.EventAvailable
+import androidx.compose.material.icons.outlined.PersonAdd
 import java.time.LocalDate
 import java.time.YearMonth
+import android.content.Intent
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.HelpOutline
@@ -86,6 +88,7 @@ import com.hotgis.wordbuddy.ads.findActivity
 import com.hotgis.wordbuddy.data.CheckInResult
 import com.hotgis.wordbuddy.data.CheckInState
 import com.hotgis.wordbuddy.data.CheckInStore
+import com.hotgis.wordbuddy.data.InviteStore
 import com.hotgis.wordbuddy.data.NotebookImportResult
 import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
 import com.hotgis.wordbuddy.ui.components.WordBuddyAvatarIcon
@@ -122,6 +125,7 @@ fun ProfileScreen(
         cb(CheckInResult.Failed("未实现"))
     },
     onOpenPointsMall: () -> Unit = {},
+    buddyId: String? = null,
     onLogin: () -> Unit = {},
     onOpenAccountProfile: () -> Unit = {},
     onRefreshNetworkRegion: ((Result<String>) -> Unit) -> Unit = { it(Result.failure(IllegalStateException("未实现"))) },
@@ -369,9 +373,10 @@ fun ProfileScreen(
         )
     }
     makeupConfirmDate?.let { date ->
+        val makeupPoints = CheckInStore.makeupReward(checkIn, date)
         StellarConfirmDialog(
             title = "补签 ${date.monthValue}月${date.dayOfMonth}日",
-            message = "观看完整激励视频后即可完成补签，并获得 1 积分。",
+            message = "观看完整激励视频后即可完成补签，并获得 $makeupPoints 积分。",
             confirmText = "观看广告",
             dismissText = "取消",
             onDismiss = { if (!checkInBusy) makeupConfirmDate = null },
@@ -488,6 +493,26 @@ fun ProfileScreen(
                     title = "积分兑礼",
                     trailing = "可用 ${checkIn.totalPoints} 分",
                     onClick = onOpenPointsMall,
+                )
+                ProfileMenuDivider()
+                ProfileMenuRow(
+                    icon = Icons.Outlined.PersonAdd,
+                    iconTint = Stellar.Cyan,
+                    title = "邀请好友",
+                    trailing = "各得积分",
+                    onClick = {
+                        val id = buddyId?.trim().orEmpty()
+                        if (id.isBlank()) {
+                            Toast.makeText(context, "请先登录并等待搭子号分配", Toast.LENGTH_SHORT).show()
+                            if (!loggedIn) onLogin()
+                            return@ProfileMenuRow
+                        }
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, InviteStore.shareText(id))
+                        }
+                        context.startActivity(Intent.createChooser(send, "邀请好友"))
+                    },
                 )
             }
             ProfileMenuCard {
@@ -839,19 +864,21 @@ private data class CheckInDaySlot(
 )
 
 private fun buildCheckInDaySlots(today: LocalDate, state: CheckInState): List<CheckInDaySlot> {
-    val claimedDates = buildSet {
-        state.recentDates.forEach { raw ->
-            runCatching { LocalDate.parse(raw) }.getOrNull()?.let { add(it) }
-        }
-        state.lastCheckInDate
-            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-            ?.let { add(it) }
-    }
-    val streak = state.streakDays.coerceAtLeast(0)
+    val claimedDates = CheckInStore.claimedDates(state)
     val month = YearMonth.from(today)
     val first = month.atDay(1)
     val last = month.atEndOfMonth()
     val days = (0L..(last.toEpochDay() - first.toEpochDay())).map { first.plusDays(it) }
+    val yesterday = today.minusDays(1)
+    val streakThroughYesterday = CheckInStore.consecutiveEndingAt(claimedDates, yesterday)
+    val todayClaimed = state.checkedInToday || today in claimedDates
+    val afterSigningToday = if (todayClaimed) {
+        CheckInStore.consecutiveEndingAt(claimedDates, today)
+    } else if (streakThroughYesterday > 0) {
+        streakThroughYesterday + 1
+    } else {
+        1
+    }
     return days.map { date ->
         val isFuture = date.isAfter(today)
         val claimed = date in claimedDates
@@ -861,15 +888,10 @@ private fun buildCheckInDaySlots(today: LocalDate, state: CheckInState): List<Ch
         val reward = when {
             claimed -> 0
             isClaimTarget -> state.todayReward
-            canMakeup -> 1
+            canMakeup -> CheckInStore.makeupReward(state, date)
             isFuture -> {
                 val daysAhead = (date.toEpochDay() - today.toEpochDay()).toInt()
-                val afterClaimingToday = when {
-                    state.checkedInToday || claimedDates.contains(today) -> streak
-                    streak > 0 -> streak + 1
-                    else -> 1
-                }
-                CheckInStore.rewardForDay(afterClaimingToday + daysAhead)
+                CheckInStore.rewardForDay(afterSigningToday + daysAhead)
             }
             else -> 1
         }

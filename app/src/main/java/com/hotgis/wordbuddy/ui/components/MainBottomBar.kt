@@ -13,11 +13,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Person
@@ -43,6 +45,7 @@ enum class MainTab {
     Home,
     Notebook,
     Shorts,
+    Podcast,
     Me,
 }
 
@@ -57,6 +60,7 @@ private val mainTabs = listOf(
     MainTabSpec(MainTab.Home, "首页", Icons.Filled.Home, Icons.Outlined.Home),
     MainTabSpec(MainTab.Notebook, "生词本", Icons.Filled.MenuBook, Icons.Outlined.MenuBook),
     MainTabSpec(MainTab.Shorts, "短视频", Icons.Filled.PlayCircle, Icons.Outlined.PlayCircle),
+    MainTabSpec(MainTab.Podcast, "播客", Icons.Filled.Headphones, Icons.Outlined.Headphones),
     MainTabSpec(MainTab.Me, "我", Icons.Filled.Person, Icons.Outlined.Person),
 )
 
@@ -64,6 +68,7 @@ private val stellarTabs = listOf(
     MainTabSpec(MainTab.Home, "首页", Icons.Filled.Home, Icons.Outlined.Home),
     MainTabSpec(MainTab.Notebook, "生词本", Icons.Filled.MenuBook, Icons.Outlined.MenuBook),
     MainTabSpec(MainTab.Shorts, "短视频", Icons.Filled.PlayCircle, Icons.Outlined.PlayCircle),
+    MainTabSpec(MainTab.Podcast, "播客", Icons.Filled.Headphones, Icons.Outlined.Headphones),
     MainTabSpec(MainTab.Me, "我", Icons.Filled.AutoAwesome, Icons.Outlined.AutoAwesome),
 )
 

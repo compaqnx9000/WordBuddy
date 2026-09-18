@@ -48,6 +48,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.window.Dialog
@@ -627,6 +628,88 @@ fun EditEmailDialog(
 }
 
 @Composable
+fun EditInviteCodeDialog(
+    busy: Boolean,
+    error: String?,
+    inviteeReward: Int = 10,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var value by remember { mutableStateOf("") }
+    ProfileFormDialog(
+        title = "填写邀请码",
+        subtitle = "注册时漏填可在此补填一次。填写成功后你将获得 ${inviteeReward} 积分，且之后不可再改。",
+        busy = busy,
+        error = error,
+        confirmText = "确认填写",
+        onDismiss = onDismiss,
+        onConfirm = { onConfirm(value.trim().lowercase()) },
+    ) {
+        ProfileTextField(
+            value = value,
+            onValueChange = {
+                value = it.lowercase().filter { ch -> ch.isLetterOrDigit() }.take(16)
+            },
+            placeholder = "好友的搭子号",
+            keyboardType = KeyboardType.Text,
+        )
+    }
+}
+
+@Composable
+fun EditAlipayAccountDialog(
+    initial: String,
+    busy: Boolean,
+    error: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var value by remember { mutableStateOf(initial) }
+    ProfileFormDialog(
+        title = "支付宝收款账号",
+        subtitle = "用于积分提现，请填写支付宝登录手机号或邮箱。",
+        busy = busy,
+        error = error,
+        confirmText = "保存",
+        onDismiss = onDismiss,
+        onConfirm = { onConfirm(value.trim()) },
+    ) {
+        ProfileTextField(
+            value = value,
+            onValueChange = { if (it.length <= 64) value = it },
+            placeholder = "手机号或邮箱",
+            keyboardType = KeyboardType.Email,
+        )
+    }
+}
+
+@Composable
+fun EditWechatAccountDialog(
+    initial: String,
+    busy: Boolean,
+    error: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var value by remember { mutableStateOf(initial) }
+    ProfileFormDialog(
+        title = "微信收款账号",
+        subtitle = "用于积分提现。沙箱测试可填任意标识；正式环境请填商户绑定账号。",
+        busy = busy,
+        error = error,
+        confirmText = "保存",
+        onDismiss = onDismiss,
+        onConfirm = { onConfirm(value.trim()) },
+    ) {
+        ProfileTextField(
+            value = value,
+            onValueChange = { if (it.length <= 64) value = it },
+            placeholder = "微信号 / OpenID",
+        )
+    }
+}
+
+@Composable
 fun BuddyQrDialog(
     buddyId: String,
     qrBitmap: Bitmap?,
@@ -660,6 +743,13 @@ fun BuddyQrDialog(
                 text = "搭子号  $buddyId",
                 color = Stellar.OnSurfaceVariant,
                 fontSize = 13.ssp(),
+            )
+            Spacer(Modifier.height(4.sdp()))
+            Text(
+                text = "扫码打开邀请页，注册时填写邀请码",
+                color = Stellar.OnSurfaceVariant.copy(alpha = 0.75f),
+                fontSize = 12.ssp(),
+                textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(16.sdp()))
             Box(

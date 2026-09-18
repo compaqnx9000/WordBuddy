@@ -12,7 +12,7 @@ import {
 } from './auth.js'
 import { mapDeviceRow } from './device.js'
 import { todayShanghai } from './checkin.js'
-import { GIFT_CATEGORIES, mapGift, mapOrder } from './gifts.js'
+import { GIFT_CATEGORIES, mapGift, mapOrder, normalizeGiftStock } from './gifts.js'
 
 export const adminRouter = Router()
 
@@ -842,16 +842,23 @@ adminRouter.get('/checkins/logs', adminRequired, async (req, res) => {
 adminRouter.get('/gifts', adminRequired, async (req, res) => {
   const { page, pageSize, offset } = pageParams(req)
   const q = String(req.query.q || '').trim()
+  const publishedFilter = String(req.query.published || '').trim()
   const params = []
-  let where = 'TRUE'
+  const where = []
   if (q) {
     params.push(`%${q}%`)
-    where = '(title ILIKE $1 OR subtitle ILIKE $1)'
+    where.push(`(title ILIKE $${params.length} OR subtitle ILIKE $${params.length})`)
   }
-  const total = (await query(`SELECT count(*)::int AS n FROM gifts WHERE ${where}`, params)).rows[0].n
+  if (publishedFilter === '1' || publishedFilter === 'true') {
+    where.push('published = TRUE')
+  } else if (publishedFilter === '0' || publishedFilter === 'false') {
+    where.push('published = FALSE')
+  }
+  const whereSql = where.length ? where.join(' AND ') : 'TRUE'
+  const total = (await query(`SELECT count(*)::int AS n FROM gifts WHERE ${whereSql}`, params)).rows[0].n
   params.push(pageSize, offset)
   const result = await query(
-    `SELECT * FROM gifts WHERE ${where}
+    `SELECT * FROM gifts WHERE ${whereSql}
      ORDER BY sort_order ASC, id DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
@@ -888,7 +895,7 @@ adminRouter.post('/gifts', adminRequired, async (req, res) => {
         req.body?.pointsOffsetYuan != null
           ? Math.round(Number(req.body.pointsOffsetYuan) * 100)
           : req.body?.pointsOffsetFen ?? null,
-        req.body?.stock == null || req.body?.stock === '' ? -1 : Number(req.body.stock),
+        normalizeGiftStock(req.body?.stock),
         Number(req.body?.sortOrder) || 0,
         req.body?.published !== false,
         Boolean(req.body?.needAddress),
@@ -939,7 +946,7 @@ adminRouter.patch('/gifts/:id', adminRequired, async (req, res) => {
           : req.body?.pointsOffsetFen != null
             ? Number(req.body.pointsOffsetFen)
             : existing.points_offset_fen,
-        req.body?.stock != null ? Number(req.body.stock) : existing.stock,
+        req.body?.stock != null ? normalizeGiftStock(req.body.stock) : existing.stock,
         req.body?.sortOrder != null ? Number(req.body.sortOrder) : existing.sort_order,
         published,
         req.body?.needAddress != null ? Boolean(req.body.needAddress) : existing.need_address,

@@ -54,6 +54,13 @@ app.use('/admin', express.static(path.resolve(root, '../public/admin')))
 app.get('/admin', (_req, res) => {
   res.sendFile(path.resolve(root, '../public/admin/index.html'))
 })
+// Invite landing: /i/{buddyId}
+app.get('/i/:code', (req, res) => {
+  res.sendFile(path.resolve(root, '../public/invite/index.html'))
+})
+app.get('/invite/page/:code', (req, res) => {
+  res.sendFile(path.resolve(root, '../public/invite/index.html'))
+})
 app.use(router)
 
 app.use((err, _req, res, _next) => {

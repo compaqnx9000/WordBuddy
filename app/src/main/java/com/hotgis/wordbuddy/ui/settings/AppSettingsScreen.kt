@@ -39,6 +39,7 @@ import androidx.compose.runtime.setValue
 import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
@@ -202,11 +203,15 @@ fun AppSettingsScreen(
                     autoPronounce = settings.speakOnPageChange,
                     dailyReminder = settings.dailyReminder,
                     aiImageAutoGen = settings.aiImageAutoGen,
+                    podcastPlayWhenScreenOff = settings.podcastPlayWhenScreenOff,
                     notebooks = notebooks,
                     defaultNotebookId = settings.defaultNotebookId,
                     onAutoPronounce = { enabled -> onChange { it.copy(speakOnPageChange = enabled) } },
                     onDailyReminder = { enabled -> onChange { it.copy(dailyReminder = enabled) } },
                     onAiImageAutoGen = { enabled -> onChange { it.copy(aiImageAutoGen = enabled) } },
+                    onPodcastPlayWhenScreenOff = { enabled ->
+                        onChange { it.copy(podcastPlayWhenScreenOff = enabled) }
+                    },
                     onDefaultNotebook = { id -> onChange { it.copy(defaultNotebookId = id) } },
                 )
 
@@ -444,11 +449,13 @@ private fun PreferencesCard(
     autoPronounce: Boolean,
     dailyReminder: Boolean,
     aiImageAutoGen: Boolean,
+    podcastPlayWhenScreenOff: Boolean,
     notebooks: List<Notebook>,
     defaultNotebookId: Long,
     onAutoPronounce: (Boolean) -> Unit,
     onDailyReminder: (Boolean) -> Unit,
     onAiImageAutoGen: (Boolean) -> Unit,
+    onPodcastPlayWhenScreenOff: (Boolean) -> Unit,
     onDefaultNotebook: (Long) -> Unit,
 ) {
     Column(
@@ -491,6 +498,15 @@ private fun PreferencesCard(
             checked = dailyReminder,
             accentOnHover = Stellar.Cyan,
             onChecked = onDailyReminder,
+        )
+        PreferenceDivider()
+        PreferenceToggle(
+            icon = Icons.Filled.Headset,
+            title = "息屏后仍可后台播放",
+            subtitle = "关闭后锁屏即暂停播客/电台，默认关闭",
+            checked = podcastPlayWhenScreenOff,
+            accentOnHover = Stellar.Cyan,
+            onChecked = onPodcastPlayWhenScreenOff,
         )
         PreferenceDivider()
         PreferenceToggle(

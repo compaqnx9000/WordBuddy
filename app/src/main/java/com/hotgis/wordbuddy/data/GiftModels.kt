@@ -101,6 +101,9 @@ data class WithdrawalItem(
     val remark: String? = null,
     val sandbox: Boolean = true,
     val createdAt: String? = null,
+    val updatedAt: String? = null,
+    /** Arrival / paid time when status is success. */
+    val paidAt: String? = null,
 )
 
 data class WithdrawResult(

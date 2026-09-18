@@ -50,6 +50,11 @@ function mapWithdrawal(row) {
     remark: row.remark || null,
     sandbox: Boolean(row.sandbox),
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+    paidAt:
+      row.status === 'success' && row.updated_at
+        ? new Date(row.updated_at).toISOString()
+        : null,
   }
 }
 
@@ -96,9 +101,19 @@ export async function createWithdrawal(userId, { channel, account } = {}) {
   if (ch !== 'alipay' && ch !== 'wechat') {
     return { ok: false, error: '请选择支付宝或微信提现' }
   }
-  const acct = String(account || '').trim()
+  const profile = (
+    await query('SELECT alipay_account, wechat_account FROM users WHERE id = $1', [userId])
+  ).rows[0]
+  const saved =
+    ch === 'wechat'
+      ? String(profile?.wechat_account || '').trim()
+      : String(profile?.alipay_account || '').trim()
+  let acct = String(account || '').trim() || saved
   if (!acct || acct.length < 3 || acct.length > 64) {
-    return { ok: false, error: '请填写正确的收款账号' }
+    return {
+      ok: false,
+      error: ch === 'wechat' ? '请先在个人资料中设置微信收款账号' : '请先在个人资料中设置支付宝收款账号',
+    }
   }
 
   const amountFen = cfg.amountFen

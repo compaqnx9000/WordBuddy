@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS users (
     buddy_id TEXT,
     signature TEXT,
     email TEXT,
+    alipay_account TEXT,
+    wechat_account TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

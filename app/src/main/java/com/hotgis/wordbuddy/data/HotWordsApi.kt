@@ -150,17 +150,50 @@ class HotWordsApi {
             )
         }
 
-    suspend fun register(phone: String, code: String, password: String): AuthResult =
+    suspend fun verifyPassword(token: String, password: String) =
         withContext(Dispatchers.IO) {
+            request(
+                "POST",
+                "/auth/verify-password",
+                auth = token,
+                body = JSONObject().put("password", password),
+            )
+        }
+
+    suspend fun changePhone(
+        token: String,
+        password: String,
+        newPhone: String,
+        code: String,
+    ): UserSession = withContext(Dispatchers.IO) {
+        val root = request(
+            "POST",
+            "/auth/change-phone",
+            auth = token,
+            body = JSONObject()
+                .put("password", password)
+                .put("newPhone", newPhone)
+                .put("code", code),
+        )
+        val nextToken = root.optString("token").ifBlank { token }
+        val user = root.getJSONObject("user")
+        parseUserSession(token = nextToken, root = root, user = user)
+    }
+
+    suspend fun register(phone: String, code: String, password: String, inviteCode: String? = null): AuthResult =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject()
+                .put("phone", phone)
+                .put("code", code)
+                .put("password", password)
+            val invite = inviteCode?.trim()?.lowercase().orEmpty()
+            if (invite.isNotEmpty()) body.put("inviteCode", invite)
             parseAuth(
                 request(
                     "POST",
                     "/auth/register",
                     auth = null,
-                    body = JSONObject()
-                        .put("phone", phone)
-                        .put("code", code)
-                        .put("password", password),
+                    body = body,
                 ),
             )
         }
@@ -195,6 +228,49 @@ class HotWordsApi {
         parseUserSession(token = token, root = root, user = user)
     }
 
+    data class InviteInfo(
+        val canBindInvite: Boolean,
+        val invitedByBuddyId: String?,
+        val inviteeReward: Int,
+        val inviterReward: Int,
+        val invitedCount: Int,
+    )
+
+    data class BindInviteResult(
+        val message: String,
+        val inviteeReward: Int,
+        val totalPoints: Int,
+        val invitedByBuddyId: String?,
+    )
+
+    suspend fun fetchInviteInfo(token: String): InviteInfo = withContext(Dispatchers.IO) {
+        val root = request("GET", "/me/invite", auth = token)
+        val rewards = root.optJSONObject("rewards")
+        InviteInfo(
+            canBindInvite = root.optBoolean("canBindInvite", true),
+            invitedByBuddyId = root.optString("invitedByBuddyId").trim().takeIf { it.isNotEmpty() },
+            inviteeReward = rewards?.optInt("inviteePoints", 10) ?: 10,
+            inviterReward = rewards?.optInt("inviterPoints", 20) ?: 20,
+            invitedCount = root.optInt("invitedCount", 0),
+        )
+    }
+
+    suspend fun bindInviteCode(token: String, inviteCode: String): BindInviteResult =
+        withContext(Dispatchers.IO) {
+            val root = request(
+                "POST",
+                "/me/invite/bind",
+                auth = token,
+                body = JSONObject().put("inviteCode", inviteCode.trim()),
+            )
+            BindInviteResult(
+                message = root.optString("message").ifBlank { "邀请码已填写" },
+                inviteeReward = root.optInt("inviteeReward", 10),
+                totalPoints = root.optInt("totalPoints", 0),
+                invitedByBuddyId = root.optString("invitedByBuddyId").trim().takeIf { it.isNotEmpty() },
+            )
+        }
+
     suspend fun updateProfile(
         token: String,
         nickname: String? = null,
@@ -205,6 +281,8 @@ class HotWordsApi {
         region: String? = null,
         signature: String? = null,
         email: String? = null,
+        alipayAccount: String? = null,
+        wechatAccount: String? = null,
     ): UserSession = withContext(Dispatchers.IO) {
         val body = JSONObject()
         if (nickname != null) body.put("nickname", nickname)
@@ -212,6 +290,8 @@ class HotWordsApi {
         if (region != null) body.put("region", region)
         if (signature != null) body.put("signature", signature)
         if (email != null) body.put("email", email)
+        if (alipayAccount != null) body.put("alipayAccount", alipayAccount)
+        if (wechatAccount != null) body.put("wechatAccount", wechatAccount)
         if (shippingName != null || shippingPhone != null || shippingDetail != null) {
             body.put(
                 "shipping",
@@ -259,6 +339,8 @@ class HotWordsApi {
             buddyId = optNullableString(user, "buddyId"),
             signature = optNullableString(user, "signature"),
             email = optNullableString(user, "email"),
+            alipayAccount = optNullableString(user, "alipayAccount"),
+            wechatAccount = optNullableString(user, "wechatAccount"),
             networkRegion = optNullableString(user, "networkRegion"),
             networkRegionDetail = optNullableString(user, "networkRegionDetail"),
         )
@@ -437,6 +519,8 @@ class HotWordsApi {
             remark = optNullableString(obj, "remark"),
             sandbox = obj.optBoolean("sandbox", true),
             createdAt = optNullableString(obj, "createdAt"),
+            updatedAt = optNullableString(obj, "updatedAt"),
+            paidAt = optNullableString(obj, "paidAt"),
         )
     }
 

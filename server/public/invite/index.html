@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#061018" />
+  <title>词搭子 · 邀请注册</title>
+  <style>
+    :root {
+      --bg: #061018;
+      --card: rgba(18, 36, 52, 0.92);
+      --cyan: #3dd6f5;
+      --cyan-soft: #7fe7ff;
+      --text: #e8f6ff;
+      --muted: #8aa3b5;
+      --pink: #ff6b9d;
+      --gold: #f0c36a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(61, 214, 245, 0.22), transparent 55%),
+        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(255, 107, 157, 0.12), transparent 50%),
+        var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 28px 20px 48px;
+    }
+    .card {
+      width: min(420px, 100%);
+      background: var(--card);
+      border: 1px solid rgba(61, 214, 245, 0.28);
+      border-radius: 22px;
+      padding: 28px 22px 24px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+    }
+    .brand {
+      text-align: center;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      color: var(--cyan-soft);
+      margin: 0 0 6px;
+    }
+    .sub {
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+      margin: 0 0 22px;
+      line-height: 1.5;
+    }
+    .inviter {
+      text-align: center;
+      font-size: 18px;
+      font-weight: 700;
+      margin: 0 0 8px;
+    }
+    .code {
+      text-align: center;
+      font-size: 13px;
+      color: var(--cyan);
+      margin: 0 0 20px;
+      letter-spacing: 0.06em;
+    }
+    .rewards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+    .reward {
+      background: rgba(8, 20, 30, 0.65);
+      border-radius: 14px;
+      padding: 14px 10px;
+      text-align: center;
+    }
+    .reward b {
+      display: block;
+      font-size: 22px;
+      color: var(--gold);
+      margin-bottom: 4px;
+    }
+    .reward span { font-size: 12px; color: var(--muted); }
+    .btn {
+      display: block;
+      width: 100%;
+      text-align: center;
+      text-decoration: none;
+      background: linear-gradient(135deg, #3dd6f5, #1b9fc4);
+      color: #041018;
+      font-weight: 800;
+      font-size: 16px;
+      padding: 14px;
+      border-radius: 14px;
+      border: none;
+      cursor: pointer;
+    }
+    .btn.secondary {
+      margin-top: 10px;
+      background: transparent;
+      border: 1px solid rgba(61, 214, 245, 0.4);
+      color: var(--cyan-soft);
+      font-weight: 600;
+    }
+    .steps {
+      margin: 20px 0 0;
+      padding: 0 4px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    .steps li { margin-bottom: 4px; }
+    .err {
+      text-align: center;
+      color: var(--pink);
+      padding: 40px 12px;
+    }
+    .loading { text-align: center; color: var(--muted); padding: 48px 12px; }
+  </style>
+</head>
+<body>
+  <div class="card" id="root">
+    <p class="loading">加载邀请信息…</p>
+  </div>
+  <script>
+    (function () {
+      var path = location.pathname.replace(/\/+$/, '');
+      var m = path.match(/\/i\/([^/?#]+)/i) || path.match(/\/invite\/page\/([^/?#]+)/i);
+      var code = m ? decodeURIComponent(m[1]) : new URLSearchParams(location.search).get('invite') || '';
+      var root = document.getElementById('root');
+      if (!code) {
+        root.innerHTML = '<p class="err">缺少邀请码</p>';
+        return;
+      }
+      fetch('/invite/' + encodeURIComponent(code))
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          if (!res.ok) {
+            root.innerHTML = '<p class="err">' + (res.j.error || '邀请无效') + '</p>';
+            return;
+          }
+          var j = res.j;
+          var invitee = (j.rewards && j.rewards.inviteePoints) || 10;
+          var inviter = (j.rewards && j.rewards.inviterPoints) || 20;
+          var apk = j.downloadUrl || '/app/WordBuddy-release.apk';
+          var shareHint = '邀请码 ' + j.inviteCode;
+          try { sessionStorage.setItem('wb_invite', j.inviteCode); } catch (e) {}
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(j.inviteCode);
+            }
+          } catch (e) {}
+          root.innerHTML =
+            '<h1 class="brand">词搭子</h1>' +
+            '<p class="sub">和朋友一起背单词 · 签到赚积分</p>' +
+            '<p class="inviter">' + escapeHtml(j.displayName) + ' 邀请你加入</p>' +
+            '<p class="code">邀请码 · ' + escapeHtml(j.inviteCode) + '</p>' +
+            '<div class="rewards">' +
+              '<div class="reward"><b>+' + invitee + '</b><span>你注册可得积分</span></div>' +
+              '<div class="reward"><b>+' + inviter + '</b><span>好友邀请奖励</span></div>' +
+            '</div>' +
+            '<a class="btn" href="' + apk + '">下载 Android 安装包</a>' +
+            '<button type="button" class="btn secondary" id="copyBtn">复制邀请码</button>' +
+            '<ol class="steps">' +
+              '<li>下载并安装词搭子</li>' +
+              '<li>用手机号验证码注册</li>' +
+              '<li>设置密码时填写邀请码 <b style="color:var(--cyan)">' + escapeHtml(j.inviteCode) + '</b></li>' +
+            '</ol>';
+          document.getElementById('copyBtn').onclick = function () {
+            var t = j.inviteCode;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(t).then(function () {
+                document.getElementById('copyBtn').textContent = '已复制';
+              });
+            } else {
+              prompt('复制邀请码', t);
+            }
+          };
+        })
+        .catch(function () {
+          root.innerHTML = '<p class="err">网络异常，请稍后重试</p>';
+        });
+
+      function escapeHtml(s) {
+        return String(s || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+    })();
+  </script>
+</body>
+</html>

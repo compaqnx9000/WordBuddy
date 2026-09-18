@@ -24,6 +24,7 @@ import com.hotgis.wordbuddy.data.SettingsStore
 import com.hotgis.wordbuddy.data.CheckInStore
 import com.hotgis.wordbuddy.data.CheckInState
 import com.hotgis.wordbuddy.data.CheckInResult
+import com.hotgis.wordbuddy.data.InviteStore
 import com.hotgis.wordbuddy.data.VocabEntry
 import com.hotgis.wordbuddy.data.HotWordsApi
 import com.hotgis.wordbuddy.data.AuthSessionEvents
@@ -120,6 +121,7 @@ data class LoginUi(
     val code: String = DEV_LOGIN_CODE,
     val password: String = "",
     val passwordConfirm: String = "",
+    val inviteCode: String = "",
     val mode: LoginMode = LoginMode.SMS,
     val needPassword: Boolean = false,
     val sending: Boolean = false,
@@ -134,6 +136,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private val sessionStore = SessionStore(application)
     private val accountStore = AccountStore(application)
     private val checkInStore = CheckInStore(application)
+    private val inviteStore = InviteStore(application)
     private val api = HotWordsApi()
     private val dictionary = DictionaryClient()
     private val tts = TtsPlayer(application)
@@ -2152,6 +2155,12 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         _login.update { it.copy(passwordConfirm = value, error = null) }
     }
 
+    fun setLoginInviteCode(value: String) {
+        val cleaned = value.trim().lowercase().filter { it.isLetterOrDigit() }.take(16)
+        inviteStore.save(cleaned.ifBlank { null })
+        _login.update { it.copy(inviteCode = cleaned, error = null) }
+    }
+
     fun setLoginMode(mode: LoginMode) {
         _login.update { it.copy(mode = mode, needPassword = false, error = null) }
     }
@@ -2219,17 +2228,24 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             _login.update { it.copy(loggingIn = true, error = null) }
             runCatching {
                 when {
-                    state.needPassword -> api.register(state.phone, state.code, state.password)
+                    state.needPassword -> api.register(
+                        state.phone,
+                        state.code,
+                        state.password,
+                        state.inviteCode.ifBlank { inviteStore.peek() },
+                    )
                     state.mode == LoginMode.PASSWORD -> api.loginWithPassword(state.phone, state.password)
                     else -> api.login(state.phone, state.code)
                 }
             }.onSuccess { result ->
                 if (result.isNewUser) {
+                    val pending = inviteStore.peek().orEmpty()
                     _login.update {
                         it.copy(
                             needPassword = true,
                             password = "",
                             passwordConfirm = "",
+                            inviteCode = it.inviteCode.ifBlank { pending },
                             loggingIn = false,
                             error = null,
                         )
@@ -2237,6 +2253,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 val session = result.session ?: error("登录失败")
+                if (state.needPassword) inviteStore.clear()
                 enterSession(session)
             }.onFailure { error ->
                 _login.update { it.copy(error = error.message ?: "登录失败") }
@@ -2345,6 +2362,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     buddyId = remote.buddyId ?: target.session.buddyId,
                     signature = remote.signature ?: target.session.signature,
                     email = remote.email ?: target.session.email,
+                    alipayAccount = remote.alipayAccount ?: target.session.alipayAccount,
+                    wechatAccount = remote.wechatAccount ?: target.session.wechatAccount,
                     networkRegion = remote.networkRegion ?: target.session.networkRegion,
                     networkRegionDetail = remote.networkRegionDetail ?: target.session.networkRegionDetail,
                 )
@@ -2432,6 +2451,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             buddyId = remote.buddyId ?: current.buddyId,
             signature = remote.signature ?: current.signature,
             email = remote.email ?: current.email,
+            alipayAccount = remote.alipayAccount ?: current.alipayAccount,
+            wechatAccount = remote.wechatAccount ?: current.wechatAccount,
             networkRegion = remote.networkRegion ?: current.networkRegion,
             networkRegionDetail = remote.networkRegionDetail ?: current.networkRegionDetail,
         )
@@ -2449,6 +2470,41 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         LauncherIcons.apply(getApplication(), merged.level)
         loadAvatarBitmap()
         refreshCheckIn()
+    }
+
+    fun bindInviteCode(inviteCode: String, onResult: (Result<HotWordsApi.BindInviteResult>) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        val code = inviteCode.trim().lowercase().filter { it.isLetterOrDigit() }
+        if (code.length < 4) {
+            onResult(Result.failure(IllegalArgumentException("请输入有效邀请码")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.bindInviteCode(token, code) }
+                .onSuccess { result ->
+                    inviteStore.clear()
+                    refreshCheckIn()
+                    onResult(Result.success(result))
+                }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun fetchInviteInfo(onResult: (Result<HotWordsApi.InviteInfo>) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.fetchInviteInfo(token) }
+                .onSuccess { onResult(Result.success(it)) }
+                .onFailure { onResult(Result.failure(it)) }
+        }
     }
 
     fun updateNickname(nickname: String, onResult: (Result<Unit>) -> Unit) {
@@ -2478,6 +2534,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         region: String? = null,
         signature: String? = null,
         email: String? = null,
+        alipayAccount: String? = null,
+        wechatAccount: String? = null,
         onResult: (Result<Unit>) -> Unit,
     ) {
         val token = _session.value?.token
@@ -2499,6 +2557,16 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             onResult(Result.failure(IllegalArgumentException("请输入有效的邮箱地址")))
             return
         }
+        val nextAlipay = alipayAccount?.trim()
+        if (nextAlipay != null && nextAlipay.isNotEmpty() && nextAlipay.length < 3) {
+            onResult(Result.failure(IllegalArgumentException("支付宝账号至少 3 位")))
+            return
+        }
+        val nextWechat = wechatAccount?.trim()
+        if (nextWechat != null && nextWechat.isNotEmpty() && nextWechat.length < 3) {
+            onResult(Result.failure(IllegalArgumentException("微信收款标识至少 3 位")))
+            return
+        }
         viewModelScope.launch {
             runCatching {
                 api.updateProfile(
@@ -2508,6 +2576,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     region = region,
                     signature = signature,
                     email = nextEmail,
+                    alipayAccount = nextAlipay,
+                    wechatAccount = nextWechat,
                 )
             }.onSuccess { remote ->
                 applyProfileSession(remote)
@@ -2575,6 +2645,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             buddyId = remote.buddyId,
             signature = remote.signature,
             email = remote.email,
+            alipayAccount = remote.alipayAccount,
+            wechatAccount = remote.wechatAccount,
             networkRegion = remote.networkRegion,
             networkRegionDetail = remote.networkRegionDetail,
         )
@@ -2632,6 +2704,105 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { api.changePassword(token, oldPassword, newPassword) }
                 .onSuccess { onResult(Result.success(Unit)) }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun verifyLoginPassword(password: String, onResult: (Result<Unit>) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        if (password.length < 6) {
+            onResult(Result.failure(IllegalArgumentException("请输入当前密码")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.verifyPassword(token, password) }
+                .onSuccess { onResult(Result.success(Unit)) }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun sendChangePhoneCode(newPhone: String, onResult: (Result<String?>) -> Unit) {
+        val digits = newPhone.filter { it.isDigit() }
+        if (!Regex("^1[3-9]\\d{9}$").matches(digits)) {
+            onResult(Result.failure(IllegalArgumentException("请输入正确的新手机号")))
+            return
+        }
+        val current = _session.value?.phone?.filter { it.isDigit() }.orEmpty()
+        if (digits == current) {
+            onResult(Result.failure(IllegalArgumentException("新手机号不能与当前号码相同")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.sendCode(digits) }
+                .onSuccess { onResult(Result.success(it)) }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun changePhone(
+        password: String,
+        newPhone: String,
+        code: String,
+        onResult: (Result<Unit>) -> Unit,
+    ) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        val digits = newPhone.filter { it.isDigit() }
+        val sms = code.trim()
+        when {
+            password.length < 6 -> {
+                onResult(Result.failure(IllegalArgumentException("请输入当前密码")))
+                return
+            }
+            !Regex("^1[3-9]\\d{9}$").matches(digits) -> {
+                onResult(Result.failure(IllegalArgumentException("请输入正确的新手机号")))
+                return
+            }
+            !Regex("^\\d{6}$").matches(sms) -> {
+                onResult(Result.failure(IllegalArgumentException("请输入6位验证码")))
+                return
+            }
+        }
+        viewModelScope.launch {
+            runCatching { api.changePhone(token, password, digits, sms) }
+                .onSuccess { remote ->
+                    val current = _session.value ?: return@onSuccess
+                    val merged = current.copy(
+                        token = remote.token.ifBlank { current.token },
+                        phone = remote.phone.ifBlank { digits },
+                        userId = remote.userId.takeIf { it > 0L } ?: current.userId,
+                        avatarUrl = remote.avatarUrl ?: current.avatarUrl,
+                        level = remote.level,
+                        vocabNotebookId = remote.vocabNotebookId.takeIf { it > 0L }
+                            ?: current.vocabNotebookId,
+                        nickname = remote.nickname ?: current.nickname,
+                        shippingName = remote.shippingName ?: current.shippingName,
+                        shippingPhone = remote.shippingPhone ?: current.shippingPhone,
+                        shippingDetail = remote.shippingDetail ?: current.shippingDetail,
+                        gender = remote.gender ?: current.gender,
+                        region = remote.region ?: current.region,
+                        buddyId = remote.buddyId ?: current.buddyId,
+                        signature = remote.signature ?: current.signature,
+                        email = remote.email ?: current.email,
+                        alipayAccount = remote.alipayAccount ?: current.alipayAccount,
+                        wechatAccount = remote.wechatAccount ?: current.wechatAccount,
+                        networkRegion = remote.networkRegion ?: current.networkRegion,
+                        networkRegionDetail = remote.networkRegionDetail
+                            ?: current.networkRegionDetail,
+                    )
+                    sessionStore.save(merged)
+                    _session.value = merged
+                    accountStore.upsert(merged)
+                    refreshRememberedAccounts()
+                    onResult(Result.success(Unit))
+                }
                 .onFailure { onResult(Result.failure(it)) }
         }
     }

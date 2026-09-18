@@ -1,8 +1,8 @@
 {
-  "versionCode": 63,
-  "versionName": "0.72",
+  "versionCode": 76,
+  "versionName": "0.85",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "短视频点词独立查词页；折叠屏 Draw 广告全屏铺满并恢复自动播放（TextureView）。",
-  "releasedAt": "2026-09-16T13:50:00.000Z"
+  "notes": "注册漏填邀请码可在个人资料补填一次；填写成功双方获积分。",
+  "releasedAt": "2026-09-18T08:40:00.000Z"
 }

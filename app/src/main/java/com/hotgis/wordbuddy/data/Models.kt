@@ -175,6 +175,8 @@ data class StudySettings(
     val defaultNotebookId: Long = Notebook.DEFAULT_ID,
     /** When true and logged in, require fingerprint unlock when reopening the app. */
     val biometricLogin: Boolean = false,
+    /** When true, podcast/radio keeps playing after the screen turns off. Default off. */
+    val podcastPlayWhenScreenOff: Boolean = false,
 )
 
 data class LookupResult(

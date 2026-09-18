@@ -84,6 +84,8 @@ class AccountStore(context: Context) {
                     .put("buddyId", acc.session.buddyId.orEmpty())
                     .put("signature", acc.session.signature.orEmpty())
                     .put("email", acc.session.email.orEmpty())
+                    .put("alipayAccount", acc.session.alipayAccount.orEmpty())
+                    .put("wechatAccount", acc.session.wechatAccount.orEmpty())
                     .put("networkRegion", acc.session.networkRegion.orEmpty())
                     .put("networkRegionDetail", acc.session.networkRegionDetail.orEmpty()),
             )
@@ -114,6 +116,8 @@ class AccountStore(context: Context) {
                 buddyId = obj.optString("buddyId").trim().takeIf { it.isNotEmpty() },
                 signature = obj.optString("signature").trim().takeIf { it.isNotEmpty() },
                 email = obj.optString("email").trim().takeIf { it.isNotEmpty() },
+                alipayAccount = obj.optString("alipayAccount").trim().takeIf { it.isNotEmpty() },
+                wechatAccount = obj.optString("wechatAccount").trim().takeIf { it.isNotEmpty() },
                 networkRegion = obj.optString("networkRegion").trim().takeIf { it.isNotEmpty() },
                 networkRegionDetail = obj.optString("networkRegionDetail").trim().takeIf { it.isNotEmpty() },
             ),

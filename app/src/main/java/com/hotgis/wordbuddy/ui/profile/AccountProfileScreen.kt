@@ -1,6 +1,7 @@
 package com.hotgis.wordbuddy.ui.profile
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
@@ -37,6 +38,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,6 +60,8 @@ import androidx.core.content.FileProvider
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
+import com.hotgis.wordbuddy.data.HotWordsApi
+import com.hotgis.wordbuddy.data.InviteStore
 import com.hotgis.wordbuddy.ui.components.WordBuddyAvatarIcon
 import com.hotgis.wordbuddy.ui.components.rememberImagePickerLauncher
 import com.hotgis.wordbuddy.ui.design.sdp
@@ -79,6 +83,8 @@ fun AccountProfileScreen(
     buddyId: String?,
     signature: String?,
     email: String?,
+    alipayAccount: String?,
+    wechatAccount: String?,
     shippingSummary: String?,
     shippingName: String?,
     shippingPhone: String?,
@@ -93,9 +99,23 @@ fun AccountProfileScreen(
         region: String?,
         signature: String?,
         email: String?,
+        alipayAccount: String?,
+        wechatAccount: String?,
+        onResult: (Result<Unit>) -> Unit,
+    ) -> Unit,
+    onVerifyPassword: (password: String, onResult: (Result<Unit>) -> Unit) -> Unit,
+    onSendChangePhoneCode: (newPhone: String, onResult: (Result<String?>) -> Unit) -> Unit,
+    onChangePhone: (
+        password: String,
+        newPhone: String,
+        code: String,
         onResult: (Result<Unit>) -> Unit,
     ) -> Unit,
     onUpdateShipping: (String, String, String, (Result<Unit>) -> Unit) -> Unit,
+    onFetchInviteInfo: ((Result<HotWordsApi.InviteInfo>) -> Unit) -> Unit = {},
+    onBindInviteCode: (String, (Result<HotWordsApi.BindInviteResult>) -> Unit) -> Unit = { _, cb ->
+        cb(Result.failure(IllegalStateException("未实现")))
+    },
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -105,13 +125,30 @@ fun AccountProfileScreen(
     var showRegion by remember { mutableStateOf(false) }
     var showSignature by remember { mutableStateOf(false) }
     var showEmail by remember { mutableStateOf(false) }
+    var showAlipay by remember { mutableStateOf(false) }
+    var showWechat by remember { mutableStateOf(false) }
+    var showPhone by remember { mutableStateOf(false) }
     var showShipping by remember { mutableStateOf(false) }
     var showQr by remember { mutableStateOf(false) }
+    var showBindInvite by remember { mutableStateOf(false) }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     var editBusy by remember { mutableStateOf(false) }
     var editError by remember { mutableStateOf<String?>(null) }
+    var canBindInvite by remember { mutableStateOf(false) }
+    var invitedByBuddyId by remember { mutableStateOf<String?>(null) }
+    var inviteeReward by remember { mutableStateOf(10) }
 
     val resolvedBuddyId = buddyId?.trim().orEmpty()
+
+    LaunchedEffect(Unit) {
+        onFetchInviteInfo { result ->
+            result.onSuccess { info ->
+                canBindInvite = info.canBindInvite
+                invitedByBuddyId = info.invitedByBuddyId
+                inviteeReward = info.inviteeReward
+            }
+        }
+    }
 
     BackHandler(onBack = onBack)
 
@@ -163,6 +200,8 @@ fun AccountProfileScreen(
         regionValue: String? = null,
         signatureValue: String? = null,
         emailValue: String? = null,
+        alipayValue: String? = null,
+        wechatValue: String? = null,
         successMessage: String,
         onSuccess: () -> Unit,
     ) {
@@ -174,6 +213,8 @@ fun AccountProfileScreen(
             regionValue,
             signatureValue,
             emailValue,
+            alipayValue,
+            wechatValue,
         ) { result ->
             editBusy = false
             result
@@ -300,6 +341,102 @@ fun AccountProfileScreen(
             },
         )
     }
+    if (showAlipay) {
+        EditAlipayAccountDialog(
+            initial = alipayAccount.orEmpty(),
+            busy = editBusy,
+            error = editError,
+            onDismiss = {
+                if (!editBusy) {
+                    showAlipay = false
+                    editError = null
+                }
+            },
+            onConfirm = { value ->
+                saveProfile(
+                    alipayValue = value,
+                    successMessage = "支付宝账号已保存",
+                    onSuccess = { showAlipay = false },
+                )
+            },
+        )
+    }
+    if (showWechat) {
+        EditWechatAccountDialog(
+            initial = wechatAccount.orEmpty(),
+            busy = editBusy,
+            error = editError,
+            onDismiss = {
+                if (!editBusy) {
+                    showWechat = false
+                    editError = null
+                }
+            },
+            onConfirm = { value ->
+                saveProfile(
+                    wechatValue = value,
+                    successMessage = "微信账号已保存",
+                    onSuccess = { showWechat = false },
+                )
+            },
+        )
+    }
+    if (showBindInvite) {
+        EditInviteCodeDialog(
+            busy = editBusy,
+            error = editError,
+            inviteeReward = inviteeReward,
+            onDismiss = {
+                if (!editBusy) {
+                    showBindInvite = false
+                    editError = null
+                }
+            },
+            onConfirm = { code ->
+                editBusy = true
+                editError = null
+                onBindInviteCode(code) { result ->
+                    editBusy = false
+                    result
+                        .onSuccess {
+                            canBindInvite = false
+                            invitedByBuddyId = it.invitedByBuddyId
+                            showBindInvite = false
+                            Toast.makeText(context, it.message, Toast.LENGTH_SHORT).show()
+                        }
+                        .onFailure { editError = it.message ?: "填写失败" }
+                }
+            },
+        )
+    }
+    if (showPhone) {
+        ChangePhoneDialog(
+            currentPhoneMasked = maskAccountPhone(phone),
+            busy = editBusy,
+            error = editError,
+            onDismiss = {
+                if (!editBusy) {
+                    showPhone = false
+                    editError = null
+                }
+            },
+            onVerifyPassword = onVerifyPassword,
+            onSendCode = onSendChangePhoneCode,
+            onConfirm = { password, newPhone, code ->
+                editBusy = true
+                editError = null
+                onChangePhone(password, newPhone, code) { result ->
+                    editBusy = false
+                    result
+                        .onSuccess {
+                            showPhone = false
+                            Toast.makeText(context, "手机号已更新", Toast.LENGTH_SHORT).show()
+                        }
+                        .onFailure { editError = it.message ?: "修改失败" }
+                }
+            },
+        )
+    }
     if (showShipping) {
         EditShippingDialog(
             initialName = shippingName.orEmpty(),
@@ -416,9 +553,9 @@ fun AccountProfileScreen(
                 AccountProfileRow(
                     title = "手机号",
                     value = maskAccountPhone(phone),
-                    showChevron = false,
                     onClick = {
-                        Toast.makeText(context, "注册手机号不可修改", Toast.LENGTH_SHORT).show()
+                        editError = null
+                        showPhone = true
                     },
                 )
                 AccountProfileDivider()
@@ -437,6 +574,48 @@ fun AccountProfileScreen(
                     showChevron = false,
                     onClick = {
                         Toast.makeText(context, "搭子号由系统分配，不可修改", Toast.LENGTH_SHORT).show()
+                    },
+                )
+                AccountProfileDivider()
+                AccountProfileRow(
+                    title = "邀请好友",
+                    value = if (resolvedBuddyId.isBlank()) "分配中…" else "分享链接赚积分",
+                    onClick = {
+                        if (resolvedBuddyId.isBlank()) {
+                            Toast.makeText(context, "搭子号尚未分配，请稍后重试", Toast.LENGTH_SHORT).show()
+                            return@AccountProfileRow
+                        }
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, InviteStore.shareText(resolvedBuddyId))
+                        }
+                        context.startActivity(Intent.createChooser(send, "邀请好友"))
+                    },
+                )
+                AccountProfileDivider()
+                AccountProfileRow(
+                    title = "填写邀请码",
+                    value = when {
+                        !canBindInvite && !invitedByBuddyId.isNullOrBlank() -> "已绑定 $invitedByBuddyId"
+                        !canBindInvite -> "已填写"
+                        else -> "注册漏填可补一次"
+                    },
+                    showChevron = canBindInvite,
+                    onClick = {
+                        if (!canBindInvite) {
+                            Toast.makeText(
+                                context,
+                                if (!invitedByBuddyId.isNullOrBlank()) {
+                                    "已绑定邀请人 $invitedByBuddyId"
+                                } else {
+                                    "已填写过邀请码"
+                                },
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        } else {
+                            editError = null
+                            showBindInvite = true
+                        }
                     },
                 )
                 AccountProfileDivider()
@@ -476,6 +655,26 @@ fun AccountProfileScreen(
                     onClick = {
                         editError = null
                         showShipping = true
+                    },
+                )
+            }
+
+            AccountProfileGroup {
+                AccountProfileRow(
+                    title = "支付宝账号",
+                    value = alipayAccount?.takeIf { it.isNotBlank() } ?: "去设置",
+                    onClick = {
+                        editError = null
+                        showAlipay = true
+                    },
+                )
+                AccountProfileDivider()
+                AccountProfileRow(
+                    title = "微信账号",
+                    value = wechatAccount?.takeIf { it.isNotBlank() } ?: "去设置",
+                    onClick = {
+                        editError = null
+                        showWechat = true
                     },
                 )
             }
@@ -672,7 +871,7 @@ internal fun GenderLabelText(
 }
 
 internal fun generateBuddyQrBitmap(buddyId: String, size: Int = 640): Bitmap? {
-    val content = buddyId.trim().ifEmpty { return null }
+    val content = InviteStore.inviteUrl(buddyId).ifBlank { return null }
     return runCatching {
         val hints = mapOf(
             EncodeHintType.CHARACTER_SET to "UTF-8",
@@ -680,7 +879,7 @@ internal fun generateBuddyQrBitmap(buddyId: String, size: Int = 640): Bitmap? {
             EncodeHintType.ERROR_CORRECTION to com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.M,
         )
         val matrix = QRCodeWriter().encode(
-            "wordbuddy://u/$content",
+            content,
             BarcodeFormat.QR_CODE,
             size,
             size,

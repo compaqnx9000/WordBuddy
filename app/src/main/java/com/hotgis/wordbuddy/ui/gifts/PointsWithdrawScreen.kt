@@ -1,6 +1,8 @@
 package com.hotgis.wordbuddy.ui.gifts
 
 import android.widget.Toast
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,19 +13,22 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBackIos
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,11 +43,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.hotgis.wordbuddy.R
 import com.hotgis.wordbuddy.data.HotWordsApi
 import com.hotgis.wordbuddy.data.WithdrawConfig
 import com.hotgis.wordbuddy.data.WithdrawalItem
@@ -54,13 +67,21 @@ import com.hotgis.wordbuddy.ui.lookup.stellarGlass
 import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
+private val WechatGreen = Color(0xFF07C160)
 
 @Composable
 fun PointsWithdrawScreen(
     totalPoints: Int,
     token: String?,
+    alipayAccount: String?,
+    wechatAccount: String?,
     onBack: () -> Unit,
     onLogin: () -> Unit,
+    onOpenProfile: () -> Unit,
     onSuccess: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -73,8 +94,8 @@ fun PointsWithdrawScreen(
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var channel by remember { mutableStateOf("alipay") }
-    var account by remember { mutableStateOf("") }
     var confirmOpen by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
 
     fun reload() {
         val t = token
@@ -105,6 +126,10 @@ fun PointsWithdrawScreen(
     LaunchedEffect(token) { reload() }
 
     val cfg = config
+    val selectedAccount = when (channel) {
+        "wechat" -> wechatAccount?.trim().orEmpty()
+        else -> alipayAccount?.trim().orEmpty()
+    }
     val selected = cfg?.channels?.firstOrNull { it.id == channel }
 
     Column(
@@ -131,6 +156,17 @@ fun PointsWithdrawScreen(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f),
             )
+            if (!token.isNullOrBlank()) {
+                Text(
+                    text = "提现记录",
+                    color = Stellar.CyanSoft,
+                    fontSize = 14.ssp(),
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clickable { showHistory = true }
+                        .padding(horizontal = 12.sdp(), vertical = 10.sdp()),
+                )
+            }
         }
 
         if (token.isNullOrBlank()) {
@@ -215,13 +251,25 @@ fun PointsWithdrawScreen(
                         .padding(14.sdp()),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = item.name,
-                        color = Stellar.OnSurface,
-                        fontSize = 16.ssp(),
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f),
-                    )
+                    WithdrawChannelBadge(channelId = item.id, size = 36.sdp())
+                    Spacer(Modifier.width(12.sdp()))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = if (item.id == "wechat") "微信" else "支付宝",
+                            color = Stellar.OnSurface,
+                            fontSize = 16.ssp(),
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            text = maskPayoutAccount(
+                                if (item.id == "wechat") wechatAccount else alipayAccount,
+                            ),
+                            color = Stellar.OnSurfaceVariant,
+                            fontSize = 12.ssp(),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     if (selectedNow) {
                         Text("已选", color = Stellar.Cyan, fontSize = 13.ssp())
                     }
@@ -237,38 +285,40 @@ fun PointsWithdrawScreen(
                         .padding(14.sdp()),
                 ) {
                     Text(
-                        text = selected?.accountLabel ?: "收款账号",
+                        text = "收款账号",
                         color = Stellar.OnSurface,
                         fontSize = 14.ssp(),
                         fontWeight = FontWeight.Medium,
                     )
                     Spacer(Modifier.height(8.sdp()))
-                    BasicTextField(
-                        value = account,
-                        onValueChange = { if (it.length <= 64) account = it },
-                        singleLine = true,
-                        textStyle = TextStyle(color = Stellar.OnSurface, fontSize = 15.ssp()),
-                        cursorBrush = SolidColor(Stellar.Cyan),
-                        decorationBox = { inner ->
-                            Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.sdp()))
-                                    .background(Stellar.SurfaceHigh)
-                                    .padding(horizontal = 12.sdp(), vertical = 12.sdp()),
-                            ) {
-                                if (account.isEmpty()) {
-                                    Text(
-                                        text = selected?.accountHint ?: "请输入收款账号",
-                                        color = Stellar.OnSurfaceVariant.copy(alpha = 0.7f),
-                                        fontSize = 14.ssp(),
-                                    )
-                                }
-                                inner()
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    if (selectedAccount.isBlank()) {
+                        Text(
+                            text = "尚未设置${if (channel == "wechat") "微信" else "支付宝"}收款账号",
+                            color = Stellar.Pink,
+                            fontSize = 13.ssp(),
+                        )
+                        Spacer(Modifier.height(8.sdp()))
+                        Text(
+                            text = "去个人资料设置",
+                            color = Stellar.Cyan,
+                            fontSize = 14.ssp(),
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.clickable(onClick = onOpenProfile),
+                        )
+                    } else {
+                        Text(
+                            text = maskPayoutAccount(selectedAccount),
+                            color = Stellar.OnSurface,
+                            fontSize = 15.ssp(),
+                        )
+                        Spacer(Modifier.height(6.sdp()))
+                        Text(
+                            text = "在「个人资料」中修改收款账号",
+                            color = Stellar.OnSurfaceVariant,
+                            fontSize = 12.ssp(),
+                            modifier = Modifier.clickable(onClick = onOpenProfile),
+                        )
+                    }
                 }
             }
 
@@ -287,12 +337,18 @@ fun PointsWithdrawScreen(
                             if (submitting || cfg == null) Stellar.SurfaceHigh else Stellar.Cyan,
                         )
                         .clickable(enabled = !submitting && cfg != null) {
-                            if (account.trim().length < 3) {
-                                Toast.makeText(context, "请填写收款账号", Toast.LENGTH_SHORT).show()
-                            } else if ((cfg?.pointsCost ?: 1) > totalPoints) {
-                                Toast.makeText(context, "积分不足", Toast.LENGTH_SHORT).show()
-                            } else {
-                                confirmOpen = true
+                            when {
+                                selectedAccount.length < 3 -> {
+                                    Toast.makeText(
+                                        context,
+                                        "请先在个人资料中设置收款账号",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                                (cfg?.pointsCost ?: 1) > totalPoints -> {
+                                    Toast.makeText(context, "积分不足", Toast.LENGTH_SHORT).show()
+                                }
+                                else -> confirmOpen = true
                             }
                         }
                         .padding(vertical = 14.sdp()),
@@ -314,33 +370,21 @@ fun PointsWithdrawScreen(
                     }
                 }
             }
-
-            item {
-                Text(
-                    text = "提现记录",
-                    color = Stellar.OnSurface,
-                    fontSize = 15.ssp(),
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-
-            if (history.isEmpty()) {
-                item {
-                    Text("暂无记录", color = Stellar.OnSurfaceVariant, fontSize = 13.ssp())
-                }
-            } else {
-                items(history, key = { it.id }) { item ->
-                    WithdrawHistoryRow(item)
-                }
-            }
         }
     }
 
+    if (showHistory) {
+        WithdrawHistoryDialog(
+            items = history,
+            onDismiss = { showHistory = false },
+        )
+    }
+
     if (confirmOpen && cfg != null) {
-        val channelName = selected?.name ?: "提现"
+        val channelName = if (channel == "wechat") "微信" else "支付宝"
         StellarConfirmDialog(
             title = "确认提现",
-            message = "将消耗 ${cfg.pointsCost} 积分，向${channelName}账号「${account.trim()}」发放 ¥${cfg.amountYuan}。\n\n${cfg.note}",
+            message = "将消耗 ${cfg.pointsCost} 积分，向${channelName}账号「${maskPayoutAccount(selectedAccount)}」发放 ¥${cfg.amountYuan}。\n\n${cfg.note}",
             confirmText = if (submitting) "提交中…" else "确认",
             dismissText = "取消",
             onDismiss = { if (!submitting) confirmOpen = false },
@@ -350,11 +394,10 @@ fun PointsWithdrawScreen(
                 submitting = true
                 scope.launch {
                     runCatching {
-                        api.createWithdrawal(t, channel, account.trim())
+                        api.createWithdrawal(t, channel, selectedAccount)
                     }.onSuccess { result ->
                         Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
                         confirmOpen = false
-                        account = ""
                         onSuccess()
                         reload()
                     }.onFailure {
@@ -368,20 +411,80 @@ fun PointsWithdrawScreen(
 }
 
 @Composable
-private fun WithdrawHistoryRow(item: WithdrawalItem) {
+private fun WithdrawHistoryDialog(
+    items: List<WithdrawalItem>,
+    onDismiss: () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.82f)
+                .padding(horizontal = 18.sdp())
+                .clip(RoundedCornerShape(20.sdp()))
+                .background(Stellar.SurfaceContainer.copy(alpha = 0.98f))
+                .border(1.dp, Stellar.Cyan.copy(alpha = 0.35f), RoundedCornerShape(20.sdp()))
+                .padding(horizontal = 16.sdp(), vertical = 14.sdp()),
+        ) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "提现记录",
+                    color = Stellar.CyanSoft,
+                    fontSize = 18.ssp(),
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    Icons.Outlined.Close,
+                    contentDescription = "关闭",
+                    tint = Stellar.OnSurfaceVariant,
+                    modifier = Modifier
+                        .size(24.sdp())
+                        .clickable(onClick = onDismiss),
+                )
+            }
+            Spacer(Modifier.height(12.sdp()))
+            if (items.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("暂无提现记录", color = Stellar.OnSurfaceVariant, fontSize = 14.ssp())
+                }
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(10.sdp()),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(items, key = { it.id }) { item ->
+                        WithdrawHistoryCard(item)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WithdrawHistoryCard(item: WithdrawalItem) {
     Column(
         Modifier
             .fillMaxWidth()
-            .stellarGlass()
-            .clip(RoundedCornerShape(12.sdp()))
+            .clip(RoundedCornerShape(14.sdp()))
+            .background(Stellar.SurfaceHigh.copy(alpha = 0.9f))
             .padding(12.sdp()),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            WithdrawChannelBadge(channelId = item.channel, size = 28.sdp())
+            Spacer(Modifier.width(10.sdp()))
             Text(
-                text = item.channelLabel.ifBlank { item.channel },
+                text = if (item.channel == "wechat") "微信" else "支付宝",
                 color = Stellar.OnSurface,
                 fontSize = 15.ssp(),
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
             )
             Text(
@@ -394,19 +497,115 @@ private fun WithdrawHistoryRow(item: WithdrawalItem) {
                 fontSize = 13.ssp(),
             )
         }
-        Spacer(Modifier.height(4.sdp()))
-        Text(
-            text = "¥${item.amountYuan} · ${item.pointsSpent}积分 · ${item.account}",
-            color = Stellar.OnSurfaceVariant,
-            fontSize = 12.ssp(),
+        Spacer(Modifier.height(10.sdp()))
+        HistoryMetaRow("提现金额", "¥${item.amountYuan}")
+        HistoryMetaRow("提现方式", if (item.channel == "wechat") "微信" else "支付宝")
+        HistoryMetaRow("提现时间", formatWithdrawTime(item.createdAt))
+        HistoryMetaRow(
+            "到账时间",
+            when {
+                item.status == "success" -> formatWithdrawTime(item.paidAt ?: item.updatedAt)
+                item.status == "failed" -> "—"
+                else -> "处理中"
+            },
         )
-        if (!item.providerTradeNo.isNullOrBlank()) {
-            Spacer(Modifier.height(2.sdp()))
-            Text(
-                text = item.providerTradeNo,
-                color = Stellar.OnSurfaceVariant.copy(alpha = 0.75f),
-                fontSize = 11.ssp(),
-            )
-        }
     }
+}
+
+@Composable
+private fun HistoryMetaRow(label: String, value: String) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.sdp()),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, color = Stellar.OnSurfaceVariant, fontSize = 12.ssp())
+        Text(
+            value,
+            color = Stellar.OnSurface,
+            fontSize = 12.ssp(),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 12.sdp()),
+        )
+    }
+}
+
+@Composable
+fun WithdrawChannelBadge(channelId: String, size: androidx.compose.ui.unit.Dp) {
+    val wechat = channelId.equals("wechat", ignoreCase = true)
+    if (wechat) {
+        Box(
+            Modifier
+                .size(size)
+                .clip(RoundedCornerShape(size * 0.28f))
+                .background(WechatGreen),
+            contentAlignment = Alignment.Center,
+        ) {
+            Canvas(Modifier.size(size * 0.62f)) {
+                val w = this.size.width
+                val h = this.size.height
+                val left = Path().apply {
+                    addOval(
+                        androidx.compose.ui.geometry.Rect(
+                            Offset(w * 0.05f, h * 0.12f),
+                            Size(w * 0.58f, h * 0.52f),
+                        ),
+                    )
+                }
+                val right = Path().apply {
+                    addOval(
+                        androidx.compose.ui.geometry.Rect(
+                            Offset(w * 0.35f, h * 0.28f),
+                            Size(w * 0.58f, h * 0.52f),
+                        ),
+                    )
+                }
+                drawPath(left, Color.White.copy(alpha = 0.95f))
+                drawPath(right, Color.White)
+                drawCircle(WechatGreen, radius = w * 0.045f, center = Offset(w * 0.28f, h * 0.36f))
+                drawCircle(WechatGreen, radius = w * 0.045f, center = Offset(w * 0.42f, h * 0.36f))
+                drawCircle(WechatGreen, radius = w * 0.045f, center = Offset(w * 0.58f, h * 0.52f))
+                drawCircle(WechatGreen, radius = w * 0.045f, center = Offset(w * 0.72f, h * 0.52f))
+            }
+        }
+    } else {
+        Image(
+            painter = painterResource(R.drawable.ic_alipay),
+            contentDescription = "支付宝",
+            modifier = Modifier
+                .size(size)
+                .clip(RoundedCornerShape(size * 0.22f)),
+            contentScale = ContentScale.Crop,
+        )
+    }
+}
+
+private fun maskPayoutAccount(raw: String?): String {
+    val value = raw?.trim().orEmpty()
+    if (value.isBlank()) return "未设置"
+    if (value.length <= 4) return value
+    if (value.contains("@")) {
+        val at = value.indexOf('@')
+        val name = value.take(at)
+        val domain = value.drop(at)
+        val head = name.take(2)
+        return head + "***" + domain
+    }
+    if (value.length >= 7 && value.all { it.isDigit() || it == '+' }) {
+        val digits = value.filter { it.isDigit() }
+        if (digits.length >= 7) return digits.take(3) + "****" + digits.takeLast(4)
+    }
+    return value.take(2) + "***" + value.takeLast(2)
+}
+
+private fun formatWithdrawTime(iso: String?): String {
+    if (iso.isNullOrBlank()) return "—"
+    return runCatching {
+        val instant = Instant.parse(iso)
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+            .withZone(ZoneId.systemDefault())
+            .format(instant)
+    }.getOrElse { iso.take(16).replace('T', ' ') }
 }

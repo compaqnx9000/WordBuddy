@@ -83,6 +83,7 @@ import com.hotgis.wordbuddy.ui.profile.ProfileScreen
 import com.hotgis.wordbuddy.ui.settings.AppSettingsScreen
 import com.hotgis.wordbuddy.ui.settings.SwitchAccountScreen
 import com.hotgis.wordbuddy.ui.shorts.ShortsScreen
+import com.hotgis.wordbuddy.ui.podcast.PodcastScreen
 import com.hotgis.wordbuddy.ui.theme.HotWordsTheme
 import kotlinx.coroutines.delay
 
@@ -315,7 +316,10 @@ fun HotWordsRoot(
                     Toast.makeText(context, "再按一次退出", Toast.LENGTH_SHORT).show()
                 }
             }
-            tab == MainTab.Notebook || tab == MainTab.Me || tab == MainTab.Shorts -> {
+            tab == MainTab.Shorts || tab == MainTab.Podcast || tab == MainTab.Me -> {
+                // Stay on the current tab; ignore system / gesture back.
+            }
+            tab == MainTab.Notebook -> {
                 pendingExit = false
                 tab = MainTab.Home
             }
@@ -344,6 +348,7 @@ fun HotWordsRoot(
                 (overlay == Overlay.None && (
                     tab == MainTab.Home ||
                         tab == MainTab.Shorts ||
+                        tab == MainTab.Podcast ||
                         tab == MainTab.Notebook ||
                         tab == MainTab.Me
                     ))
@@ -357,6 +362,7 @@ fun HotWordsRoot(
                     code = login.code,
                     password = login.password,
                     passwordConfirm = login.passwordConfirm,
+                    inviteCode = login.inviteCode,
                     mode = login.mode,
                     needPassword = login.needPassword,
                     sending = login.sending,
@@ -376,6 +382,7 @@ fun HotWordsRoot(
                     onCodeChange = viewModel::setLoginCode,
                     onPasswordChange = viewModel::setLoginPassword,
                     onPasswordConfirmChange = viewModel::setLoginPasswordConfirm,
+                    onInviteCodeChange = viewModel::setLoginInviteCode,
                     onModeChange = viewModel::setLoginMode,
                     onSendCode = viewModel::sendLoginCode,
                     onLogin = viewModel::submitLogin,
@@ -492,6 +499,7 @@ fun HotWordsRoot(
                             stellar = showAppSettings ||
                                 tab == MainTab.Home ||
                                 tab == MainTab.Shorts ||
+                                tab == MainTab.Podcast ||
                                 tab == MainTab.Me,
                         )
                     }
@@ -561,6 +569,8 @@ fun HotWordsRoot(
                         buddyId = session?.buddyId,
                         signature = session?.signature,
                         email = session?.email,
+                        alipayAccount = session?.alipayAccount,
+                        wechatAccount = session?.wechatAccount,
                         shippingSummary = session?.shippingSummary,
                         shippingName = session?.shippingName,
                         shippingPhone = session?.shippingPhone,
@@ -569,17 +579,24 @@ fun HotWordsRoot(
                         avatarBusy = avatarBusy,
                         onBack = { showAccountProfile = false },
                         onUploadAvatar = viewModel::uploadAvatar,
-                        onUpdateAccountProfile = { nickname, gender, region, signature, email, onResult ->
+                        onUpdateAccountProfile = { nickname, gender, region, signature, email, alipay, wechat, onResult ->
                             viewModel.updateAccountProfile(
                                 nickname = nickname,
                                 gender = gender,
                                 region = region,
                                 signature = signature,
                                 email = email,
+                                alipayAccount = alipay,
+                                wechatAccount = wechat,
                                 onResult = onResult,
                             )
                         },
+                        onVerifyPassword = viewModel::verifyLoginPassword,
+                        onSendChangePhoneCode = viewModel::sendChangePhoneCode,
+                        onChangePhone = viewModel::changePhone,
                         onUpdateShipping = viewModel::updateShippingAddress,
+                        onFetchInviteInfo = viewModel::fetchInviteInfo,
+                        onBindInviteCode = viewModel::bindInviteCode,
                         modifier = Modifier
                             .fillMaxSize()
                             .hotWordsScreen(padding, consumeStatusBars = false),
@@ -615,10 +632,16 @@ fun HotWordsRoot(
                     PointsWithdrawScreen(
                         totalPoints = checkIn.totalPoints,
                         token = session?.token,
+                        alipayAccount = session?.alipayAccount,
+                        wechatAccount = session?.wechatAccount,
                         onBack = { showPointsWithdraw = false },
                         onLogin = {
                             loginHint = "登录后可提现"
                             showLogin = true
+                        },
+                        onOpenProfile = {
+                            showPointsWithdraw = false
+                            showAccountProfile = true
                         },
                         onSuccess = { viewModel.refreshCheckIn() },
                         modifier = Modifier
@@ -793,6 +816,14 @@ fun HotWordsRoot(
                         )
                     }
 
+                    MainTab.Podcast -> {
+                        PodcastScreen(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .hotWordsScreen(padding, consumeStatusBars = false),
+                        )
+                    }
+
                     MainTab.Notebook -> {
                         var openMoreRequest by remember { mutableIntStateOf(0) }
                         val previewInSplit: (Long) -> Unit = { id ->
@@ -942,6 +973,7 @@ fun HotWordsRoot(
                             onCheckIn = viewModel::performCheckIn,
                             onMakeupCheckIn = viewModel::performMakeupCheckIn,
                             onOpenPointsMall = { showPointsMall = true },
+                            buddyId = session?.buddyId,
                             onLogin = {
                                 loginHint = "登录后可同步收藏与生词本"
                                 showLogin = true

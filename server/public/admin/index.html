@@ -195,12 +195,12 @@ const titles = {
   sms: ['短信记录', '验证码发送与是否已核销（不展示明文验证码）'],
   notebooks: ['词书 / 生词本', '系统词书可下架与改词；用户生词本可查看删除'],
   checkins: ['签到积分', '用户累计积分、连续签到与每日签到明细'],
-  gifts: ['积分兑礼', '礼品上下架、积分与现金价格'],
+  gifts: ['积分兑礼', '上架/下架礼品、库存与积分价格'],
   giftOrders: ['兑换订单', '用户兑换记录与发货状态'],
   audit: ['操作日志', '超级管理员在后台做过的事'],
 };
 
-const state = { page: 'overview', pageNo: 1, q: '', kind: '', notebookId: null, checkInView: 'users' };
+const state = { page: 'overview', pageNo: 1, q: '', kind: '', giftPub: '', notebookId: null, checkInView: 'users' };
 
 function token() { return localStorage.getItem('hw_admin_token') || ''; }
 function authHeaders() {
@@ -275,6 +275,7 @@ function go(page, extra = {}) {
   state.pageNo = extra.page || 1;
   if (extra.q != null) state.q = extra.q;
   if (extra.kind != null) state.kind = extra.kind;
+  if (extra.giftPub != null) state.giftPub = extra.giftPub;
   if (extra.notebookId != null) state.notebookId = extra.notebookId;
   if (extra.checkInView != null) state.checkInView = extra.checkInView;
   document.querySelectorAll('.nav').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
@@ -429,19 +430,25 @@ async function render() {
           ${pager(d.total)}`;
       }
     } else if (state.page === 'gifts') {
-      const d = await api(`/gifts?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
+      const d = await api(`/gifts?page=${state.pageNo}&q=${encodeURIComponent(state.q)}&published=${encodeURIComponent(state.giftPub||'')}`);
       el.innerHTML = `
         <div class="toolbar">
-          <input style="max-width:240px" placeholder="搜索礼品" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('gifts',{q:this.value,page:1})" />
-          <button class="btn" onclick="go('gifts',{q:document.querySelector('main input').value,page:1})">搜索</button>
+          <input style="max-width:200px" placeholder="搜索礼品" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('gifts',{q:this.value,page:1,giftPub:state.giftPub})" />
+          <select style="max-width:120px" onchange="go('gifts',{q:state.q,page:1,giftPub:this.value})">
+            <option value="" ${!state.giftPub?'selected':''}>全部状态</option>
+            <option value="1" ${state.giftPub==='1'?'selected':''}>已上架</option>
+            <option value="0" ${state.giftPub==='0'?'selected':''}>已下架</option>
+          </select>
+          <button class="btn" onclick="go('gifts',{q:document.querySelector('main input').value,page:1,giftPub:state.giftPub})">搜索</button>
           <button class="btn ghost" onclick="editGift()">新增礼品</button>
         </div>
-        <table><thead><tr><th>封面</th><th>名称</th><th>分类</th><th>价格</th><th>已兑</th><th>状态</th><th></th></tr></thead>
+        <table><thead><tr><th>封面</th><th>名称</th><th>分类</th><th>价格</th><th>库存</th><th>已兑</th><th>状态</th><th></th></tr></thead>
         <tbody>${d.items.map(g => `<tr>
           <td><span style="font-size:22px">${esc(g.coverEmoji||'🎁')}</span></td>
           <td>${esc(g.title)}<div class="sub">${esc(g.subtitle||'')}</div></td>
           <td>${esc(g.category)}</td>
           <td><b>${g.pointsCost}</b> 积分${g.cashFen>0?` + ${g.cashYuan}元`:''}</td>
+          <td>${g.stock < 0 ? '<span class="tag">不限</span>' : (g.stock === 0 ? '<span class="tag bad">0</span>' : esc(String(g.stock)))}</td>
           <td>${g.redeemedCount}</td>
           <td><span class="tag ${g.published?'':'bad'}">${g.published?'上架':'下架'}</span>${g.needAddress?' · 需地址':''}</td>
           <td>
@@ -449,7 +456,7 @@ async function render() {
             <button class="btn ghost small" onclick="toggleGift(${g.id},${g.published})">${g.published?'下架':'上架'}</button>
             <button class="btn danger small" onclick="delGift(${g.id})">删除</button>
           </td>
-        </tr>`).join('') || '<tr><td colspan="7">暂无礼品</td></tr>'}</tbody></table>
+        </tr>`).join('') || '<tr><td colspan="8">暂无礼品</td></tr>'}</tbody></table>
         ${pager(d.total)}`;
     } else if (state.page === 'giftOrders') {
       const d = await api(`/gift-orders?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);

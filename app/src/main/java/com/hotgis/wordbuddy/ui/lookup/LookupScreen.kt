@@ -134,7 +134,10 @@ fun LookupScreen(
                 .fillMaxSize()
                 .imePadding(),
         ) {
-            HomeProfileHeader(onBack = onBack)
+            HomeProfileHeader(
+                onBack = onBack,
+                title = if (onBack != null) "词搭子" else null,
+            )
             Column(
                 Modifier
                     .weight(1f)
