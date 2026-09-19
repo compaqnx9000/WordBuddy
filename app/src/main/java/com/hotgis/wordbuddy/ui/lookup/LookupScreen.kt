@@ -83,6 +83,7 @@ fun LookupScreen(
     isRelatedWordSaved: (String) -> Boolean,
     onPickLookupImage: (Uri) -> Unit,
     onGenerateAiForLookup: (String) -> Unit,
+    onEnsureLoginForAiImage: () -> Boolean = { true },
     onClearImageError: () -> Unit,
     onUpdateDefinitions: (Long, List<Definition>) -> Unit,
     homophones: List<WordHomophone> = emptyList(),
@@ -160,7 +161,9 @@ fun LookupScreen(
                     onChangeAccent = onChangeAccent,
                     onToggleRelatedStar = onToggleRelatedStar,
                     isRelatedWordSaved = isRelatedWordSaved,
-                    onOpenImageChooser = { showImageDialog = true },
+                    onOpenImageChooser = {
+                        if (onEnsureLoginForAiImage()) showImageDialog = true
+                    },
                     onEditMeaning = { showMeaningDialog = true },
                     imageBusy = ui.imageBusy,
                     homophones = homophones,

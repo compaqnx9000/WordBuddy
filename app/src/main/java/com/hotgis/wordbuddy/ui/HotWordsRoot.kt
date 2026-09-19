@@ -80,6 +80,9 @@ import com.hotgis.wordbuddy.ui.gifts.PointsMallScreen
 import com.hotgis.wordbuddy.ui.gifts.PointsWithdrawScreen
 import com.hotgis.wordbuddy.ui.profile.AccountProfileScreen
 import com.hotgis.wordbuddy.ui.profile.ProfileScreen
+import com.hotgis.wordbuddy.ui.tools.DouyinDownloadScreen
+import com.hotgis.wordbuddy.ui.tools.KuaishouDownloadScreen
+import com.hotgis.wordbuddy.ui.tools.ToolsScreen
 import com.hotgis.wordbuddy.ui.settings.AppSettingsScreen
 import com.hotgis.wordbuddy.ui.settings.SwitchAccountScreen
 import com.hotgis.wordbuddy.ui.shorts.ShortsScreen
@@ -104,6 +107,9 @@ fun HotWordsRoot(
     var showPointsWithdraw by remember { mutableStateOf(false) }
     var showAccountProfile by remember { mutableStateOf(false) }
     var showShortsLookup by remember { mutableStateOf(false) }
+    var showTools by remember { mutableStateOf(false) }
+    var showDouyinTool by remember { mutableStateOf(false) }
+    var showKuaishouTool by remember { mutableStateOf(false) }
     var giftDetailId by remember { mutableStateOf<Long?>(null) }
     var showLogin by remember { mutableStateOf(false) }
     var loginHint by remember { mutableStateOf<String?>(null) }
@@ -224,6 +230,9 @@ fun HotWordsRoot(
             showAppSettings = false
             showAccountProfile = false
             showShortsLookup = false
+            showTools = false
+            showDouyinTool = false
+            showKuaishouTool = false
         }
     }
 
@@ -283,6 +292,18 @@ fun HotWordsRoot(
                 pendingExit = false
                 showShortsLookup = false
             }
+            showKuaishouTool -> {
+                pendingExit = false
+                showKuaishouTool = false
+            }
+            showDouyinTool -> {
+                pendingExit = false
+                showDouyinTool = false
+            }
+            showTools -> {
+                pendingExit = false
+                showTools = false
+            }
             giftDetailId != null -> {
                 pendingExit = false
                 giftDetailId = null
@@ -340,6 +361,9 @@ fun HotWordsRoot(
                 showAccountProfile ||
                 showShortsLookup ||
                 showPointsMall ||
+                showTools ||
+                showDouyinTool ||
+                showKuaishouTool ||
                 showGiftOrders ||
                 showPointsWithdraw ||
                 giftDetailId != null ||
@@ -480,6 +504,9 @@ fun HotWordsRoot(
                         !showAccountProfile &&
                         !showShortsLookup &&
                         !showPointsMall &&
+                        !showTools &&
+                        !showDouyinTool &&
+                        !showKuaishouTool &&
                         !showGiftOrders &&
                         !showPointsWithdraw &&
                         giftDetailId == null
@@ -491,6 +518,9 @@ fun HotWordsRoot(
                                 showAccountProfile = false
                                 showShortsLookup = false
                                 showPointsMall = false
+                                showTools = false
+                                showDouyinTool = false
+                                showKuaishouTool = false
                                 showGiftOrders = false
                                 showPointsWithdraw = false
                                 giftDetailId = null
@@ -546,6 +576,7 @@ fun HotWordsRoot(
                         isRelatedWordSaved = viewModel::isWordSaved,
                         onPickLookupImage = viewModel::setLookupImage,
                         onGenerateAiForLookup = viewModel::generateAiForLookup,
+                        onEnsureLoginForAiImage = { requireLogin("登录后可使用 AI 助记配图") },
                         onClearImageError = viewModel::clearImageError,
                         onUpdateDefinitions = viewModel::updateDefinitions,
                         homophones = homophones,
@@ -684,6 +715,32 @@ fun HotWordsRoot(
                             .hotWordsScreen(padding, consumeStatusBars = false),
                     )
                 }
+                showKuaishouTool -> {
+                    KuaishouDownloadScreen(
+                        onBack = { showKuaishouTool = false },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .hotWordsScreen(padding, consumeStatusBars = false),
+                    )
+                }
+                showDouyinTool -> {
+                    DouyinDownloadScreen(
+                        onBack = { showDouyinTool = false },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .hotWordsScreen(padding, consumeStatusBars = false),
+                    )
+                }
+                showTools -> {
+                    ToolsScreen(
+                        onBack = { showTools = false },
+                        onOpenDouyin = { showDouyinTool = true },
+                        onOpenKuaishou = { showKuaishouTool = true },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .hotWordsScreen(padding, consumeStatusBars = false),
+                    )
+                }
                 showAppSettings -> {
                 AppSettingsScreen(
                     modifier = Modifier
@@ -788,6 +845,7 @@ fun HotWordsRoot(
                             isRelatedWordSaved = viewModel::isWordSaved,
                             onPickLookupImage = viewModel::setLookupImage,
                             onGenerateAiForLookup = viewModel::generateAiForLookup,
+                            onEnsureLoginForAiImage = { requireLogin("登录后可使用 AI 助记配图") },
                             onClearImageError = viewModel::clearImageError,
                             onUpdateDefinitions = viewModel::updateDefinitions,
                             homophones = homophones,
@@ -973,6 +1031,7 @@ fun HotWordsRoot(
                             onCheckIn = viewModel::performCheckIn,
                             onMakeupCheckIn = viewModel::performMakeupCheckIn,
                             onOpenPointsMall = { showPointsMall = true },
+                            onOpenTools = { showTools = true },
                             buddyId = session?.buddyId,
                             onLogin = {
                                 loginHint = "登录后可同步收藏与生词本"

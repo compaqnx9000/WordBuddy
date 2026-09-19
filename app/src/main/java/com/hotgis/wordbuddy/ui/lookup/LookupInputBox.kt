@@ -24,6 +24,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -38,6 +40,13 @@ fun LookupInputBox(
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val submit = {
+        keyboard?.hide()
+        focusManager.clearFocus()
+        onSubmit()
+    }
     Row(
         modifier
             .fillMaxWidth()
@@ -51,7 +60,7 @@ fun LookupInputBox(
             tint = Stellar.OnSurfaceVariant,
             modifier = Modifier
                 .size(22.sdp())
-                .clickable(onClick = onSubmit),
+                .clickable(onClick = submit),
         )
         Box(
             Modifier
@@ -71,7 +80,7 @@ fun LookupInputBox(
                     keyboardType = KeyboardType.Text,
                     imeAction = ImeAction.Search,
                 ),
-                keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
+                keyboardActions = KeyboardActions(onSearch = { submit() }),
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 24.sdp())

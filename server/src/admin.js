@@ -125,7 +125,55 @@ function mapWord(row) {
     antonyms: Array.isArray(row.antonyms) ? row.antonyms : [],
     sortOrder: row.sort_order,
     addedAt: iso(row.added_at),
+    images: [],
   }
+}
+
+function mnemonicWordKey(word) {
+  return String(word || '').trim().toLowerCase().slice(0, 80)
+}
+
+function sniffImageType(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return 'image/jpeg'
+  if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg'
+  if (buf[0] === 0x89 && buf[1] === 0x50) return 'image/png'
+  if (buf[0] === 0x47 && buf[1] === 0x49) return 'image/gif'
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[8] === 0x57) return 'image/webp'
+  return 'image/jpeg'
+}
+
+async function attachMnemonicImages(items) {
+  const keys = [...new Set(items.map((item) => mnemonicWordKey(item.text)).filter(Boolean))]
+  if (!keys.length) return items
+  const result = await query(
+    `SELECT id, word_key, provider, meaning_key, created_at
+     FROM mnemonic_images
+     WHERE word_key = ANY($1::text[])
+     ORDER BY created_at DESC, id DESC`,
+    [keys],
+  )
+  const byKey = new Map()
+  for (const row of result.rows) {
+    const list = byKey.get(row.word_key) || []
+    list.push({
+      id: Number(row.id),
+      provider: row.provider,
+      meaningKey: row.meaning_key || '',
+      createdAt: iso(row.created_at),
+    })
+    byKey.set(row.word_key, list)
+  }
+  for (const item of items) {
+    item.images = byKey.get(mnemonicWordKey(item.text)) || []
+  }
+  return items
+}
+
+function acceptAdminQueryToken(req, _res, next) {
+  if (!req.headers.authorization && req.query?.token) {
+    req.headers.authorization = `Bearer ${String(req.query.token)}`
+  }
+  next()
 }
 
 adminRouter.post('/login', async (req, res) => {
@@ -587,13 +635,31 @@ adminRouter.get('/notebooks/:id/words', adminRequired, async (req, res) => {
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   )
+  const items = await attachMnemonicImages(result.rows.map(mapWord))
   res.json({
     notebook: { id: Number(notebook.id), name: notebook.name },
-    items: result.rows.map(mapWord),
+    items,
     total,
     page,
     pageSize,
   })
+})
+
+adminRouter.get('/mnemonic-images/:id', acceptAdminQueryToken, adminRequired, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id) || id <= 0) {
+    res.status(400).json({ error: '图片不存在' })
+    return
+  }
+  const row = (await query('SELECT image FROM mnemonic_images WHERE id = $1', [id])).rows[0]
+  if (!row?.image) {
+    res.status(404).json({ error: '图片不存在' })
+    return
+  }
+  const buf = Buffer.isBuffer(row.image) ? row.image : Buffer.from(row.image)
+  res.setHeader('Content-Type', sniffImageType(buf))
+  res.setHeader('Cache-Control', 'private, max-age=3600')
+  res.send(buf)
 })
 
 adminRouter.post('/notebooks/:id/words', adminRequired, async (req, res) => {

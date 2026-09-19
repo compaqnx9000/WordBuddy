@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * GroMore rewarded video. Used for check-in makeup (补签); preload before showing.
+ * GroMore rewarded video. Used for check-in makeup and share-video download; preload before showing.
  */
 object RewardVideoController {
     private const val TAG = "RewardVideoAd"

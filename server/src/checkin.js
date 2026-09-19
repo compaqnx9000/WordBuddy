@@ -358,6 +358,7 @@ export async function performMakeupCheckIn(userId, dateYmd, today = todayShangha
     return {
       ok: true,
       pointsEarned: earned,
+      streakAtDate,
       streakDays: state.streakDays,
       totalPoints: state.totalPoints,
       state,

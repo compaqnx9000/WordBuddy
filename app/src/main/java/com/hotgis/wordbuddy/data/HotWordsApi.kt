@@ -380,6 +380,8 @@ class HotWordsApi {
             pointsEarned = root.optInt("pointsEarned", 1),
             streakDays = root.optInt("streakDays", 0),
             totalPoints = root.optInt("totalPoints", 0),
+            makeupDate = root.optString("date").trim().ifBlank { date },
+            streakAtDate = root.optInt("streakAtDate", 1).coerceAtLeast(1),
         )
     }
 
@@ -717,6 +719,28 @@ class HotWordsApi {
         }
     }
 
+    suspend fun generateMnemonicImage(
+        token: String,
+        word: String,
+        meaningHint: String?,
+        provider: String,
+    ): ByteArray = withContext(Dispatchers.IO) {
+        val root = request(
+            method = "POST",
+            path = "/mnemonic-images",
+            auth = token,
+            body = JSONObject()
+                .put("word", word)
+                .put("meaningHint", meaningHint.orEmpty())
+                .put("provider", provider),
+            connectTimeoutMs = 20_000,
+            readTimeoutMs = 90_000,
+        )
+        val encoded = root.optString("imageBase64")
+        if (encoded.isBlank()) throw ApiException("服务器没有返回图片")
+        android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
+    }
+
     suspend fun createWord(token: String, notebookId: Long, entry: VocabEntry): VocabEntry =
         withContext(Dispatchers.IO) {
             val root = request(
@@ -889,12 +913,19 @@ class HotWordsApi {
             .put("antonyms", JSONArray(entry.antonyms))
     }
 
-    private fun request(method: String, path: String, auth: String?, body: JSONObject? = null): JSONObject {
+    private fun request(
+        method: String,
+        path: String,
+        auth: String?,
+        body: JSONObject? = null,
+        connectTimeoutMs: Int = 8_000,
+        readTimeoutMs: Int = 15_000,
+    ): JSONObject {
         var lastError: Exception? = null
         val order = listOf(baseUrl) + bases.filter { it != baseUrl }
         for (base in order) {
             try {
-                val json = requestOnce(base, method, path, auth, body)
+                val json = requestOnce(base, method, path, auth, body, connectTimeoutMs, readTimeoutMs)
                 baseUrl = base
                 return json
             } catch (error: ApiException) {
@@ -912,12 +943,14 @@ class HotWordsApi {
         path: String,
         auth: String?,
         body: JSONObject?,
+        connectTimeoutMs: Int,
+        readTimeoutMs: Int,
     ): JSONObject {
         val conn = java.net.URI("$base$path").toURL().openConnection() as HttpURLConnection
         try {
             conn.requestMethod = method
-            conn.connectTimeout = 8000
-            conn.readTimeout = 15000
+            conn.connectTimeout = connectTimeoutMs
+            conn.readTimeout = readTimeoutMs
             conn.setRequestProperty("Accept", "application/json")
             applyDeviceHeaders(conn)
             if (!auth.isNullOrBlank()) conn.setRequestProperty("Authorization", "Bearer $auth")

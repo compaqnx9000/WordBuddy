@@ -250,4 +250,19 @@ export async function ensureSchema() {
   `)
   await query('CREATE INDEX IF NOT EXISTS withdrawals_user ON withdrawals (user_id, created_at DESC)')
   await query('CREATE INDEX IF NOT EXISTS withdrawals_status ON withdrawals (status, created_at DESC)')
+  await query(`
+    CREATE TABLE IF NOT EXISTS mnemonic_images (
+      id BIGSERIAL PRIMARY KEY,
+      word_key TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      image BYTEA NOT NULL,
+      prompt TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query(`ALTER TABLE mnemonic_images ADD COLUMN IF NOT EXISTS meaning_key TEXT NOT NULL DEFAULT ''`)
+  await query('DROP INDEX IF EXISTS mnemonic_images_word_provider')
+  await query(
+    'CREATE UNIQUE INDEX IF NOT EXISTS mnemonic_images_word_meaning ON mnemonic_images (word_key, provider, meaning_key)',
+  )
 }

@@ -25,6 +25,9 @@ class SettingsStore(context: Context) {
             speakOnPageChange = prefs.getBoolean(KEY_SPEAK_ON_PAGE, true),
             dailyReminder = prefs.getBoolean(KEY_DAILY_REMINDER, true),
             aiImageAutoGen = prefs.getBoolean(KEY_AI_IMAGE, false),
+            imageProvider = runCatching {
+                ImageGenProvider.valueOf(prefs.getString(KEY_IMAGE_PROVIDER, ImageGenProvider.Pollinations.name).orEmpty())
+            }.getOrDefault(ImageGenProvider.Pollinations),
             fontScale = prefs.getFloat(KEY_FONT_SCALE, FontSizeOption.Normal.scale),
             appTheme = runCatching { AppTheme.valueOf(themeName) }.getOrDefault(AppTheme.Dark),
             accentStyle = runCatching { AccentStyle.valueOf(accentStyleName) }.getOrDefault(AccentStyle.CyberNeon),
@@ -43,6 +46,8 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_SPEAK_ON_PAGE, settings.speakOnPageChange)
             .putBoolean(KEY_DAILY_REMINDER, settings.dailyReminder)
             .putBoolean(KEY_AI_IMAGE, settings.aiImageAutoGen)
+            .putString(KEY_IMAGE_PROVIDER, settings.imageProvider.name)
+            .remove(KEY_SILICONFLOW_API_KEY)
             .putFloat(KEY_FONT_SCALE, settings.fontScale)
             .putString(KEY_APP_THEME, settings.appTheme.name)
             .putString(KEY_ACCENT_STYLE, settings.accentStyle.name)
@@ -73,6 +78,8 @@ class SettingsStore(context: Context) {
         const val KEY_SPEAK_ON_PAGE = "speak_on_page"
         const val KEY_DAILY_REMINDER = "daily_reminder"
         const val KEY_AI_IMAGE = "ai_image_auto_gen"
+        const val KEY_IMAGE_PROVIDER = "image_provider"
+        const val KEY_SILICONFLOW_API_KEY = "siliconflow_api_key"
         const val KEY_FONT_SCALE = "font_scale"
         const val KEY_APP_THEME = "app_theme"
         const val KEY_ACCENT_STYLE = "accent_style"

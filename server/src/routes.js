@@ -41,6 +41,7 @@ import {
   getInviteStats,
   normalizeInviteCode,
 } from './invite.js'
+import { getOrCreateMnemonicImage, normalizeImageProvider } from './images.js'
 
 export const router = Router()
 
@@ -738,7 +739,9 @@ router.post('/me/checkin/makeup', authRequired, async (req, res) => {
     }
     res.json({
       ok: true,
+      date,
       pointsEarned: result.pointsEarned,
+      streakAtDate: result.streakAtDate,
       streakDays: result.streakDays,
       totalPoints: result.totalPoints,
       checkIn: result.state,
@@ -1609,4 +1612,23 @@ router.get('/homophones/:id/likes', authRequired, async (req, res) => {
   }))
   const nextOffset = offset + items.length < total ? offset + items.length : null
   res.json({ total, items, nextOffset })
+})
+
+router.post('/mnemonic-images', authRequired, async (req, res) => {
+  try {
+    const provider = normalizeImageProvider(req.body?.provider)
+    const result = await getOrCreateMnemonicImage({
+      word: req.body?.word,
+      meaningHint: req.body?.meaningHint,
+      provider,
+    })
+    res.json({
+      provider: result.provider,
+      cached: result.cached,
+      imageBase64: Buffer.from(result.bytes).toString('base64'),
+    })
+  } catch (error) {
+    const status = Number(error.status) || 502
+    res.status(status).json({ error: error.message || '生图失败' })
+  }
 })

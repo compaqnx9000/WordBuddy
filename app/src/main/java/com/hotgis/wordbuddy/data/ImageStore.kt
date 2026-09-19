@@ -8,12 +8,6 @@ import android.media.ExifInterface
 import android.net.Uri
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.net.HttpURLConnection
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
-import kotlin.random.Random
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 object ImageCodec {
     fun fromUri(context: Context, uri: Uri, maxEdge: Int = 1024): ByteArray {
@@ -83,51 +77,6 @@ object ImageCodec {
         )
         if (scaled !== bitmap) bitmap.recycle()
         return scaled
-    }
-}
-
-object AiImageClient {
-    suspend fun generate(word: String, meaningHint: String? = null): ByteArray = withContext(Dispatchers.IO) {
-        val hint = meaningHint?.take(80).orEmpty()
-        val prompt = buildString {
-            append("simple cute educational mnemonic illustration for English word \"")
-            append(word)
-            append('"')
-            if (hint.isNotBlank()) {
-                append(", specifically meaning: ")
-                append(hint)
-            }
-            append(", clean white background, no text, no letters, no watermark, everyday life scene")
-        }
-        val encoded = URLEncoder.encode(prompt, StandardCharsets.UTF_8.name())
-        val seed = Random.nextInt(1, 999_999)
-        val url =
-            "https://image.pollinations.ai/prompt/$encoded?width=768&height=768&nologo=true&seed=$seed"
-        val bytes = httpGetBytes(url)
-        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            ?: error("AI 图片损坏")
-        ImageCodec.encodeJpeg(ImageCodec.scale(bitmap, 1024)).also {
-            if (!bitmap.isRecycled) bitmap.recycle()
-        }
-    }
-
-    private fun httpGetBytes(url: String): ByteArray {
-        val conn = java.net.URI(url).toURL().openConnection() as HttpURLConnection
-        try {
-            conn.connectTimeout = 15000
-            conn.readTimeout = 90000
-            conn.instanceFollowRedirects = true
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) HotWords/0.1")
-            conn.setRequestProperty("Accept", "image/*,*/*")
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val body = stream.readBytes()
-            if (code !in 200..299) error("http $code")
-            if (body.isEmpty()) error("empty image")
-            return body
-        } finally {
-            conn.disconnect()
-        }
     }
 }
 

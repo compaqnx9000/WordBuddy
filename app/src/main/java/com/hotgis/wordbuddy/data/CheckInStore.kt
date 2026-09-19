@@ -22,6 +22,10 @@ sealed class CheckInResult {
         val pointsEarned: Int,
         val streakDays: Int,
         val totalPoints: Int,
+        /** Set when this success is a makeup of a past day. */
+        val makeupDate: String? = null,
+        /** Consecutive length ending on [makeupDate], not today's streak. */
+        val streakAtDate: Int = 0,
     ) : CheckInResult()
 
     data object AlreadyCheckedIn : CheckInResult()

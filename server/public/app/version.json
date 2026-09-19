@@ -1,8 +1,8 @@
 {
-  "versionCode": 76,
-  "versionName": "0.85",
+  "versionCode": 87,
+  "versionName": "0.96",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "注册漏填邀请码可在个人资料补填一次；填写成功双方获积分。",
-  "releasedAt": "2026-09-18T08:40:00.000Z"
+  "notes": "下载抖音或快手视频前需先看完一条激励广告。",
+  "releasedAt": "2026-09-19T13:10:00.000Z"
 }

@@ -36,6 +36,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.CardGiftcard
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Edit
@@ -125,6 +126,7 @@ fun ProfileScreen(
         cb(CheckInResult.Failed("未实现"))
     },
     onOpenPointsMall: () -> Unit = {},
+    onOpenTools: () -> Unit = {},
     buddyId: String? = null,
     onLogin: () -> Unit = {},
     onOpenAccountProfile: () -> Unit = {},
@@ -162,9 +164,6 @@ fun ProfileScreen(
         when (result) {
             is CheckInResult.Success -> {
                 checkInSuccess = result
-                if (makeup) {
-                    Toast.makeText(context, "补签成功 +${result.pointsEarned} 分", Toast.LENGTH_SHORT).show()
-                }
             }
             CheckInResult.AlreadyCheckedIn -> {
                 Toast.makeText(
@@ -363,9 +362,14 @@ fun ProfileScreen(
         AboutWordBuddyDialog(onDismiss = { showAbout = false })
     }
     checkInSuccess?.let { success ->
+        val makeupDay = success.makeupDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
         StellarConfirmDialog(
-            title = "签到成功",
-            message = "连续第 ${success.streakDays} 天，获得 ${success.pointsEarned} 积分\n当前累计 ${success.totalPoints} 分",
+            title = if (makeupDay != null) "补签成功" else "签到成功",
+            message = if (makeupDay != null) {
+                "补签 ${makeupDay.monthValue}月${makeupDay.dayOfMonth}日成功，该日连续第 ${success.streakAtDate.coerceAtLeast(1)} 天，获得 ${success.pointsEarned} 积分\n当前累计 ${success.totalPoints} 分"
+            } else {
+                "连续第 ${success.streakDays} 天，获得 ${success.pointsEarned} 积分\n当前累计 ${success.totalPoints} 分"
+            },
             confirmText = "太棒了",
             dismissText = "",
             onDismiss = { checkInSuccess = null },
@@ -513,6 +517,14 @@ fun ProfileScreen(
                         }
                         context.startActivity(Intent.createChooser(send, "邀请好友"))
                     },
+                )
+            }
+            ProfileMenuCard {
+                ProfileMenuRow(
+                    icon = Icons.Outlined.Build,
+                    iconTint = Stellar.Cyan,
+                    title = "工具",
+                    onClick = onOpenTools,
                 )
             }
             ProfileMenuCard {

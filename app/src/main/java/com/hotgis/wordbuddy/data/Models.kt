@@ -161,6 +161,11 @@ enum class FontSizeOption(val label: String, val scale: Float) {
     }
 }
 
+enum class ImageGenProvider(val label: String, val apiValue: String) {
+    Pollinations("Pollinations", "pollinations"),
+    SiliconFlow("硅基流动", "siliconflow"),
+}
+
 data class StudySettings(
     val displayName: String = "词搭子",
     val accent: Accent = Accent.US,
@@ -169,6 +174,7 @@ data class StudySettings(
     val speakOnPageChange: Boolean = true,
     val dailyReminder: Boolean = true,
     val aiImageAutoGen: Boolean = false,
+    val imageProvider: ImageGenProvider = ImageGenProvider.Pollinations,
     val fontScale: Float = FontSizeOption.Normal.scale,
     val appTheme: AppTheme = AppTheme.Dark,
     val accentStyle: AccentStyle = AccentStyle.CyberNeon,

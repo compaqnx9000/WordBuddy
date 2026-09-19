@@ -80,6 +80,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS words_notebook_word
 CREATE INDEX IF NOT EXISTS words_notebook_sort
     ON words (notebook_id, sort_order, id);
 
+CREATE TABLE IF NOT EXISTS mnemonic_images (
+    id BIGSERIAL PRIMARY KEY,
+    word_key TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    meaning_key TEXT NOT NULL DEFAULT '',
+    image BYTEA NOT NULL,
+    prompt TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS mnemonic_images_word_meaning
+    ON mnemonic_images (word_key, provider, meaning_key);
+
 CREATE TABLE IF NOT EXISTS login_events (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT REFERENCES users (id) ON DELETE SET NULL,

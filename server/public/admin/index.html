@@ -115,6 +115,12 @@
       width: 168px; height: 168px; border-radius: 18px; object-fit: contain;
       background: #081810;
     }
+    .img-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .img-row .avatar { width: 56px; height: 56px; }
+    .modal img.preview {
+      display: block; width: min(720px, 100%); height: auto; max-height: 78vh;
+      object-fit: contain; border-radius: 14px; background: #081810;
+    }
     .user-head { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 8px; }
     .profile-grid {
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px;
@@ -231,6 +237,24 @@ function avatarCell(url, large) {
   const src = path + '?t=' + Date.now();
   return `<img class="avatar${large ? ' lg' : ''}" src="${esc(src)}" alt="头像" onclick="window.open('${esc(path)}','_blank')" title="查看原图" />`;
 }
+function providerLabel(p) {
+  return ({ pollinations: 'Pollinations', siliconflow: '硅基流动' }[p] || p || 'AI');
+}
+function mnemonicSrc(id) {
+  return '/admin/api/mnemonic-images/' + id + '?token=' + encodeURIComponent(token());
+}
+function wordImages(w) {
+  const imgs = w.images || [];
+  if (!imgs.length) return '<span class="sub">—</span>';
+  return `<div class="img-row">${imgs.map((img) => {
+    const title = `${providerLabel(img.provider)} · ${fmt(img.createdAt)}`;
+    return `<img class="avatar" src="${esc(mnemonicSrc(img.id))}" alt="${esc(w.text)}" title="${esc(title)}" onclick="openMnemonic(${img.id},'${esc(w.text)}','${esc(title)}')" />`;
+  }).join('')}</div>`;
+}
+function openMnemonic(id, word, title) {
+  showModal(`<img class="preview" src="${esc(mnemonicSrc(id))}" alt="${esc(word)}" />
+    <div class="sub" style="margin-top:10px">${esc(word)} · ${esc(title)}</div>`);
+}
 
 async function doLogin() {
   document.getElementById('loginErr').textContent = '';
@@ -271,12 +295,19 @@ async function showApp(admin) {
 }
 
 function go(page, extra = {}) {
+  const pageChanged = state.page !== page;
   state.page = page;
   state.pageNo = extra.page || 1;
   if (extra.q != null) state.q = extra.q;
   if (extra.kind != null) state.kind = extra.kind;
   if (extra.giftPub != null) state.giftPub = extra.giftPub;
-  if (extra.notebookId != null) state.notebookId = extra.notebookId;
+  if ('notebookId' in extra) {
+    const prevNotebookId = state.notebookId;
+    state.notebookId = extra.notebookId;
+    if (!('q' in extra) && prevNotebookId !== extra.notebookId) state.q = '';
+  } else if (pageChanged) {
+    state.notebookId = null;
+  }
   if (extra.checkInView != null) state.checkInView = extra.checkInView;
   document.querySelectorAll('.nav').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
   document.getElementById('title').textContent = titles[page][0];
@@ -374,7 +405,7 @@ async function render() {
           <td><span class="tag ${n.published?'':'bad'}">${n.published?'已发布':'已下架'}</span></td>
           <td>${fmt(n.createdAt)}</td>
           <td>
-            <button class="btn small" onclick="go('notebooks',{notebookId:${n.id},page:1})">词条</button>
+            <button class="btn small" onclick="go('notebooks',{notebookId:${n.id},page:1,q:''})">词条</button>
             ${n.kind==='catalog'
               ? `<button class="btn ghost small" onclick="toggleBook(${n.id},${n.published})">${n.published?'下架':'上架'}</button>`
               : `<button class="btn danger small" onclick="delBook(${n.id})">删除</button>`}
@@ -540,18 +571,19 @@ async function renderWords(el) {
   const d = await api(`/notebooks/${state.notebookId}/words?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
   el.innerHTML = `
     <div class="toolbar">
-      <button class="btn ghost" onclick="go('notebooks',{notebookId:null,page:1})">← 返回词书</button>
+      <button class="btn ghost" onclick="go('notebooks',{notebookId:null,page:1,q:''})">← 返回词书</button>
       <strong>${esc(d.notebook.name)}</strong>
       <input style="max-width:200px" placeholder="搜单词" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('notebooks',{q:this.value,page:1,notebookId:state.notebookId})" />
       <button class="btn" onclick="go('notebooks',{q:document.querySelector('main input').value,page:1,notebookId:state.notebookId})">搜索</button>
       <button class="btn ghost" onclick="addWord()">新增词条</button>
     </div>
-    <table><thead><tr><th>ID</th><th>单词</th><th>音标</th><th>释义</th><th>加入时间</th><th></th></tr></thead>
+    <table><thead><tr><th>ID</th><th>单词</th><th>音标</th><th>释义</th><th>AI生图</th><th>加入时间</th><th></th></tr></thead>
     <tbody>${d.items.map(w => `<tr>
       <td>${w.id}</td>
       <td>${esc(w.text)}</td>
       <td>${esc(w.ipaUk||w.ipaUs||'—')}</td>
       <td>${esc((w.definitions||[]).map(x => (x.pos||'')+' '+(x.meaning||'')).join('；').slice(0,80))}</td>
+      <td>${wordImages(w)}</td>
       <td>${fmt(w.addedAt)}</td>
       <td>
         <button class="btn small" onclick='editWord(${JSON.stringify(w).replace(/'/g, "&#39;")})'>编辑</button>

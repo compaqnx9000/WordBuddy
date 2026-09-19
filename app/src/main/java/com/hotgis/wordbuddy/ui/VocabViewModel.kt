@@ -8,7 +8,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hotgis.wordbuddy.LauncherIcons
 import com.hotgis.wordbuddy.audio.TtsPlayer
-import com.hotgis.wordbuddy.data.AiImageClient
 import com.hotgis.wordbuddy.data.BuiltInWordbookSeeder
 import com.hotgis.wordbuddy.data.DictionaryClient
 import com.hotgis.wordbuddy.data.LookupCache
@@ -670,15 +669,23 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             _ui.update { it.copy(imageBusy = true, imageError = null) }
             runCatching {
                 val entry = repo.getById(id) ?: error("missing word")
-                val bytes = AiImageClient.generate(
+                val token = _session.value?.token
+                if (token.isNullOrBlank()) error("请先登录后再生成配图")
+                val settings = _ui.value.settings
+                val bytes = api.generateMnemonicImage(
+                    token = token,
                     word = entry.text,
                     meaningHint = meaningHint.ifBlank { entry.definitions.firstOrNull()?.label },
+                    provider = settings.imageProvider.apiValue,
                 )
                 repo.updateImageBlob(id, bytes)
                 syncLookupImage(id)
-            }.onFailure {
+            }.onFailure { error ->
+                val detail = error.message?.takeIf { it.isNotBlank() }
                 _ui.update {
-                    it.copy(imageError = "AI 生图失败，请检查网络后再试（免费接口有时会忙）")
+                    it.copy(
+                        imageError = detail ?: "AI 生图失败，请检查网络后再试（免费接口有时会忙）",
+                    )
                 }
             }
             _ui.update { it.copy(imageBusy = false) }

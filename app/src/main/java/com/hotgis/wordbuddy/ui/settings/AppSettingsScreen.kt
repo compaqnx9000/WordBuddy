@@ -40,7 +40,9 @@ import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Headset
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Security
@@ -64,6 +66,7 @@ import androidx.compose.ui.unit.em
 import android.widget.Toast
 import com.hotgis.wordbuddy.data.AccentStyle
 import com.hotgis.wordbuddy.data.AppTheme
+import com.hotgis.wordbuddy.data.ImageGenProvider
 import com.hotgis.wordbuddy.data.Notebook
 import com.hotgis.wordbuddy.data.StudySettings
 import com.hotgis.wordbuddy.ui.design.sdp
@@ -203,12 +206,14 @@ fun AppSettingsScreen(
                     autoPronounce = settings.speakOnPageChange,
                     dailyReminder = settings.dailyReminder,
                     aiImageAutoGen = settings.aiImageAutoGen,
+                    imageProvider = settings.imageProvider,
                     podcastPlayWhenScreenOff = settings.podcastPlayWhenScreenOff,
                     notebooks = notebooks,
                     defaultNotebookId = settings.defaultNotebookId,
                     onAutoPronounce = { enabled -> onChange { it.copy(speakOnPageChange = enabled) } },
                     onDailyReminder = { enabled -> onChange { it.copy(dailyReminder = enabled) } },
                     onAiImageAutoGen = { enabled -> onChange { it.copy(aiImageAutoGen = enabled) } },
+                    onImageProvider = { provider -> onChange { it.copy(imageProvider = provider) } },
                     onPodcastPlayWhenScreenOff = { enabled ->
                         onChange { it.copy(podcastPlayWhenScreenOff = enabled) }
                     },
@@ -449,12 +454,14 @@ private fun PreferencesCard(
     autoPronounce: Boolean,
     dailyReminder: Boolean,
     aiImageAutoGen: Boolean,
+    imageProvider: ImageGenProvider,
     podcastPlayWhenScreenOff: Boolean,
     notebooks: List<Notebook>,
     defaultNotebookId: Long,
     onAutoPronounce: (Boolean) -> Unit,
     onDailyReminder: (Boolean) -> Unit,
     onAiImageAutoGen: (Boolean) -> Unit,
+    onImageProvider: (ImageGenProvider) -> Unit,
     onPodcastPlayWhenScreenOff: (Boolean) -> Unit,
     onDefaultNotebook: (Long) -> Unit,
 ) {
@@ -482,6 +489,11 @@ private fun PreferencesCard(
             )
         }
         Spacer(Modifier.height(18.sdp()))
+        ImageProviderPicker(
+            selected = imageProvider,
+            onSelect = onImageProvider,
+        )
+        PreferenceDivider()
         PreferenceToggle(
             icon = Icons.AutoMirrored.Outlined.VolumeUp,
             title = "自动朗读",
@@ -620,26 +632,83 @@ private fun PreferenceAction(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
+private fun ImageProviderPicker(
+    selected: ImageGenProvider,
+    onSelect: (ImageGenProvider) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Filled.Image,
+                contentDescription = null,
+                tint = Stellar.OnSurfaceVariant.copy(alpha = 0.65f),
+                modifier = Modifier.size(22.sdp()),
+            )
+            Spacer(Modifier.width(12.sdp()))
+            Text(
+                text = "文生图接口",
+                color = Stellar.OnSurface,
+                fontSize = 15.ssp(),
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.height(12.sdp()))
+        FlowRow(
+            modifier = Modifier.padding(start = 34.sdp()),
+            horizontalArrangement = Arrangement.spacedBy(8.sdp()),
+            verticalArrangement = Arrangement.spacedBy(8.sdp()),
+        ) {
+            ImageGenProvider.entries.forEach { provider ->
+                val chosen = provider == selected
+                Text(
+                    text = provider.label,
+                    color = if (chosen) Stellar.OnPrimary else Stellar.OnSurfaceVariant,
+                    fontSize = 13.ssp(),
+                    fontWeight = if (chosen) FontWeight.Bold else FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(20.sdp()))
+                        .background(if (chosen) Stellar.CyanSoft else Stellar.SurfaceHigh)
+                        .clickable { onSelect(provider) }
+                        .padding(horizontal = 14.sdp(), vertical = 8.sdp()),
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun DefaultNotebookPicker(
     notebooks: List<Notebook>,
     selectedId: Long,
     onSelect: (Long) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
-        Text(
-            text = "默认收藏生词本",
-            color = Stellar.OnSurface,
-            fontSize = 16.ssp(),
-            fontWeight = FontWeight.SemiBold,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Filled.MenuBook,
+                contentDescription = null,
+                tint = Stellar.OnSurfaceVariant.copy(alpha = 0.65f),
+                modifier = Modifier.size(22.sdp()),
+            )
+            Spacer(Modifier.width(12.sdp()))
+            Text(
+                text = "默认收藏生词本",
+                color = Stellar.OnSurface,
+                fontSize = 15.ssp(),
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
         Spacer(Modifier.height(4.sdp()))
         Text(
             text = "首页查词点星星时，词条会保存到所选生词本",
             color = Stellar.OnSurfaceVariant,
             fontSize = 13.ssp(),
+            modifier = Modifier.padding(start = 34.sdp()),
         )
         Spacer(Modifier.height(12.sdp()))
         FlowRow(
+            modifier = Modifier.padding(start = 34.sdp()),
             horizontalArrangement = Arrangement.spacedBy(8.sdp()),
             verticalArrangement = Arrangement.spacedBy(8.sdp()),
         ) {
