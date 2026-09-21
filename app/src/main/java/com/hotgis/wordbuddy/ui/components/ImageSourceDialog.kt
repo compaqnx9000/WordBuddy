@@ -54,6 +54,7 @@ fun ImageSourceDialog(
     onPickGallery: () -> Unit,
     onGenerateAi: (meaningHint: String) -> Unit,
     onDismiss: () -> Unit,
+    onBuyPoints: (() -> Unit)? = null,
     stellar: Boolean = false,
 ) {
     if (stellar) {
@@ -64,6 +65,7 @@ fun ImageSourceDialog(
             onPickGallery = onPickGallery,
             onGenerateAi = onGenerateAi,
             onDismiss = onDismiss,
+            onBuyPoints = onBuyPoints,
         )
     } else {
         ClassicImageSourceDialog(
@@ -73,6 +75,7 @@ fun ImageSourceDialog(
             onPickGallery = onPickGallery,
             onGenerateAi = onGenerateAi,
             onDismiss = onDismiss,
+            onBuyPoints = onBuyPoints,
         )
     }
 }
@@ -85,6 +88,7 @@ private fun StellarImageSourceDialog(
     onPickGallery: () -> Unit,
     onGenerateAi: (meaningHint: String) -> Unit,
     onDismiss: () -> Unit,
+    onBuyPoints: (() -> Unit)? = null,
 ) {
     var selectedIndex by remember(definitions) { mutableIntStateOf(0) }
     val needPickMeaning = definitions.size > 1
@@ -175,6 +179,19 @@ private fun StellarImageSourceDialog(
                 if (!error.isNullOrBlank()) {
                     Spacer(Modifier.height(10.sdp()))
                     Text(error, color = Stellar.Pink, fontSize = 13.ssp())
+                    if (onBuyPoints != null && error.needsPointRecharge()) {
+                        Spacer(Modifier.height(6.sdp()))
+                        Text(
+                            text = "去充值",
+                            color = Stellar.Cyan,
+                            fontSize = 14.ssp(),
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.clickable(enabled = !busy) {
+                                onDismiss()
+                                onBuyPoints()
+                            },
+                        )
+                    }
                 }
                 Spacer(Modifier.height(20.sdp()))
                 Row(
@@ -322,6 +339,7 @@ private fun ClassicImageSourceDialog(
     onPickGallery: () -> Unit,
     onGenerateAi: (meaningHint: String) -> Unit,
     onDismiss: () -> Unit,
+    onBuyPoints: (() -> Unit)? = null,
 ) {
     var selectedIndex by remember(definitions) { mutableIntStateOf(0) }
     val needPickMeaning = definitions.size > 1
@@ -387,6 +405,19 @@ private fun ClassicImageSourceDialog(
             if (!error.isNullOrBlank()) {
                 Spacer(Modifier.height(10.sdp()))
                 Text(error, color = HwColors.TextSecondary, fontSize = 13.ssp())
+                if (onBuyPoints != null && error.needsPointRecharge()) {
+                    Spacer(Modifier.height(6.sdp()))
+                    Text(
+                        text = "去充值",
+                        color = HwColors.AccentBlue,
+                        fontSize = 14.ssp(),
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clickable(enabled = !busy) {
+                            onDismiss()
+                            onBuyPoints()
+                        },
+                    )
+                }
             }
             Spacer(Modifier.height(16.sdp()))
             Row(
@@ -515,3 +546,6 @@ fun ImageActionRow(
         )
     }
 }
+
+private fun String.needsPointRecharge(): Boolean =
+    contains("积分不足") || contains("购买积分") || contains("请先充值")

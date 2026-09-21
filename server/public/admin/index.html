@@ -177,6 +177,7 @@
       <button class="nav" data-page="checkins" onclick="go('checkins')">签到积分</button>
       <button class="nav" data-page="gifts" onclick="go('gifts')">积分兑礼</button>
       <button class="nav" data-page="giftOrders" onclick="go('giftOrders')">兑换订单</button>
+      <button class="nav" data-page="shorts" onclick="go('shorts')">短视频</button>
       <button class="nav" data-page="audit" onclick="go('audit')">操作日志</button>
       <div style="flex:1"></div>
       <div id="who" class="sub" style="margin:8px"></div>
@@ -203,10 +204,11 @@ const titles = {
   checkins: ['签到积分', '用户累计积分、连续签到与每日签到明细'],
   gifts: ['积分兑礼', '上架/下架礼品、库存与积分价格'],
   giftOrders: ['兑换订单', '用户兑换记录与发货状态'],
+  shorts: ['短视频', '视频维护，以及用户在口语/单词/听力的累计停留'],
   audit: ['操作日志', '超级管理员在后台做过的事'],
 };
 
-const state = { page: 'overview', pageNo: 1, q: '', kind: '', giftPub: '', notebookId: null, checkInView: 'users' };
+const state = { page: 'overview', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users' };
 
 function token() { return localStorage.getItem('hw_admin_token') || ''; }
 function authHeaders() {
@@ -301,6 +303,10 @@ function go(page, extra = {}) {
   if (extra.q != null) state.q = extra.q;
   if (extra.kind != null) state.kind = extra.kind;
   if (extra.giftPub != null) state.giftPub = extra.giftPub;
+  if (extra.shortCat != null) state.shortCat = extra.shortCat;
+  if (extra.shortPub != null) state.shortPub = extra.shortPub;
+  if (extra.shortsView != null) state.shortsView = extra.shortsView;
+  if (extra.shortDays != null) state.shortDays = extra.shortDays;
   if ('notebookId' in extra) {
     const prevNotebookId = state.notebookId;
     state.notebookId = extra.notebookId;
@@ -512,6 +518,86 @@ async function render() {
           </td>
         </tr>`).join('') || '<tr><td colspan="7">暂无订单</td></tr>'}</tbody></table>
         ${pager(d.total)}`;
+    } else if (state.page === 'shorts') {
+      const view = state.shortsView || 'list';
+      if (view === 'stats') {
+        const d = await api(`/shorts/stats?page=${state.pageNo}&q=${encodeURIComponent(state.q)}&days=${encodeURIComponent(state.shortDays||'30')}`);
+        const catName = { speaking:'口语', vocab:'单词', listening:'听力' };
+        el.innerHTML = `
+          <div class="toolbar">
+            <button class="btn ghost" onclick="go('shorts',{shortsView:'list',page:1})">视频维护</button>
+            <button class="btn" onclick="go('shorts',{shortsView:'stats',page:1})">停留统计</button>
+            <select style="max-width:120px" onchange="go('shorts',{shortsView:'stats',page:1,shortDays:this.value})">
+              ${[['7','近7天'],['30','近30天'],['90','近90天'],['365','近1年']].map(([v,l]) =>
+                `<option value="${v}" ${String(state.shortDays||'30')===v?'selected':''}>${l}</option>`).join('')}
+            </select>
+            <input style="max-width:200px" placeholder="手机号 / 昵称 / 设备" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('shorts',{q:this.value,page:1,shortsView:'stats'})" />
+            <button class="btn" onclick="go('shorts',{q:document.querySelector('main input').value,page:1,shortsView:'stats'})">搜索</button>
+          </div>
+          <div class="cards" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:12px 0 18px">
+            ${(d.categoryTotals||[]).map(c => `
+              <div class="card" style="padding:14px;border:1px solid #e5e7eb;border-radius:12px;background:#fff">
+                <div class="sub">${esc(c.categoryName)}</div>
+                <div style="font-size:22px;font-weight:700;margin:6px 0">${esc(c.watchLabel)}</div>
+                <div class="sub">${c.viewers} 人 · ${c.events} 次观看</div>
+              </div>`).join('') || '<div class="sub">暂无停留数据（用户刷短视频后会出现）</div>'}
+          </div>
+          <table><thead><tr>
+            <th>用户</th><th>口语</th><th>单词</th><th>听力</th><th>合计</th><th>偏好</th><th>次数</th><th>最近观看</th>
+          </tr></thead>
+          <tbody>${(d.items||[]).map(r => `<tr>
+            <td>
+              ${avatarCell(r.avatarUrl)}
+              ${r.userId != null
+                ? `${esc(r.phone||'—')}<div class="sub">#${r.userId} ${esc(r.nickname||'')}</div>`
+                : `<span class="tag">游客</span><div class="sub">${esc((r.deviceKey||'').slice(0,12))}…</div>`}
+            </td>
+            <td><b>${esc(r.speakingLabel)}</b></td>
+            <td><b>${esc(r.vocabLabel)}</b></td>
+            <td><b>${esc(r.listeningLabel)}</b></td>
+            <td><b>${esc(r.totalLabel)}</b></td>
+            <td><span class="tag">${esc(catName[r.preferredCategory]||'—')}</span></td>
+            <td>${r.events}</td>
+            <td>${fmt(r.lastWatchedAt)}</td>
+          </tr>`).join('') || '<tr><td colspan="8">暂无用户停留记录</td></tr>'}</tbody></table>
+          ${pager(d.total)}`;
+      } else {
+      const d = await api(`/shorts?page=${state.pageNo}&q=${encodeURIComponent(state.q)}&category=${encodeURIComponent(state.shortCat||'')}&published=${encodeURIComponent(state.shortPub||'')}`);
+      const cats = d.categories || [{id:'speaking',name:'口语'},{id:'vocab',name:'单词'},{id:'listening',name:'听力'}];
+      el.innerHTML = `
+        <div class="toolbar">
+          <button class="btn" onclick="go('shorts',{shortsView:'list',page:1})">视频维护</button>
+          <button class="btn ghost" onclick="go('shorts',{shortsView:'stats',page:1})">停留统计</button>
+          <input style="max-width:180px" placeholder="搜索标题/关键词" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('shorts',{q:this.value,page:1,shortsView:'list'})" />
+          <select style="max-width:110px" onchange="go('shorts',{q:state.q,page:1,shortCat:this.value,shortsView:'list'})">
+            <option value="" ${!state.shortCat?'selected':''}>全部分类</option>
+            ${cats.map(c => `<option value="${esc(c.id)}" ${state.shortCat===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}
+          </select>
+          <select style="max-width:110px" onchange="go('shorts',{q:state.q,page:1,shortPub:this.value,shortsView:'list'})">
+            <option value="" ${!state.shortPub?'selected':''}>全部状态</option>
+            <option value="1" ${state.shortPub==='1'?'selected':''}>已上架</option>
+            <option value="0" ${state.shortPub==='0'?'selected':''}>已下架</option>
+          </select>
+          <button class="btn" onclick="go('shorts',{q:document.querySelector('main input').value,page:1,shortsView:'list'})">搜索</button>
+          <button class="btn ghost" onclick="editShort()">新增短视频</button>
+        </div>
+        <table><thead><tr><th>ID</th><th>标题</th><th>分类</th><th>关键词</th><th>视频</th><th>排序</th><th>状态</th><th></th></tr></thead>
+        <tbody>${d.items.map(v => `<tr>
+          <td>${esc(v.id)}</td>
+          <td>${esc(v.title)}<div class="sub">@${esc(v.author||'')}</div><div class="sub">${esc(v.caption||'')}</div></td>
+          <td><span class="tag">${esc(v.categoryName||v.category)}</span></td>
+          <td>${(v.keywords||[]).map(k => `<span class="tag">${esc(k)}</span>`).join(' ')||'—'}</td>
+          <td><a href="${esc(v.videoUrl)}" target="_blank" rel="noopener">打开</a></td>
+          <td>${v.sortOrder??0}</td>
+          <td><span class="tag ${v.published?'':'bad'}">${v.published?'上架':'下架'}</span></td>
+          <td>
+            <button class="btn small" onclick='editShort(${JSON.stringify(v).replace(/'/g,"&#39;")})'>编辑</button>
+            <button class="btn ghost small" onclick="toggleShort(${v.id},${v.published})">${v.published?'下架':'上架'}</button>
+            <button class="btn danger small" onclick="delShort(${v.id})">删除</button>
+          </td>
+        </tr>`).join('') || '<tr><td colspan="8">暂无短视频</td></tr>'}</tbody></table>
+        ${pager(d.total)}`;
+      }
     } else if (state.page === 'audit') {
       const d = await api(`/audit?page=${state.pageNo}`);
       el.innerHTML = `
@@ -548,7 +634,7 @@ function userTable(items, actions) {
   </tr></thead><tbody>${items.map(u => `<tr>
     <td>${avatarCell(u.avatarUrl)}</td>
     <td>${u.id}</td>
-    <td>${esc(u.phone)}</td>
+    <td>${esc(u.phone)}${u.deletionDueAt?`<div class="sub">注销中 · ${fmt(u.deletionDueAt)}</div>`:''}</td>
     <td>${esc(u.nickname || '—')}</td>
     <td>${esc(u.buddyId || '—')}</td>
     <td class="wrap">${esc(u.email || '—')}</td>
@@ -651,6 +737,14 @@ async function openUser(id) {
       <td>${esc(n.name)}</td><td>${n.wordCount}</td><td>${fmt(n.createdAt)}</td>
       <td><button class="btn small" onclick="closeModal();go('notebooks',{notebookId:${n.id},page:1})">看词</button></td>
     </tr>`).join('') || '<tr><td colspan="4">无</td></tr>'}</tbody></table>
+    <h3>短视频收藏（${(d.shortFavorites||[]).length}）</h3>
+    <table><thead><tr><th>标题</th><th>分类</th><th>作者</th><th>收藏时间</th></tr></thead>
+    <tbody>${(d.shortFavorites||[]).map(v => `<tr>
+      <td class="wrap">${esc(v.title)}</td>
+      <td>${esc(v.categoryName || v.category || '—')}</td>
+      <td>${esc(v.author || '—')}</td>
+      <td>${fmt(v.favoritedAt)}</td>
+    </tr>`).join('') || '<tr><td colspan="4">暂无收藏</td></tr>'}</tbody></table>
     <h3>登录记录</h3>
     <table><thead><tr><th>时间</th><th>方式</th><th>结果</th><th>设备</th><th>IP / 归属地</th></tr></thead>
     <tbody>${d.logins.map(r => `<tr><td>${fmt(r.createdAt)}</td><td>${methodLabel(r.method)}</td>
@@ -805,6 +899,81 @@ async function toggleGift(id, published) {
 async function delGift(id) {
   if (!confirm('确定删除该礼品？')) return;
   try { await api('/gifts/' + id, { method: 'DELETE' }); go('gifts'); }
+  catch (e) { alert(e.message); }
+}
+function editShort(v) {
+  const isNew = !v || !v.id;
+  const item = v || { category:'speaking', author:'词搭子', keywords:[], published:true, sortOrder:0, videoUrl:'' };
+  const kw = Array.isArray(item.keywords) ? item.keywords.join(', ') : '';
+  showModal(`<h2>${isNew?'新增短视频':'编辑短视频'}</h2>
+    <label>标题</label><input id="sTitle" value="${esc(item.title||'')}" />
+    <label>作者</label><input id="sAuthor" value="${esc(item.author||'词搭子')}" />
+    <label>说明 / 字幕摘要</label><textarea id="sCap" rows="3">${esc(item.caption||'')}</textarea>
+    <label>分类</label>
+    <select id="sCat">
+      <option value="speaking" ${item.category==='speaking'?'selected':''}>口语</option>
+      <option value="vocab" ${item.category==='vocab'?'selected':''}>单词</option>
+      <option value="listening" ${item.category==='listening'?'selected':''}>听力</option>
+    </select>
+    <label>关键词（3～5 个，逗号分隔）</label><input id="sKw" value="${esc(kw)}" placeholder="reply, messages, gossip" />
+    <label>视频文件</label>
+    <input id="sFile" type="file" accept="video/mp4,video/*" />
+    <div class="sub" id="sUploadHint">${item.videoUrl ? '当前：'+esc(item.videoUrl) : '请选择 mp4 上传'}</div>
+    <label>或直接填视频 URL</label><input id="sUrl" value="${esc(item.videoUrl||'')}" placeholder="/uploads/videos/xxx.mp4" />
+    <label>时长（毫秒，可空）</label><input id="sDur" type="number" value="${item.durationMs??''}" />
+    <label>排序（越小越靠前）</label><input id="sSort" type="number" value="${item.sortOrder||0}" />
+    <label><input id="sPub" type="checkbox" ${item.published!==false?'checked':''}/> 上架</label>
+    <div class="toolbar" style="margin-top:14px">
+      <button class="btn" onclick="saveShort(${isNew?'null':item.id})">保存</button>
+      <button class="btn ghost" onclick="closeModal()">取消</button>
+    </div>`);
+}
+async function uploadShortFile() {
+  const file = document.getElementById('sFile')?.files?.[0];
+  if (!file) return document.getElementById('sUrl').value.trim();
+  const hint = document.getElementById('sUploadHint');
+  if (hint) hint.textContent = '上传中…';
+  const res = await fetch('/admin/api/shorts/upload?filename=' + encodeURIComponent(file.name), {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token(), 'Content-Type': file.type || 'video/mp4', 'X-Filename': file.name },
+    body: file,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { logout(); throw new Error(data.error || '未登录'); }
+  if (!res.ok) throw new Error(data.error || '上传失败');
+  document.getElementById('sUrl').value = data.url;
+  if (hint) hint.textContent = '已上传：' + data.url;
+  return data.url;
+}
+async function saveShort(id) {
+  try {
+    let videoUrl = document.getElementById('sUrl').value.trim();
+    const file = document.getElementById('sFile')?.files?.[0];
+    if (file) videoUrl = await uploadShortFile();
+    const keywords = document.getElementById('sKw').value.split(/[,，、\n]/).map(s => s.trim()).filter(Boolean);
+    const body = {
+      title: document.getElementById('sTitle').value.trim(),
+      author: document.getElementById('sAuthor').value.trim(),
+      caption: document.getElementById('sCap').value.trim(),
+      category: document.getElementById('sCat').value,
+      keywords,
+      videoUrl,
+      durationMs: document.getElementById('sDur').value === '' ? null : Number(document.getElementById('sDur').value),
+      sortOrder: Number(document.getElementById('sSort').value) || 0,
+      published: document.getElementById('sPub').checked,
+    };
+    if (id == null) await api('/shorts', { method: 'POST', body: JSON.stringify(body) });
+    else await api('/shorts/' + id, { method: 'PATCH', body: JSON.stringify(body) });
+    closeModal(); go('shorts');
+  } catch (e) { alert(e.message); }
+}
+async function toggleShort(id, published) {
+  try { await api('/shorts/' + id, { method: 'PATCH', body: JSON.stringify({ published: !published }) }); go('shorts'); }
+  catch (e) { alert(e.message); }
+}
+async function delShort(id) {
+  if (!confirm('确定删除该短视频？')) return;
+  try { await api('/shorts/' + id, { method: 'DELETE' }); go('shorts'); }
   catch (e) { alert(e.message); }
 }
 async function setOrderStatus(id, status) {

@@ -1,34 +1,82 @@
 import { pool, query } from './db.js'
+import {
+  alipayConfig,
+  identityType,
+  interpretTransferData,
+  queryAlipayTransfer,
+  transferToAlipay,
+  withdrawalOutBizNo,
+} from './alipay.js'
+import {
+  isWechatOpenId,
+  queryWechatTransfer,
+  transferToWechat,
+  wechatConfig,
+  wechatOutBillNo,
+} from './wechat.js'
 
-/** Sandbox cash-out: fixed 0.01 yuan until real Alipay/WeChat is wired. */
+/** Live Alipay TRANS_ACCOUNT_NO_PWD minimum is 0.10 yuan. */
+const LIVE_MIN_FEN = 10
+
 export function withdrawConfig() {
-  const sandbox = String(process.env.WITHDRAW_SANDBOX ?? 'true').toLowerCase() !== 'false'
-  const amountFen = Math.max(1, Number(process.env.WITHDRAW_AMOUNT_FEN) || 1)
-  const pointsCost = Math.max(1, Number(process.env.WITHDRAW_POINTS_COST) || 1)
+  const pay = alipayConfig()
+  const sandboxEnv = process.env.WITHDRAW_SANDBOX
+  const sandbox =
+    sandboxEnv != null && sandboxEnv !== ''
+      ? String(sandboxEnv).toLowerCase() !== 'false'
+      : false
+  const rawFen = Number(process.env.WITHDRAW_AMOUNT_FEN)
+  const rawPoints = Number(process.env.WITHDRAW_POINTS_COST)
+  const amountFen = sandbox
+    ? Math.max(1, Number.isFinite(rawFen) ? rawFen : 1)
+    : Math.max(LIVE_MIN_FEN, Number.isFinite(rawFen) && rawFen > 0 ? rawFen : 100)
+  const pointsCost = sandbox
+    ? Math.max(1, Number.isFinite(rawPoints) ? rawPoints : 1)
+    : Math.max(1, Number.isFinite(rawPoints) ? rawPoints : 10)
+  const wx = wechatConfig()
+  const alipayReady = pay.transferReady && !sandbox
+  const wechatReady = wx.transferReady && !sandbox
+  const amountText = `单笔提现 ¥${(amountFen / 100).toFixed(2)}，消耗 ${pointsCost} 积分`
+  let note
+  if (sandbox) {
+    note = '当前为沙箱模式：仅模拟打款成功，不会真实转账。'
+  } else {
+    const parts = [amountText]
+    parts.push(
+      wechatReady
+        ? '微信需填写该商户 App 下的 OpenID，提交后可能要在微信里确认收款。'
+        : '微信商家转账尚未配置商户号/证书，暂时无法打到微信。',
+    )
+    parts.push(
+      alipayReady
+        ? '支付宝需账号与实名一致。'
+        : '支付宝应用还在审核/未上线，暂可能无法打款。',
+    )
+    note = parts.join('')
+  }
   return {
     sandbox,
     amountFen,
     amountYuan: (amountFen / 100).toFixed(2),
     pointsCost,
+    alipayReady,
+    wechatReady,
+    certMode: Boolean(pay.certMode),
     channels: [
+      {
+        id: 'wechat',
+        name: '微信提现',
+        accountLabel: '微信 OpenID',
+        accountHint: '请填写微信 OpenID（以 o 开头），不能填微信号',
+      },
       {
         id: 'alipay',
         name: '支付宝提现',
         accountLabel: '支付宝账号（手机号或邮箱）',
-        accountHint: '请填写收款支付宝登录账号',
-      },
-      {
-        id: 'wechat',
-        name: '微信提现',
-        accountLabel: '微信收款标识',
-        accountHint: sandbox
-          ? '沙箱测试可填任意标识，例如微信号'
-          : '请填写已绑定的微信 OpenID / 商户收款账号',
+        accountHint: '请填写收款支付宝登录账号，并填写与账号一致的实名',
       },
     ],
-    note: sandbox
-      ? '当前为沙箱模式：仅模拟打款成功，不会真实转账。单笔固定 0.01 元。'
-      : '正式打款将调用支付宝/微信企业付款接口。',
+    note,
   }
 }
 
@@ -72,6 +120,11 @@ function statusLabel(status) {
 }
 
 export async function listWithdrawals(userId, { page = 1, pageSize = 20 } = {}) {
+  try {
+    await reconcilePendingWithdrawals(userId)
+  } catch (error) {
+    console.error('[withdrawals/reconcile]', error)
+  }
   const p = Math.max(1, Number(page) || 1)
   const size = Math.min(50, Math.max(1, Number(pageSize) || 20))
   const offset = (p - 1) * size
@@ -92,33 +145,56 @@ export async function listWithdrawals(userId, { page = 1, pageSize = 20 } = {}) 
 }
 
 /**
- * Debit points and (in sandbox) mark payout success immediately.
- * Real Alipay/WeChat transfer hooks can replace simulatePayout later.
+ * Debit points first, then call Alipay. Unknown results stay pending (no refund)
+ * until query confirms success or failure.
  */
-export async function createWithdrawal(userId, { channel, account } = {}) {
+export async function createWithdrawal(userId, { channel, account, realName } = {}) {
   const cfg = withdrawConfig()
   const ch = String(channel || '').trim().toLowerCase()
   if (ch !== 'alipay' && ch !== 'wechat') {
     return { ok: false, error: '请选择支付宝或微信提现' }
   }
+  if (!cfg.sandbox && ch === 'wechat' && !cfg.wechatReady) {
+    return { ok: false, error: '微信商家转账尚未配置完成，暂时无法提现' }
+  }
+  if (!cfg.sandbox && ch === 'alipay' && !cfg.alipayReady) {
+    return { ok: false, error: '支付宝商家转账尚未配置完成，暂时无法提现' }
+  }
   const profile = (
-    await query('SELECT alipay_account, wechat_account FROM users WHERE id = $1', [userId])
+    await query(
+      'SELECT alipay_account, alipay_name, wechat_account FROM users WHERE id = $1',
+      [userId],
+    )
   ).rows[0]
   const saved =
     ch === 'wechat'
       ? String(profile?.wechat_account || '').trim()
       : String(profile?.alipay_account || '').trim()
   let acct = String(account || '').trim() || saved
-  if (!acct || acct.length < 3 || acct.length > 64) {
+  if (!acct || acct.length < 3 || acct.length > 128) {
     return {
       ok: false,
-      error: ch === 'wechat' ? '请先在个人资料中设置微信收款账号' : '请先在个人资料中设置支付宝收款账号',
+      error: ch === 'wechat' ? '请先在个人资料中设置微信收款账号' : '请先绑定支付宝收款账号',
     }
+  }
+  const payeeName = String(realName || profile?.alipay_name || '').trim()
+  if (
+    ch === 'alipay' &&
+    !cfg.sandbox &&
+    identityType(acct) === 'ALIPAY_LOGON_ID' &&
+    payeeName.length < 2
+  ) {
+    return { ok: false, error: '请先绑定当前手机上的支付宝账号' }
+  }
+  if (ch === 'wechat' && !cfg.sandbox && !isWechatOpenId(acct)) {
+    return { ok: false, error: '请填写微信 OpenID（以 o 开头，不是微信号）' }
   }
 
   const amountFen = cfg.amountFen
   const pointsCost = cfg.pointsCost
   const client = await pool.connect()
+  let row
+  let nextBalance
   try {
     await client.query('BEGIN')
     const checkIn = (
@@ -147,7 +223,7 @@ export async function createWithdrawal(userId, { channel, account } = {}) {
       return { ok: false, error: '今日提现次数已达上限，请明天再试' }
     }
 
-    const nextBalance = balance - pointsCost
+    nextBalance = balance - pointsCost
     await client.query(
       `INSERT INTO user_checkins (user_id, total_points, streak_days, last_checkin_date, updated_at)
        VALUES ($1, $2, $3, $4, now())
@@ -162,7 +238,7 @@ export async function createWithdrawal(userId, { channel, account } = {}) {
       ],
     )
 
-    const row = (
+    row = (
       await client.query(
         `INSERT INTO withdrawals
            (user_id, channel, account, amount_fen, points_spent, status, sandbox, remark)
@@ -175,7 +251,7 @@ export async function createWithdrawal(userId, { channel, account } = {}) {
           amountFen,
           pointsCost,
           cfg.sandbox,
-          cfg.sandbox ? '沙箱模拟打款' : null,
+          cfg.sandbox ? '沙箱模拟打款' : ch === 'wechat' ? '待微信打款' : '待支付宝打款',
         ],
       )
     ).rows[0]
@@ -185,65 +261,163 @@ export async function createWithdrawal(userId, { channel, account } = {}) {
        VALUES ($1, $2, $3, 'withdraw', 'withdrawal', $4)`,
       [userId, -pointsCost, nextBalance, String(row.id)],
     )
+    await client.query('COMMIT')
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      /* ignore */
+    }
+    throw error
+  } finally {
+    client.release()
+  }
 
-    const payout = await simulatePayout({
+  let payout
+  try {
+    payout = await performPayout({
       channel: ch,
       account: acct,
+      realName: payeeName,
       amountFen,
       withdrawalId: row.id,
       sandbox: cfg.sandbox,
     })
+  } catch (error) {
+    console.error('[withdrawals/payout]', error)
+    payout = {
+      ok: true,
+      pending: true,
+      remark: ch === 'wechat' ? '微信结果确认中，请稍后在记录中查看' : '支付宝结果确认中，请稍后在记录中查看',
+    }
+  }
+
+  return finalizeWithdrawal({
+    withdrawalId: row.id,
+    userId,
+    pointsCost,
+    payout,
+    cfg,
+    channel: ch,
+  })
+}
+
+async function finalizeWithdrawal({ withdrawalId, userId, pointsCost, payout, cfg, channel }) {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const locked = (
+      await client.query(`SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE`, [withdrawalId])
+    ).rows[0]
+    if (!locked) {
+      await client.query('ROLLBACK')
+      return { ok: false, error: '提现记录不存在' }
+    }
+    if (locked.status !== 'pending') {
+      const checkIn = (
+        await client.query('SELECT total_points FROM user_checkins WHERE user_id = $1', [userId])
+      ).rows[0]
+      await client.query('COMMIT')
+      return {
+        ok: locked.status === 'success',
+        error: locked.status === 'failed' ? locked.error_message || '打款失败' : undefined,
+        message:
+          locked.status === 'success'
+            ? `提现成功：¥${cfg.amountYuan} 已打款到${channel === 'wechat' ? '微信' : '支付宝'}`
+            : locked.status === 'pending'
+              ? `提现已提交：¥${cfg.amountYuan} ${channel === 'wechat' ? '微信' : '支付宝'}处理中`
+              : locked.error_message,
+        item: mapWithdrawal(locked),
+        totalPoints: Number(checkIn?.total_points || 0),
+        config: cfg,
+      }
+    }
+
+    let status = 'failed'
+    if (payout.ok && payout.pending) status = 'pending'
+    else if (payout.ok) status = 'success'
 
     const updated = (
       await client.query(
         `UPDATE withdrawals SET
            status = $1,
-           provider_trade_no = $2,
+           provider_trade_no = COALESCE($2, provider_trade_no),
            error_message = $3,
            remark = COALESCE($4, remark),
            updated_at = now()
          WHERE id = $5
          RETURNING *`,
         [
-          payout.ok ? 'success' : 'failed',
+          status,
           payout.tradeNo || null,
-          payout.ok ? null : payout.error || '打款失败',
+          status === 'failed' ? payout.error || '打款失败' : null,
           payout.remark || null,
-          row.id,
+          withdrawalId,
         ],
       )
     ).rows[0]
 
-    if (!payout.ok) {
-      // Refund points on failed payout
-      await client.query(
-        `UPDATE user_checkins SET total_points = total_points + $1, updated_at = now()
-         WHERE user_id = $2`,
-        [pointsCost, userId],
-      )
-      const refundBalance = nextBalance + pointsCost
-      await client.query(
-        `INSERT INTO points_ledger (user_id, delta, balance_after, reason, ref_type, ref_id)
-         VALUES ($1, $2, $3, 'withdraw_refund', 'withdrawal', $4)`,
-        [userId, pointsCost, refundBalance, String(row.id)],
-      )
+    if (status === 'failed') {
+      const already = (
+        await client.query(
+          `SELECT 1 FROM points_ledger
+           WHERE user_id = $1 AND ref_type = 'withdrawal' AND ref_id = $2 AND reason = 'withdraw_refund'
+           LIMIT 1`,
+          [userId, String(withdrawalId)],
+        )
+      ).rows[0]
+      let refundBalance
+      if (!already) {
+        const checkIn = (
+          await client.query(
+            `SELECT total_points FROM user_checkins WHERE user_id = $1 FOR UPDATE`,
+            [userId],
+          )
+        ).rows[0]
+        refundBalance = Math.max(0, Number(checkIn?.total_points || 0)) + pointsCost
+        await client.query(
+          `UPDATE user_checkins SET total_points = $1, updated_at = now() WHERE user_id = $2`,
+          [refundBalance, userId],
+        )
+        await client.query(
+          `INSERT INTO points_ledger (user_id, delta, balance_after, reason, ref_type, ref_id)
+           VALUES ($1, $2, $3, 'withdraw_refund', 'withdrawal', $4)`,
+          [userId, pointsCost, refundBalance, String(withdrawalId)],
+        )
+      } else {
+        const checkIn = (
+          await client.query('SELECT total_points FROM user_checkins WHERE user_id = $1', [userId])
+        ).rows[0]
+        refundBalance = Number(checkIn?.total_points || 0)
+      }
       await client.query('COMMIT')
       return {
         ok: false,
         error: payout.error || '打款失败，积分已退回',
         item: mapWithdrawal(updated),
         totalPoints: refundBalance,
+        config: cfg,
       }
     }
 
+    const checkIn = (
+      await client.query('SELECT total_points FROM user_checkins WHERE user_id = $1', [userId])
+    ).rows[0]
     await client.query('COMMIT')
+    const dest = channel === 'wechat' ? '微信' : '支付宝'
+    const message =
+      status === 'pending'
+        ? payout.remark && /确认收款/.test(payout.remark)
+          ? `提现已提交：¥${cfg.amountYuan}，请打开微信确认收款`
+          : `提现已提交：¥${cfg.amountYuan} ${dest}处理中`
+        : cfg.sandbox
+          ? `沙箱提现成功：已模拟向${dest}打款 ¥${cfg.amountYuan}`
+          : `提现成功：¥${cfg.amountYuan} 已打款到${dest}`
     return {
       ok: true,
-      message: cfg.sandbox
-        ? `沙箱提现成功：已模拟向${ch === 'wechat' ? '微信' : '支付宝'}打款 ¥${cfg.amountYuan}`
-        : `提现成功：¥${cfg.amountYuan} 已提交打款`,
+      message,
       item: mapWithdrawal(updated),
-      totalPoints: nextBalance,
+      totalPoints: Number(checkIn?.total_points || 0),
       config: cfg,
     }
   } catch (error) {
@@ -258,20 +432,95 @@ export async function createWithdrawal(userId, { channel, account } = {}) {
   }
 }
 
-async function simulatePayout({ channel, account, amountFen, withdrawalId, sandbox }) {
+async function performPayout({ channel, account, realName, amountFen, withdrawalId, sandbox }) {
   if (sandbox) {
     return {
       ok: true,
+      pending: false,
       tradeNo: `SANDBOX-${channel.toUpperCase()}-${withdrawalId}-${Date.now()}`,
       remark: `沙箱模拟打款 ${amountFen} 分 → ${account}`,
     }
   }
-  // Real providers not wired yet — keep points safe by failing closed.
-  return {
-    ok: false,
-    error:
-      channel === 'wechat'
-        ? '微信企业付款尚未开通，请先使用沙箱（WITHDRAW_SANDBOX=true）'
-        : '支付宝商家转账尚未开通或未配置证书，请先使用沙箱',
+  if (channel === 'wechat') {
+    return transferToWechat({
+      outBillNo: wechatOutBillNo(withdrawalId),
+      amountFen,
+      openid: account,
+      remark: `积分提现#${withdrawalId}`,
+    })
+  }
+  return transferToAlipay({
+    outBizNo: withdrawalOutBizNo(withdrawalId),
+    amountYuan: (amountFen / 100).toFixed(2),
+    loginId: account,
+    realName,
+    title: '词搭子积分提现',
+    remark: `积分提现#${withdrawalId}`,
+  })
+}
+
+export async function reconcilePendingWithdrawals(userId) {
+  const pending = await query(
+    `SELECT w.*, u.alipay_name
+     FROM withdrawals w
+     JOIN users u ON u.id = w.user_id
+     WHERE w.user_id = $1
+       AND w.status = 'pending'
+       AND w.sandbox = false
+       AND w.channel IN ('alipay', 'wechat')
+     ORDER BY w.id ASC
+     LIMIT 8`,
+    [userId],
+  )
+  const cfg = withdrawConfig()
+  for (const row of pending.rows) {
+    let payout = null
+    try {
+      if (row.channel === 'wechat') {
+        const queried = await queryWechatTransfer(wechatOutBillNo(row.id))
+        if (queried.ok || queried.missing === false) payout = queried
+        else if (queried.missing) {
+          payout = await transferToWechat({
+            outBillNo: wechatOutBillNo(row.id),
+            amountFen: Number(row.amount_fen || 0),
+            openid: row.account,
+            remark: `积分提现#${row.id}`,
+          })
+        } else if (!queried.ok && !queried.pending) {
+          payout = queried
+        }
+      } else {
+        const outBizNo = withdrawalOutBizNo(row.id)
+        const queried = await queryAlipayTransfer(outBizNo)
+        const interpreted = interpretTransferData(queried.data || {})
+        if (interpreted.ok || (!interpreted.missing && queried.data?.status)) {
+          payout = interpreted
+        } else if (interpreted.missing) {
+          payout = await transferToAlipay({
+            outBizNo,
+            amountYuan: (Number(row.amount_fen || 0) / 100).toFixed(2),
+            loginId: row.account,
+            realName: row.alipay_name,
+            title: '词搭子积分提现',
+            remark: `积分提现#${row.id}`,
+          })
+        } else if (!interpreted.ok && !interpreted.pending) {
+          payout = interpreted
+        }
+      }
+    } catch (error) {
+      console.error('[withdrawals/query]', row.id, error)
+      continue
+    }
+    if (!payout) continue
+    if (payout.pending) continue
+    await finalizeWithdrawal({
+      withdrawalId: row.id,
+      userId,
+      pointsCost: Number(row.points_spent || 0),
+      payout,
+      cfg,
+      channel: row.channel,
+    })
   }
 }

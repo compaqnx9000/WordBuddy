@@ -74,6 +74,7 @@ import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.hasStellarWallpaperBackground
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackgroundColor
+import com.hotgis.wordbuddy.ui.gifts.BuyPointsScreen
 import com.hotgis.wordbuddy.ui.gifts.GiftDetailScreen
 import com.hotgis.wordbuddy.ui.gifts.GiftOrdersScreen
 import com.hotgis.wordbuddy.ui.gifts.PointsMallScreen
@@ -83,8 +84,12 @@ import com.hotgis.wordbuddy.ui.profile.ProfileScreen
 import com.hotgis.wordbuddy.ui.tools.DouyinDownloadScreen
 import com.hotgis.wordbuddy.ui.tools.KuaishouDownloadScreen
 import com.hotgis.wordbuddy.ui.tools.ToolsScreen
+import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
+import com.hotgis.wordbuddy.ui.settings.AccountDeletionScreen
 import com.hotgis.wordbuddy.ui.settings.AppSettingsScreen
 import com.hotgis.wordbuddy.ui.settings.SwitchAccountScreen
+import com.hotgis.wordbuddy.ui.shorts.FavoriteClipPlayer
+import com.hotgis.wordbuddy.ui.shorts.ShortFavoritesScreen
 import com.hotgis.wordbuddy.ui.shorts.ShortsScreen
 import com.hotgis.wordbuddy.ui.podcast.PodcastScreen
 import com.hotgis.wordbuddy.ui.theme.HotWordsTheme
@@ -101,12 +106,17 @@ fun HotWordsRoot(
     var tab by remember { mutableStateOf(MainTab.Home) }
     var overlay by remember { mutableStateOf(Overlay.None) }
     var showAppSettings by remember { mutableStateOf(false) }
+    var showAccountDeletion by remember { mutableStateOf(false) }
+    var dismissedDeletionDueAt by remember { mutableStateOf<String?>(null) }
     var showSwitchAccount by remember { mutableStateOf(false) }
     var showPointsMall by remember { mutableStateOf(false) }
+    var showBuyPoints by remember { mutableStateOf(false) }
     var showGiftOrders by remember { mutableStateOf(false) }
     var showPointsWithdraw by remember { mutableStateOf(false) }
     var showAccountProfile by remember { mutableStateOf(false) }
     var showShortsLookup by remember { mutableStateOf(false) }
+    var showShortFavorites by remember { mutableStateOf(false) }
+    var favoritePlaying by remember { mutableStateOf<com.hotgis.wordbuddy.ui.shorts.ShortClip?>(null) }
     var showTools by remember { mutableStateOf(false) }
     var showDouyinTool by remember { mutableStateOf(false) }
     var showKuaishouTool by remember { mutableStateOf(false) }
@@ -122,6 +132,8 @@ fun HotWordsRoot(
     val words by viewModel.filteredWords.collectAsStateWithLifecycle()
     val notebooks by viewModel.notebooks.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
+    val accountDeletion by viewModel.accountDeletion.collectAsStateWithLifecycle()
+    val accountDeletionBusy by viewModel.accountDeletionBusy.collectAsStateWithLifecycle()
     val checkIn by viewModel.checkIn.collectAsStateWithLifecycle()
     val avatarBitmap by viewModel.avatarBitmap.collectAsStateWithLifecycle()
     val avatarBusy by viewModel.avatarBusy.collectAsStateWithLifecycle()
@@ -146,6 +158,15 @@ fun HotWordsRoot(
         loginHint = hint
         showLogin = true
         return false
+    }
+
+    fun openBuyPoints() {
+        if (session == null) {
+            loginHint = "登录后可充值积分"
+            showLogin = true
+            return
+        }
+        showBuyPoints = true
     }
 
     fun promptBiometricUnlock() {
@@ -207,11 +228,16 @@ fun HotWordsRoot(
             showLogin = false
             loginHint = null
             showSwitchAccount = false
-            tab = MainTab.Me
+            // Keep Home on cold start / session restore; do not jump to Me.
+            if (cameFromLogin) {
+                tab = MainTab.Home
+            }
         } else {
             biometricUnlocked = false
             biometricError = null
             showAccountProfile = false
+            showAccountDeletion = false
+            showAppSettings = false
             showShortsLookup = false
         }
     }
@@ -228,6 +254,7 @@ fun HotWordsRoot(
             tab = MainTab.Home
             overlay = Overlay.None
             showAppSettings = false
+            showAccountDeletion = false
             showAccountProfile = false
             showShortsLookup = false
             showTools = false
@@ -280,6 +307,10 @@ fun HotWordsRoot(
                 pendingExit = false
                 showSwitchAccount = false
             }
+            showAccountDeletion -> {
+                pendingExit = false
+                showAccountDeletion = false
+            }
             showAppSettings -> {
                 pendingExit = false
                 showAppSettings = false
@@ -291,6 +322,15 @@ fun HotWordsRoot(
             showShortsLookup -> {
                 pendingExit = false
                 showShortsLookup = false
+            }
+            favoritePlaying != null -> {
+                pendingExit = false
+                favoritePlaying = null
+            }
+            showShortFavorites -> {
+                pendingExit = false
+                favoritePlaying = null
+                showShortFavorites = false
             }
             showKuaishouTool -> {
                 pendingExit = false
@@ -315,6 +355,10 @@ fun HotWordsRoot(
             showGiftOrders -> {
                 pendingExit = false
                 showGiftOrders = false
+            }
+            showBuyPoints -> {
+                pendingExit = false
+                showBuyPoints = false
             }
             showPointsMall -> {
                 pendingExit = false
@@ -347,6 +391,31 @@ fun HotWordsRoot(
         }
     }
 
+    if (accountDeletion?.pending == true &&
+        !showAccountDeletion &&
+        dismissedDeletionDueAt != accountDeletion?.dueAt
+    ) {
+        StellarConfirmDialog(
+            title = "账号正在注销中",
+            message = "将于 ${accountDeletion?.dueAtLabel?.ifBlank { "冷静期结束" } ?: "冷静期结束"} 自动完成注销。继续使用可点「我知道了」；若想留下请撤销。",
+            confirmText = "撤销注销",
+            dismissText = "我知道了",
+            onDismiss = { dismissedDeletionDueAt = accountDeletion?.dueAt },
+            onConfirm = {
+                viewModel.cancelAccountDeletion { result ->
+                    result
+                        .onSuccess {
+                            dismissedDeletionDueAt = null
+                            Toast.makeText(context, "已撤销注销，账号恢复正常", Toast.LENGTH_SHORT).show()
+                        }
+                        .onFailure {
+                            Toast.makeText(context, it.message ?: "撤销失败", Toast.LENGTH_LONG).show()
+                        }
+                }
+            },
+        )
+    }
+
     FoldableLayoutProvider(modifier = modifier) {
     DesignScaleProvider(fontScale = ui.settings.fontScale) {
         StellarTheme(style = ui.settings.accentStyle) {
@@ -357,10 +426,13 @@ fun HotWordsRoot(
             // Include Me: otherwise Scaffold uses a solid theme color behind MainBottomBar,
             // which reads as a separate opaque strip (unlike NotebookBottomBar drawn on wallpaper).
             val stellarChrome = showAppSettings ||
+                showAccountDeletion ||
                 showSwitchAccount ||
                 showAccountProfile ||
                 showShortsLookup ||
+                showShortFavorites ||
                 showPointsMall ||
+                showBuyPoints ||
                 showTools ||
                 showDouyinTool ||
                 showKuaishouTool ||
@@ -410,6 +482,8 @@ fun HotWordsRoot(
                     onModeChange = viewModel::setLoginMode,
                     onSendCode = viewModel::sendLoginCode,
                     onLogin = viewModel::submitLogin,
+                    wechatEnabled = com.hotgis.wordbuddy.auth.WeChatAuth.isConfigured(),
+                    onWechatLogin = viewModel::loginWithWechat,
                 )
                 return@HotWordsTheme
             }
@@ -501,9 +575,12 @@ fun HotWordsRoot(
                     if (overlay == Overlay.None &&
                         tab != MainTab.Notebook &&
                         !showAppSettings &&
+                        !showAccountDeletion &&
                         !showAccountProfile &&
                         !showShortsLookup &&
+                        !showShortFavorites &&
                         !showPointsMall &&
+                        !showBuyPoints &&
                         !showTools &&
                         !showDouyinTool &&
                         !showKuaishouTool &&
@@ -515,9 +592,13 @@ fun HotWordsRoot(
                             selected = tab,
                             onSelect = {
                                 showAppSettings = false
+                                showAccountDeletion = false
                                 showAccountProfile = false
                                 showShortsLookup = false
+                                favoritePlaying = null
+                                showShortFavorites = false
                                 showPointsMall = false
+                                showBuyPoints = false
                                 showTools = false
                                 showDouyinTool = false
                                 showKuaishouTool = false
@@ -577,6 +658,7 @@ fun HotWordsRoot(
                         onPickLookupImage = viewModel::setLookupImage,
                         onGenerateAiForLookup = viewModel::generateAiForLookup,
                         onEnsureLoginForAiImage = { requireLogin("登录后可使用 AI 助记配图") },
+                        onOpenBuyPoints = { openBuyPoints() },
                         onClearImageError = viewModel::clearImageError,
                         onUpdateDefinitions = viewModel::updateDefinitions,
                         homophones = homophones,
@@ -588,6 +670,50 @@ fun HotWordsRoot(
                         },
                         onBack = { showShortsLookup = false },
                     )
+                }
+                showShortFavorites -> {
+                    val playing = favoritePlaying
+                    if (playing != null) {
+                        FavoriteClipPlayer(
+                            clip = playing,
+                            authToken = session?.token,
+                            metaVisibleDefault = ui.settings.shortsMetaVisibleDefault,
+                            onBack = { favoritePlaying = null },
+                            onRequireLogin = {
+                                loginHint = "登录后可收藏短视频"
+                                showLogin = true
+                            },
+                            onOpenWord = { word ->
+                                viewModel.setLookupQuery(word)
+                                viewModel.submitLookup()
+                                showShortsLookup = true
+                            },
+                            onShare = {
+                                Toast.makeText(context, "分享即将上线", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .hotWordsScreen(padding, consumeStatusBars = false),
+                        )
+                    } else {
+                        ShortFavoritesScreen(
+                            authToken = session?.token,
+                            onBack = {
+                                favoritePlaying = null
+                                showShortFavorites = false
+                            },
+                            onRequireLogin = {
+                                loginHint = "登录后可查看短视频收藏"
+                                showLogin = true
+                            },
+                            onOpenVideo = { clip ->
+                                favoritePlaying = clip
+                            },
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .hotWordsScreen(padding, consumeStatusBars = false),
+                        )
+                    }
                 }
                 showAccountProfile && session != null -> {
                     AccountProfileScreen(
@@ -601,6 +727,7 @@ fun HotWordsRoot(
                         signature = session?.signature,
                         email = session?.email,
                         alipayAccount = session?.alipayAccount,
+                        alipayName = session?.alipayName,
                         wechatAccount = session?.wechatAccount,
                         shippingSummary = session?.shippingSummary,
                         shippingName = session?.shippingName,
@@ -610,7 +737,9 @@ fun HotWordsRoot(
                         avatarBusy = avatarBusy,
                         onBack = { showAccountProfile = false },
                         onUploadAvatar = viewModel::uploadAvatar,
-                        onUpdateAccountProfile = { nickname, gender, region, signature, email, alipay, wechat, onResult ->
+                        onRequestAlipayAuthInfo = viewModel::requestAlipayAuthInfo,
+                        onCompleteAlipayBind = viewModel::completeAlipayBind,
+                        onUpdateAccountProfile = { nickname, gender, region, signature, email, alipay, alipayName, wechat, onResult ->
                             viewModel.updateAccountProfile(
                                 nickname = nickname,
                                 gender = gender,
@@ -618,6 +747,7 @@ fun HotWordsRoot(
                                 signature = signature,
                                 email = email,
                                 alipayAccount = alipay,
+                                alipayName = alipayName,
                                 wechatAccount = wechat,
                                 onResult = onResult,
                             )
@@ -664,6 +794,7 @@ fun HotWordsRoot(
                         totalPoints = checkIn.totalPoints,
                         token = session?.token,
                         alipayAccount = session?.alipayAccount,
+                        alipayName = session?.alipayName,
                         wechatAccount = session?.wechatAccount,
                         onBack = { showPointsWithdraw = false },
                         onLogin = {
@@ -693,6 +824,26 @@ fun HotWordsRoot(
                             .hotWordsScreen(padding, consumeStatusBars = false),
                     )
                 }
+                showBuyPoints -> {
+                    BuyPointsScreen(
+                        totalPoints = checkIn.totalPoints,
+                        authToken = session?.token,
+                        onBack = { showBuyPoints = false },
+                        onLogin = {
+                            loginHint = "登录后可购买积分"
+                            showLogin = true
+                        },
+                        onPointsUpdated = { bal ->
+                            if (bal >= 0) {
+                                // Refresh check-in so mall / me page show new balance.
+                            }
+                            viewModel.refreshCheckIn()
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .hotWordsScreen(padding, consumeStatusBars = false),
+                    )
+                }
                 showPointsMall -> {
                     PointsMallScreen(
                         totalPoints = checkIn.totalPoints,
@@ -706,6 +857,7 @@ fun HotWordsRoot(
                             tab = MainTab.Me
                         },
                         onOpenWithdraw = { showPointsWithdraw = true },
+                        onOpenBuyPoints = { showBuyPoints = true },
                         onLogin = {
                             loginHint = "登录后可兑换礼品"
                             showLogin = true
@@ -741,6 +893,35 @@ fun HotWordsRoot(
                             .hotWordsScreen(padding, consumeStatusBars = false),
                     )
                 }
+                showAccountDeletion -> {
+                    AccountDeletionScreen(
+                        status = accountDeletion,
+                        busy = accountDeletionBusy,
+                        onBack = {
+                            if (accountDeletion?.pending == true) {
+                                dismissedDeletionDueAt = accountDeletion?.dueAt
+                            }
+                            showAccountDeletion = false
+                        },
+                        onRefresh = viewModel::refreshAccountDeletion,
+                        onSendCode = { force, cb -> viewModel.sendDeletionCode(force, cb) },
+                        onSubmit = { code, reason, force, cb ->
+                            viewModel.requestAccountDeletion(code, reason, force) { result ->
+                                result.onSuccess { status ->
+                                    if (status.deleted || status.immediate) {
+                                        showAccountDeletion = false
+                                        showAppSettings = false
+                                    }
+                                }
+                                cb(result)
+                            }
+                        },
+                        onCancelDeletion = viewModel::cancelAccountDeletion,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .hotWordsScreen(padding, consumeStatusBars = false),
+                    )
+                }
                 showAppSettings -> {
                 AppSettingsScreen(
                     modifier = Modifier
@@ -753,6 +934,8 @@ fun HotWordsRoot(
                     loggedIn = session != null,
                     onBiometricLoginChange = ::setBiometricLoginEnabled,
                     onChangePassword = viewModel::changePassword,
+                    deletionPending = accountDeletion?.pending == true,
+                    onOpenAccountDeletion = { showAccountDeletion = true },
                     onLogout = {
                         showAppSettings = false
                         viewModel.logout()
@@ -779,6 +962,7 @@ fun HotWordsRoot(
                             viewModel.prepareReturnToList()
                             overlay = Overlay.None
                         },
+                        onOpenBuyPoints = { openBuyPoints() },
                     )
                 }
 
@@ -794,6 +978,8 @@ fun HotWordsRoot(
                         loggedIn = session != null,
                         onBiometricLoginChange = ::setBiometricLoginEnabled,
                         onChangePassword = viewModel::changePassword,
+                        deletionPending = accountDeletion?.pending == true,
+                        onOpenAccountDeletion = { showAccountDeletion = true },
                         onLogout = {
                             overlay = Overlay.None
                             viewModel.logout()
@@ -846,6 +1032,7 @@ fun HotWordsRoot(
                             onPickLookupImage = viewModel::setLookupImage,
                             onGenerateAiForLookup = viewModel::generateAiForLookup,
                             onEnsureLoginForAiImage = { requireLogin("登录后可使用 AI 助记配图") },
+                            onOpenBuyPoints = { openBuyPoints() },
                             onClearImageError = viewModel::clearImageError,
                             onUpdateDefinitions = viewModel::updateDefinitions,
                             homophones = homophones,
@@ -863,6 +1050,8 @@ fun HotWordsRoot(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .hotWordsScreen(padding, consumeStatusBars = false),
+                            authToken = session?.token,
+                            metaVisibleDefault = ui.settings.shortsMetaVisibleDefault,
                             onOpenWord = { word ->
                                 viewModel.setLookupQuery(word)
                                 viewModel.submitLookup()
@@ -870,6 +1059,10 @@ fun HotWordsRoot(
                             },
                             onShare = {
                                 Toast.makeText(context, "分享即将上线", Toast.LENGTH_SHORT).show()
+                            },
+                            onRequireLogin = {
+                                loginHint = "登录后可收藏短视频"
+                                showLogin = true
                             },
                         )
                     }
@@ -994,6 +1187,7 @@ fun HotWordsRoot(
                                                 homophones = homophones,
                                                 activeNotebookName = activeNotebookName,
                                                 onBack = { viewModel.prepareReturnToList() },
+                                                onOpenBuyPoints = { openBuyPoints() },
                                                 showPlaybackControls = false,
                                                 showTopBar = false,
                                             )
@@ -1031,6 +1225,15 @@ fun HotWordsRoot(
                             onCheckIn = viewModel::performCheckIn,
                             onMakeupCheckIn = viewModel::performMakeupCheckIn,
                             onOpenPointsMall = { showPointsMall = true },
+                            onOpenBuyPoints = { openBuyPoints() },
+                            onOpenShortFavorites = {
+                                if (session == null) {
+                                    loginHint = "登录后可查看短视频收藏"
+                                    showLogin = true
+                                } else {
+                                    showShortFavorites = true
+                                }
+                            },
                             onOpenTools = { showTools = true },
                             buddyId = session?.buddyId,
                             onLogin = {
@@ -1063,6 +1266,7 @@ private fun HotWordsStudyCard(
     homophones: List<WordHomophone>,
     activeNotebookName: String,
     onBack: () -> Unit,
+    onOpenBuyPoints: () -> Unit = {},
     showPlaybackControls: Boolean = true,
     showTopBar: Boolean = true,
 ) {
@@ -1102,6 +1306,7 @@ private fun HotWordsStudyCard(
         imageError = ui.imageError,
         onPickImage = viewModel::setEntryImage,
         onGenerateAi = viewModel::generateAiImage,
+        onOpenBuyPoints = onOpenBuyPoints,
         onClearImageError = viewModel::clearImageError,
         onUpdateDefinitions = viewModel::updateDefinitions,
         onSpeakText = viewModel::speakText,

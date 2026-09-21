@@ -145,6 +145,7 @@ fun CardModeScreen(
     imageError: String?,
     onPickImage: (Long, Uri) -> Unit,
     onGenerateAi: (Long, String) -> Unit,
+    onOpenBuyPoints: () -> Unit = {},
     onClearImageError: () -> Unit,
     onUpdateDefinitions: (Long, List<Definition>) -> Unit,
     onSpeakText: (String) -> Unit,
@@ -376,6 +377,7 @@ fun CardModeScreen(
             onGenerateAi = { meaning ->
                 imageTargetId?.let { onGenerateAi(it, meaning) }
             },
+            onBuyPoints = onOpenBuyPoints,
             onDismiss = {
                 showImageDialog = false
                 onClearImageError()

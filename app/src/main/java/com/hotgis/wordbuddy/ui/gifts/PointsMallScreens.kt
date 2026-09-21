@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.CardGiftcard
 import androidx.compose.material.icons.outlined.EventAvailable
 import androidx.compose.material.icons.outlined.LocalMall
 import androidx.compose.material.icons.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -92,6 +93,7 @@ fun PointsMallScreen(
     onOpenGift: (Long) -> Unit,
     onOpenCheckIn: () -> Unit,
     onOpenWithdraw: () -> Unit,
+    onOpenBuyPoints: () -> Unit = {},
     onLogin: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -147,6 +149,9 @@ fun PointsMallScreen(
                     onOpenCheckIn = onOpenCheckIn,
                     onOpenWithdraw = {
                         if (loggedIn) onOpenWithdraw() else onLogin()
+                    },
+                    onOpenBuyPoints = {
+                        if (loggedIn) onOpenBuyPoints() else onLogin()
                     },
                     onPointsOnly = {
                         category = "points_only"
@@ -226,6 +231,7 @@ private fun MallHeader(
     onOpenOrders: () -> Unit,
     onOpenCheckIn: () -> Unit,
     onOpenWithdraw: () -> Unit,
+    onOpenBuyPoints: () -> Unit,
     onPointsOnly: () -> Unit,
 ) {
     Column(
@@ -270,9 +276,9 @@ private fun MallHeader(
         }
         Spacer(Modifier.height(14.sdp()))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            QuickAction(Icons.Outlined.ShoppingCart, "购买积分", onClick = onOpenBuyPoints)
             QuickAction(Icons.Outlined.LocalMall, "0元起兑", onClick = onPointsOnly)
             QuickAction(Icons.Outlined.CardGiftcard, "积分提现", onClick = onOpenWithdraw)
-            QuickAction(Icons.Outlined.ReceiptLong, "我的订单", onClick = onOpenOrders)
             QuickAction(Icons.Outlined.EventAvailable, "每日签到", onClick = onOpenCheckIn)
         }
     }

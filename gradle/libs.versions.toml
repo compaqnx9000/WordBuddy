@@ -16,9 +16,11 @@ biometric = "1.1.0"
 fragment = "1.8.5"
 # GroMore 融合 SDK（含穿山甲 + 聚合；请求 104529400 必须用这个，不能只用 ads-sdk-pro）
 pangle = "7.7.1.6"
+wechat = "6.8.34"
 
 [libraries]
 pangle-mediation-sdk = { group = "com.pangle.cn", name = "mediation-sdk", version.ref = "pangle" }
+wechat-sdk = { group = "com.tencent.mm.opensdk", name = "wechat-sdk-android", version.ref = "wechat" }
 # 显式覆盖并提升 fragment-ktx 版本，修复 ActivityResultRegistry 兼容性
 androidx-fragment-ktx = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "fragment" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }

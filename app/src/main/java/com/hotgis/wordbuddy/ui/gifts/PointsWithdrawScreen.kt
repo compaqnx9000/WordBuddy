@@ -59,6 +59,7 @@ import com.hotgis.wordbuddy.R
 import com.hotgis.wordbuddy.data.HotWordsApi
 import com.hotgis.wordbuddy.data.WithdrawConfig
 import com.hotgis.wordbuddy.data.WithdrawalItem
+import com.hotgis.wordbuddy.pay.isAlipayAuthIdentity
 import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
@@ -78,6 +79,7 @@ fun PointsWithdrawScreen(
     totalPoints: Int,
     token: String?,
     alipayAccount: String?,
+    alipayName: String?,
     wechatAccount: String?,
     onBack: () -> Unit,
     onLogin: () -> Unit,
@@ -93,7 +95,7 @@ fun PointsWithdrawScreen(
     var loading by remember { mutableStateOf(true) }
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var channel by remember { mutableStateOf("alipay") }
+    var channel by remember { mutableStateOf("wechat") }
     var confirmOpen by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
 
@@ -130,6 +132,9 @@ fun PointsWithdrawScreen(
         "wechat" -> wechatAccount?.trim().orEmpty()
         else -> alipayAccount?.trim().orEmpty()
     }
+    val alipayReady = selectedAccount.isNotBlank() &&
+        (isAlipayAuthIdentity(selectedAccount) || !alipayName.isNullOrBlank())
+    val payoutReady = if (channel == "alipay") alipayReady else selectedAccount.isNotBlank()
     val selected = cfg?.channels?.firstOrNull { it.id == channel }
 
     Column(
@@ -217,7 +222,11 @@ fun PointsWithdrawScreen(
                     if (cfg != null) {
                         Spacer(Modifier.height(8.sdp()))
                         Text(
-                            text = "沙箱单笔 ¥${cfg.amountYuan}，消耗 ${cfg.pointsCost} 积分",
+                            text = if (cfg.sandbox) {
+                                "沙箱单笔 ¥${cfg.amountYuan}，消耗 ${cfg.pointsCost} 积分"
+                            } else {
+                                "单笔 ¥${cfg.amountYuan}，消耗 ${cfg.pointsCost} 积分"
+                            },
                             color = Stellar.OnSurfaceVariant,
                             fontSize = 13.ssp(),
                         )
@@ -276,24 +285,28 @@ fun PointsWithdrawScreen(
                 }
             }
 
-            item {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .stellarGlass()
-                        .clip(RoundedCornerShape(14.sdp()))
-                        .padding(14.sdp()),
-                ) {
-                    Text(
-                        text = "收款账号",
-                        color = Stellar.OnSurface,
-                        fontSize = 14.ssp(),
-                        fontWeight = FontWeight.Medium,
-                    )
-                    Spacer(Modifier.height(8.sdp()))
-                    if (selectedAccount.isBlank()) {
+            if (!payoutReady) {
+                item {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .stellarGlass()
+                            .clip(RoundedCornerShape(14.sdp()))
+                            .padding(14.sdp()),
+                    ) {
                         Text(
-                            text = "尚未设置${if (channel == "wechat") "微信" else "支付宝"}收款账号",
+                            text = "收款账号",
+                            color = Stellar.OnSurface,
+                            fontSize = 14.ssp(),
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(Modifier.height(8.sdp()))
+                        Text(
+                            text = if (selectedAccount.isBlank()) {
+                                "尚未${if (channel == "wechat") "设置微信" else "绑定支付宝"}收款账号"
+                            } else {
+                                "尚未填写支付宝实名，打款会被拒绝"
+                            },
                             color = Stellar.Pink,
                             fontSize = 13.ssp(),
                         )
@@ -303,19 +316,6 @@ fun PointsWithdrawScreen(
                             color = Stellar.Cyan,
                             fontSize = 14.ssp(),
                             fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.clickable(onClick = onOpenProfile),
-                        )
-                    } else {
-                        Text(
-                            text = maskPayoutAccount(selectedAccount),
-                            color = Stellar.OnSurface,
-                            fontSize = 15.ssp(),
-                        )
-                        Spacer(Modifier.height(6.sdp()))
-                        Text(
-                            text = "在「个人资料」中修改收款账号",
-                            color = Stellar.OnSurfaceVariant,
-                            fontSize = 12.ssp(),
                             modifier = Modifier.clickable(onClick = onOpenProfile),
                         )
                     }
@@ -341,7 +341,26 @@ fun PointsWithdrawScreen(
                                 selectedAccount.length < 3 -> {
                                     Toast.makeText(
                                         context,
-                                        "请先在个人资料中设置收款账号",
+                                        if (channel == "wechat") "请先在个人资料中设置收款账号" else "请先绑定支付宝账号",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                                channel == "alipay" &&
+                                    cfg?.sandbox != true &&
+                                    !isAlipayAuthIdentity(selectedAccount) &&
+                                    alipayName.isNullOrBlank() -> {
+                                    Toast.makeText(
+                                        context,
+                                        "请先在个人资料中填写支付宝实名",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                                channel == "wechat" &&
+                                    cfg?.sandbox != true &&
+                                    (selectedAccount.length < 18 || !selectedAccount.startsWith("o")) -> {
+                                    Toast.makeText(
+                                        context,
+                                        "请填写微信 OpenID（以 o 开头，不是微信号）",
                                         Toast.LENGTH_SHORT,
                                     ).show()
                                 }
@@ -394,7 +413,7 @@ fun PointsWithdrawScreen(
                 submitting = true
                 scope.launch {
                     runCatching {
-                        api.createWithdrawal(t, channel, selectedAccount)
+                        api.createWithdrawal(t, channel, selectedAccount, alipayName)
                     }.onSuccess { result ->
                         Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
                         confirmOpen = false
@@ -585,6 +604,7 @@ fun WithdrawChannelBadge(channelId: String, size: androidx.compose.ui.unit.Dp) {
 private fun maskPayoutAccount(raw: String?): String {
     val value = raw?.trim().orEmpty()
     if (value.isBlank()) return "未设置"
+    if (isAlipayAuthIdentity(value)) return "已绑定支付宝"
     if (value.length <= 4) return value
     if (value.contains("@")) {
         val at = value.indexOf('@')

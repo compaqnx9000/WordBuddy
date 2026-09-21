@@ -29,6 +29,8 @@ h5/dist/
 tmp_dict/
 .env
 .env.*
+server/certs/*
+!server/certs/.gitkeep
 /tmp_dict/
 tmp_apk/
 tmp_sync/

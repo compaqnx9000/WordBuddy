@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
-    phone TEXT NOT NULL UNIQUE,
+    phone TEXT UNIQUE,
     password_hash TEXT,
     last_login_at TIMESTAMPTZ,
     last_login_method TEXT,
@@ -23,12 +23,40 @@ CREATE TABLE IF NOT EXISTS users (
     signature TEXT,
     email TEXT,
     alipay_account TEXT,
+    alipay_name TEXT,
     wechat_account TEXT,
+    wechat_openid TEXT,
+    wechat_unionid TEXT,
+    phone_changed_at TIMESTAMPTZ,
+    deletion_requested_at TIMESTAMPTZ,
+    deletion_due_at TIMESTAMPTZ,
+    deletion_reason TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_buddy_id_unique
     ON users (buddy_id) WHERE buddy_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_wechat_openid_unique
+    ON users (wechat_openid) WHERE wechat_openid IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS users_deletion_due
+    ON users (deletion_due_at) WHERE deletion_due_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS account_deletion_logs (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT,
+    phone_masked TEXT,
+    phone_hash TEXT,
+    reason TEXT,
+    requested_at TIMESTAMPTZ,
+    due_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS account_deletion_logs_completed
+    ON account_deletion_logs (completed_at DESC);
 
 CREATE TABLE IF NOT EXISTS sms_codes (
     id BIGSERIAL PRIMARY KEY,
@@ -296,3 +324,77 @@ CREATE INDEX IF NOT EXISTS withdrawals_user
 
 CREATE INDEX IF NOT EXISTS withdrawals_status
     ON withdrawals (status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS short_videos (
+    id BIGSERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    author TEXT NOT NULL DEFAULT '词搭子',
+    caption TEXT,
+    video_url TEXT NOT NULL,
+    cover_url TEXT,
+    category TEXT NOT NULL DEFAULT 'speaking',
+    keywords JSONB NOT NULL DEFAULT '[]'::jsonb,
+    duration_ms INTEGER,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    published BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS short_videos_published_sort
+    ON short_videos (published, sort_order ASC, id DESC);
+
+CREATE INDEX IF NOT EXISTS short_videos_category
+    ON short_videos (category, published);
+
+CREATE TABLE IF NOT EXISTS short_video_watches (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT REFERENCES users (id) ON DELETE SET NULL,
+    device_key TEXT,
+    video_id BIGINT NOT NULL REFERENCES short_videos (id) ON DELETE CASCADE,
+    category TEXT NOT NULL,
+    watch_ms INTEGER NOT NULL DEFAULT 0,
+    completed BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS short_video_watches_user
+    ON short_video_watches (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS short_video_watches_device
+    ON short_video_watches (device_key, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS short_video_watches_video
+    ON short_video_watches (video_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS short_video_favorites (
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    video_id BIGINT NOT NULL REFERENCES short_videos (id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, video_id)
+);
+
+CREATE INDEX IF NOT EXISTS short_video_favorites_user_created
+    ON short_video_favorites (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS short_video_favorites_video
+    ON short_video_favorites (video_id);
+
+CREATE TABLE IF NOT EXISTS point_orders (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    package_id TEXT NOT NULL,
+    out_trade_no TEXT NOT NULL UNIQUE,
+    points INTEGER NOT NULL,
+    amount_fen INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    alipay_trade_no TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    paid_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS point_orders_user
+    ON point_orders (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS point_orders_status
+    ON point_orders (status, created_at DESC);

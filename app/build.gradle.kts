@@ -27,6 +27,8 @@ val csjSplashCodeId = localProperties.getProperty("csj.splashCodeId", "").trim()
 val csjSplashFallbackCodeId = localProperties.getProperty("csj.splashFallbackCodeId", "").trim()
 val csjDrawCodeId = localProperties.getProperty("csj.drawCodeId", "104539577").trim()
 val csjRewardCodeId = localProperties.getProperty("csj.rewardCodeId", "104540414").trim()
+// 微信开放平台移动应用 AppId。AppSecret 只放服务端 .env 的 WECHAT_APP_SECRET。
+val wechatAppId = localProperties.getProperty("wechat.appId", "").trim()
 
 android {
     namespace = "com.hotgis.wordbuddy"
@@ -36,8 +38,8 @@ android {
         applicationId = "com.hotgis.wordbuddy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 87
-        versionName = "0.96"
+        versionCode = 108
+        versionName = "1.17"
         ndk {
             // Pangle AAR only ships armeabi-v7a / arm64-v8a (no x86_64).
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
@@ -54,6 +56,7 @@ android {
         )
         buildConfigField("String", "CSJ_DRAW_CODE_ID", "\"${escapeBuildConfig(csjDrawCodeId)}\"")
         buildConfigField("String", "CSJ_REWARD_CODE_ID", "\"${escapeBuildConfig(csjRewardCodeId)}\"")
+        buildConfigField("String", "WECHAT_APP_ID", "\"${escapeBuildConfig(wechatAppId)}\"")
     }
 
     signingConfigs {
@@ -135,6 +138,8 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.zxing:core:3.5.3")
+    implementation("com.alipay.sdk:alipaysdk-android:15.8.33")
+    implementation(libs.wechat.sdk)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
 

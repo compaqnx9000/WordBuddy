@@ -89,6 +89,8 @@ fun LoginScreen(
     onModeChange: (LoginMode) -> Unit,
     onSendCode: () -> Unit,
     onLogin: () -> Unit,
+    wechatEnabled: Boolean = false,
+    onWechatLogin: () -> Unit = {},
     modifier: Modifier = Modifier,
     hint: String? = null,
     onBack: (() -> Unit)? = null,
@@ -286,6 +288,25 @@ fun LoginScreen(
                         letterSpacing = 0.08.em,
                     )
                 }
+            }
+        }
+        if (!needPassword) {
+            Spacer(Modifier.height(16.sdp()))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.sdp()))
+                    .background(if (wechatEnabled) Color(0xFF07C160) else Stellar.SurfaceHigh)
+                    .clickable(enabled = wechatEnabled && !loggingIn, onClick = onWechatLogin)
+                    .padding(vertical = 14.sdp()),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (wechatEnabled) "微信登录" else "微信登录（尚未配置）",
+                    color = if (wechatEnabled) Color.White else Stellar.OnSurfaceVariant,
+                    fontSize = 16.ssp(),
+                    fontWeight = FontWeight.Bold,
+                )
             }
         }
         Spacer(Modifier.height(18.sdp()))

@@ -7,6 +7,7 @@ import express from 'express'
 import { ensureSuperAdmin } from './auth.js'
 import { ensureSchema } from './db.js'
 import { ensureGiftSeed } from './gifts.js'
+import { purgeDueDeletions } from './deletion.js'
 import { adminRouter } from './admin.js'
 import { router } from './routes.js'
 
@@ -20,16 +21,23 @@ if (!process.env.JWT_SECRET) {
 
 const app = express()
 fs.mkdirSync(path.resolve(root, '../uploads/avatars'), { recursive: true })
+fs.mkdirSync(path.resolve(root, '../uploads/videos'), { recursive: true })
 fs.mkdirSync(path.resolve(root, '../public/app'), { recursive: true })
 app.use(cors())
 app.use(express.json({ limit: '4mb' }))
+app.use(express.urlencoded({ extended: false }))
 app.use(
   '/uploads',
   express.static(path.resolve(root, '../uploads'), {
-    etag: false,
-    maxAge: 0,
-    setHeaders(res) {
-      res.setHeader('Cache-Control', 'no-store')
+    etag: true,
+    maxAge: '1h',
+    setHeaders(res, filePath) {
+      if (filePath.includes(`${path.sep}videos${path.sep}`) || filePath.endsWith('.mp4')) {
+        res.setHeader('Cache-Control', 'public, max-age=86400')
+        res.setHeader('Content-Type', 'video/mp4')
+      } else if (filePath.includes(`${path.sep}avatars${path.sep}`)) {
+        res.setHeader('Cache-Control', 'no-store')
+      }
     },
   }),
 )
@@ -72,11 +80,15 @@ const port = Number(process.env.PORT) || 8787
 ensureSchema()
   .then(() => ensureGiftSeed())
   .then(() => ensureSuperAdmin())
+  .then(() => purgeDueDeletions())
   .then(() => {
     app.listen(port, '0.0.0.0', () => {
       console.log(`HotWords API listening on http://0.0.0.0:${port}`)
       console.log(`Admin console: http://127.0.0.1:${port}/admin`)
     })
+    setInterval(() => {
+      purgeDueDeletions().catch((error) => console.error('[deletion-purge]', error))
+    }, 30 * 60 * 1000)
   })
   .catch((error) => {
     console.error(error)

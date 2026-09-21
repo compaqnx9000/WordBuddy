@@ -34,14 +34,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.ArrowBackIosNew
 import androidx.compose.material.icons.outlined.QrCode2
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,8 +63,11 @@ import androidx.core.content.FileProvider
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
+import com.hotgis.wordbuddy.ads.findActivity
 import com.hotgis.wordbuddy.data.HotWordsApi
 import com.hotgis.wordbuddy.data.InviteStore
+import com.hotgis.wordbuddy.pay.AlipayPayHelper
+import com.hotgis.wordbuddy.pay.isAlipayAuthIdentity
 import com.hotgis.wordbuddy.ui.components.WordBuddyAvatarIcon
 import com.hotgis.wordbuddy.ui.components.rememberImagePickerLauncher
 import com.hotgis.wordbuddy.ui.design.sdp
@@ -71,6 +77,7 @@ import com.hotgis.wordbuddy.ui.lookup.stellarGlass
 import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
 import java.io.File
+import kotlinx.coroutines.launch
 
 @Composable
 fun AccountProfileScreen(
@@ -84,6 +91,7 @@ fun AccountProfileScreen(
     signature: String?,
     email: String?,
     alipayAccount: String?,
+    alipayName: String?,
     wechatAccount: String?,
     shippingSummary: String?,
     shippingName: String?,
@@ -93,6 +101,8 @@ fun AccountProfileScreen(
     avatarBusy: Boolean,
     onBack: () -> Unit,
     onUploadAvatar: (Uri, (Result<Unit>) -> Unit) -> Unit,
+    onRequestAlipayAuthInfo: ((Result<String>) -> Unit) -> Unit,
+    onCompleteAlipayBind: (String, (Result<Unit>) -> Unit) -> Unit,
     onUpdateAccountProfile: (
         nickname: String?,
         gender: String?,
@@ -100,6 +110,7 @@ fun AccountProfileScreen(
         signature: String?,
         email: String?,
         alipayAccount: String?,
+        alipayName: String?,
         wechatAccount: String?,
         onResult: (Result<Unit>) -> Unit,
     ) -> Unit,
@@ -119,13 +130,15 @@ fun AccountProfileScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var alipayBinding by remember { mutableStateOf(false) }
+    var showUnbindAlipay by remember { mutableStateOf(false) }
     var showAvatarSource by remember { mutableStateOf(false) }
     var showNickname by remember { mutableStateOf(false) }
     var showGender by remember { mutableStateOf(false) }
     var showRegion by remember { mutableStateOf(false) }
     var showSignature by remember { mutableStateOf(false) }
     var showEmail by remember { mutableStateOf(false) }
-    var showAlipay by remember { mutableStateOf(false) }
     var showWechat by remember { mutableStateOf(false) }
     var showPhone by remember { mutableStateOf(false) }
     var showShipping by remember { mutableStateOf(false) }
@@ -201,6 +214,7 @@ fun AccountProfileScreen(
         signatureValue: String? = null,
         emailValue: String? = null,
         alipayValue: String? = null,
+        alipayNameValue: String? = null,
         wechatValue: String? = null,
         successMessage: String,
         onSuccess: () -> Unit,
@@ -214,6 +228,7 @@ fun AccountProfileScreen(
             signatureValue,
             emailValue,
             alipayValue,
+            alipayNameValue,
             wechatValue,
         ) { result ->
             editBusy = false
@@ -224,6 +239,104 @@ fun AccountProfileScreen(
                 }
                 .onFailure { editError = it.message ?: "保存失败" }
         }
+    }
+
+    fun bindAlipay() {
+        if (alipayBinding) return
+        val activity = context.findActivity()
+        if (activity == null) {
+            Toast.makeText(context, "无法打开支付宝", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!AlipayPayHelper.isInstalled(context)) {
+            Toast.makeText(context, "请先安装支付宝，再绑定收款账号", Toast.LENGTH_SHORT).show()
+            return
+        }
+        alipayBinding = true
+        onRequestAlipayAuthInfo { infoResult ->
+            infoResult.onFailure {
+                alipayBinding = false
+                Toast.makeText(context, it.message ?: "获取授权信息失败", Toast.LENGTH_SHORT).show()
+            }
+            infoResult.onSuccess { authInfo ->
+                scope.launch {
+                    val auth = runCatching { AlipayPayHelper.auth(activity, authInfo) }.getOrElse {
+                        alipayBinding = false
+                        Toast.makeText(context, it.message ?: "调起支付宝失败", Toast.LENGTH_SHORT).show()
+                        return@launch
+                    }
+                    val code = auth.authCode
+                    when {
+                        auth.cancelled -> {
+                            alipayBinding = false
+                            Toast.makeText(context, "已取消绑定", Toast.LENGTH_SHORT).show()
+                        }
+                        code.isNullOrBlank() -> {
+                            alipayBinding = false
+                            Toast.makeText(
+                                context,
+                                auth.memo.ifBlank { "支付宝授权失败" },
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        else -> onCompleteAlipayBind(code) { result ->
+                            alipayBinding = false
+                            result
+                                .onSuccess {
+                                    Toast.makeText(context, "支付宝已绑定", Toast.LENGTH_SHORT).show()
+                                }
+                                .onFailure {
+                                    Toast.makeText(context, it.message ?: "绑定失败", Toast.LENGTH_SHORT).show()
+                                }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showUnbindAlipay) {
+        AlertDialog(
+            onDismissRequest = { if (!editBusy) showUnbindAlipay = false },
+            containerColor = Stellar.SurfaceContainer,
+            titleContentColor = Stellar.CyanSoft,
+            textContentColor = Stellar.OnSurfaceVariant,
+            title = {
+                Text("解除支付宝绑定", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column {
+                    Text("解绑后不能用该账号提现。需要时可以重新打开支付宝绑定。")
+                    if (!editError.isNullOrBlank()) {
+                        Spacer(Modifier.height(8.sdp()))
+                        Text(editError.orEmpty(), color = Stellar.Pink, fontSize = 13.ssp())
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !editBusy,
+                    onClick = {
+                        saveProfile(
+                            alipayValue = "",
+                            alipayNameValue = "",
+                            successMessage = "已解除支付宝绑定",
+                            onSuccess = { showUnbindAlipay = false },
+                        )
+                    },
+                ) {
+                    Text(if (editBusy) "解绑中…" else "解绑", color = Stellar.Pink)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !editBusy,
+                    onClick = { showUnbindAlipay = false },
+                ) {
+                    Text("取消", color = Stellar.OnSurfaceVariant)
+                }
+            },
+        )
     }
 
     if (showAvatarSource) {
@@ -337,26 +450,6 @@ fun AccountProfileScreen(
                     emailValue = value,
                     successMessage = "邮箱已更新",
                     onSuccess = { showEmail = false },
-                )
-            },
-        )
-    }
-    if (showAlipay) {
-        EditAlipayAccountDialog(
-            initial = alipayAccount.orEmpty(),
-            busy = editBusy,
-            error = editError,
-            onDismiss = {
-                if (!editBusy) {
-                    showAlipay = false
-                    editError = null
-                }
-            },
-            onConfirm = { value ->
-                saveProfile(
-                    alipayValue = value,
-                    successMessage = "支付宝账号已保存",
-                    onSuccess = { showAlipay = false },
                 )
             },
         )
@@ -660,12 +753,50 @@ fun AccountProfileScreen(
             }
 
             AccountProfileGroup {
+                val alipayBound = !alipayAccount.isNullOrBlank()
                 AccountProfileRow(
                     title = "支付宝账号",
-                    value = alipayAccount?.takeIf { it.isNotBlank() } ?: "去设置",
-                    onClick = {
-                        editError = null
-                        showAlipay = true
+                    value = when {
+                        alipayBinding -> "正在打开支付宝…"
+                        !alipayBound -> "去绑定"
+                        isAlipayAuthIdentity(alipayAccount) -> "已绑定"
+                        !alipayName.isNullOrBlank() -> "${maskAlipay(alipayAccount.orEmpty())} · $alipayName"
+                        else -> maskAlipay(alipayAccount.orEmpty())
+                    },
+                    onClick = { if (!alipayBinding && !editBusy) bindAlipay() },
+                    trailingContent = if (alipayBound && !alipayBinding) {
+                        {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = if (isAlipayAuthIdentity(alipayAccount)) {
+                                        "已绑定"
+                                    } else if (!alipayName.isNullOrBlank()) {
+                                        "${maskAlipay(alipayAccount.orEmpty())} · $alipayName"
+                                    } else {
+                                        maskAlipay(alipayAccount.orEmpty())
+                                    },
+                                    color = Stellar.OnSurfaceVariant.copy(alpha = 0.92f),
+                                    fontSize = 15.ssp(),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(Modifier.width(10.sdp()))
+                                Text(
+                                    text = "解绑",
+                                    color = Stellar.Pink,
+                                    fontSize = 15.ssp(),
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.clickable {
+                                        if (!editBusy) {
+                                            editError = null
+                                            showUnbindAlipay = true
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    } else {
+                        null
                     },
                 )
                 AccountProfileDivider()
@@ -735,6 +866,18 @@ private fun AccountProfileGroup(content: @Composable () -> Unit) {
             .padding(vertical = 2.sdp()),
         content = { content() },
     )
+}
+
+private fun maskAlipay(value: String): String {
+    val text = value.trim()
+    if (text.contains('@') && text.length > 5) {
+        val at = text.indexOf('@')
+        val head = text.take(at.coerceAtMost(2))
+        return "$head***${text.substring(at)}"
+    }
+    val digits = text.filter { it.isDigit() }
+    if (digits.length >= 7) return digits.take(3) + "****" + digits.takeLast(4)
+    return text
 }
 
 @Composable

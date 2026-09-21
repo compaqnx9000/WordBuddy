@@ -657,33 +657,6 @@ fun EditInviteCodeDialog(
 }
 
 @Composable
-fun EditAlipayAccountDialog(
-    initial: String,
-    busy: Boolean,
-    error: String?,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
-) {
-    var value by remember { mutableStateOf(initial) }
-    ProfileFormDialog(
-        title = "支付宝收款账号",
-        subtitle = "用于积分提现，请填写支付宝登录手机号或邮箱。",
-        busy = busy,
-        error = error,
-        confirmText = "保存",
-        onDismiss = onDismiss,
-        onConfirm = { onConfirm(value.trim()) },
-    ) {
-        ProfileTextField(
-            value = value,
-            onValueChange = { if (it.length <= 64) value = it },
-            placeholder = "手机号或邮箱",
-            keyboardType = KeyboardType.Email,
-        )
-    }
-}
-
-@Composable
 fun EditWechatAccountDialog(
     initial: String,
     busy: Boolean,
@@ -694,7 +667,7 @@ fun EditWechatAccountDialog(
     var value by remember { mutableStateOf(initial) }
     ProfileFormDialog(
         title = "微信收款账号",
-        subtitle = "用于积分提现。沙箱测试可填任意标识；正式环境请填商户绑定账号。",
+        subtitle = "用于积分提现。微信登录成功后会自动填入本 App 的 OpenID；也可以手动粘贴（以英文字母 o 开头，不能填微信号）。",
         busy = busy,
         error = error,
         confirmText = "保存",
@@ -704,7 +677,7 @@ fun EditWechatAccountDialog(
         ProfileTextField(
             value = value,
             onValueChange = { if (it.length <= 64) value = it },
-            placeholder = "微信号 / OpenID",
+            placeholder = "微信 OpenID（o 开头）",
         )
     }
 }

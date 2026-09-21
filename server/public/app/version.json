@@ -1,8 +1,8 @@
 {
-  "versionCode": 87,
-  "versionName": "0.96",
+  "versionCode": 108,
+  "versionName": "1.17",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "下载抖音或快手视频前需先看完一条激励广告。",
-  "releasedAt": "2026-09-19T13:10:00.000Z"
+  "notes": "已绑定的支付宝可以在个人资料里解绑。",
+  "releasedAt": "2026-09-21T13:55:00.000Z"
 }

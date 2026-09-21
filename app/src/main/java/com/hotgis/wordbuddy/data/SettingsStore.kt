@@ -34,6 +34,7 @@ class SettingsStore(context: Context) {
             defaultNotebookId = prefs.getLong(KEY_DEFAULT_NOTEBOOK_ID, Notebook.DEFAULT_ID),
             biometricLogin = prefs.getBoolean(KEY_BIOMETRIC_LOGIN, false),
             podcastPlayWhenScreenOff = prefs.getBoolean(KEY_PODCAST_SCREEN_OFF, false),
+            shortsMetaVisibleDefault = prefs.getBoolean(KEY_SHORTS_META_DEFAULT, true),
         )
     }
 
@@ -54,6 +55,7 @@ class SettingsStore(context: Context) {
             .putLong(KEY_DEFAULT_NOTEBOOK_ID, settings.defaultNotebookId)
             .putBoolean(KEY_BIOMETRIC_LOGIN, settings.biometricLogin)
             .putBoolean(KEY_PODCAST_SCREEN_OFF, settings.podcastPlayWhenScreenOff)
+            .putBoolean(KEY_SHORTS_META_DEFAULT, settings.shortsMetaVisibleDefault)
             .apply()
     }
 
@@ -87,5 +89,6 @@ class SettingsStore(context: Context) {
         const val KEY_ACTIVE_NOTEBOOK_ID = "active_notebook_id"
         const val KEY_BIOMETRIC_LOGIN = "biometric_login"
         const val KEY_PODCAST_SCREEN_OFF = "podcast_play_when_screen_off"
+        const val KEY_SHORTS_META_DEFAULT = "shorts_meta_visible_default"
     }
 }

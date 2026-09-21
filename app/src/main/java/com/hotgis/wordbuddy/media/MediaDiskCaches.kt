@@ -1,25 +1,58 @@
-package com.hotgis.wordbuddy.podcast
+package com.hotgis.wordbuddy.media
 
 import android.content.Context
-import android.net.Uri
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
-import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
-import androidx.media3.datasource.DataSpec
+import com.hotgis.wordbuddy.podcast.PodcastAudioCache
+import com.hotgis.wordbuddy.podcast.PodcastPlayerBridge
 import java.io.File
+import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
- * On-disk audio cache so idle prefetch and later playback share the same bytes.
+ * Shared helpers for short-video / podcast disk caches and settings clear action.
  */
 @UnstableApi
-object PodcastAudioCache {
-    private const val CACHE_DIR = "podcast_audio"
-    private const val MAX_BYTES = 80L * 1024 * 1024
-    const val USER_AGENT = "WordBuddyPodcast/1.0"
+object MediaDiskCaches {
+    fun usedBytes(context: Context): Long {
+        val app = context.applicationContext
+        return PodcastAudioCache.usedBytes(app) + ShortsVideoCache.usedBytes(app)
+    }
+
+    fun formatSize(bytes: Long): String {
+        if (bytes <= 0L) return "0 MB"
+        val mb = bytes / (1024.0 * 1024.0)
+        return if (mb >= 100) {
+            "${mb.roundToInt()} MB"
+        } else {
+            String.format(Locale.US, "%.1f MB", mb)
+        }
+    }
+
+    /**
+     * Pause podcast playback then wipe podcast + shorts SimpleCache contents.
+     * Safe to call from settings (IO thread preferred).
+     */
+    fun clearAll(context: Context) {
+        val app = context.applicationContext
+        runCatching { PodcastPlayerBridge.pause() }
+        PodcastAudioCache.clear(app)
+        ShortsVideoCache.clear(app)
+    }
+}
+
+/**
+ * On-disk video cache so swiping back to a short prefers local bytes.
+ */
+@UnstableApi
+object ShortsVideoCache {
+    private const val CACHE_DIR = "shorts_video"
+    private const val MAX_BYTES = 200L * 1024 * 1024
+    const val USER_AGENT = "WordBuddyShorts/1.0"
 
     @Volatile
     private var cache: SimpleCache? = null
@@ -40,7 +73,7 @@ object PodcastAudioCache {
         DefaultHttpDataSource.Factory()
             .setUserAgent(USER_AGENT)
             .setConnectTimeoutMs(12_000)
-            .setReadTimeoutMs(20_000)
+            .setReadTimeoutMs(30_000)
             .setAllowCrossProtocolRedirects(true)
 
     fun dataSourceFactory(context: Context): CacheDataSource.Factory =
@@ -51,31 +84,6 @@ object PodcastAudioCache {
                 CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or
                     CacheDataSource.FLAG_IGNORE_CACHE_FOR_UNSET_LENGTH_REQUESTS,
             )
-
-    fun isLiveUrl(url: String): Boolean {
-        val u = url.lowercase()
-        return u.contains(".m3u8") ||
-            u.contains("/live") ||
-            u.contains("ice.") ||
-            u.contains("streamguys") ||
-            u.contains("musicradio.com/lbc")
-    }
-
-    /** Download the first [byteCount] bytes into cache. No-op for live streams. */
-    fun prefetchHead(context: Context, url: String, byteCount: Long): Boolean {
-        if (url.isBlank() || isLiveUrl(url) || byteCount <= 0L) return false
-        val spec = DataSpec.Builder()
-            .setUri(Uri.parse(url))
-            .setPosition(0)
-            .setLength(byteCount)
-            .setFlags(DataSpec.FLAG_ALLOW_CACHE_FRAGMENTATION)
-            .build()
-        val source = dataSourceFactory(context).createDataSource()
-        return runCatching {
-            CacheWriter(source, spec, /* temporaryBuffer = */ null, /* listener = */ null).cache()
-            true
-        }.getOrDefault(false)
-    }
 
     fun usedBytes(context: Context): Long =
         runCatching { simpleCache(context).cacheSpace }.getOrDefault(0L)

@@ -85,6 +85,7 @@ class AccountStore(context: Context) {
                     .put("signature", acc.session.signature.orEmpty())
                     .put("email", acc.session.email.orEmpty())
                     .put("alipayAccount", acc.session.alipayAccount.orEmpty())
+                    .put("alipayName", acc.session.alipayName.orEmpty())
                     .put("wechatAccount", acc.session.wechatAccount.orEmpty())
                     .put("networkRegion", acc.session.networkRegion.orEmpty())
                     .put("networkRegionDetail", acc.session.networkRegionDetail.orEmpty()),
@@ -117,6 +118,7 @@ class AccountStore(context: Context) {
                 signature = obj.optString("signature").trim().takeIf { it.isNotEmpty() },
                 email = obj.optString("email").trim().takeIf { it.isNotEmpty() },
                 alipayAccount = obj.optString("alipayAccount").trim().takeIf { it.isNotEmpty() },
+                alipayName = obj.optString("alipayName").trim().takeIf { it.isNotEmpty() },
                 wechatAccount = obj.optString("wechatAccount").trim().takeIf { it.isNotEmpty() },
                 networkRegion = obj.optString("networkRegion").trim().takeIf { it.isNotEmpty() },
                 networkRegionDetail = obj.optString("networkRegionDetail").trim().takeIf { it.isNotEmpty() },

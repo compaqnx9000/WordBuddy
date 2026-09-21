@@ -10,7 +10,25 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+/** Shorts and podcast share one audible slot. The latest claim keeps the sound. */
+enum class AudibleOwner { None, Shorts, Podcast }
+
+object AudibleFocus {
+    private val _owner = MutableStateFlow(AudibleOwner.None)
+    val owner: StateFlow<AudibleOwner> = _owner.asStateFlow()
+
+    fun claimShorts() {
+        _owner.value = AudibleOwner.Shorts
+    }
+
+    fun claimPodcast() {
+        _owner.value = AudibleOwner.Podcast
+    }
+}
 
 /**
  * App-side handle that starts [PodcastPlayerService] and forwards play commands.
@@ -33,6 +51,7 @@ object PodcastPlayerBridge {
     }
 
     fun play(context: Context, show: PodcastShow, episode: PodcastEpisode, queue: List<PodcastEpisode>) {
+        AudibleFocus.claimPodcast()
         PodcastPlayerService.markPending(show, episode)
         ensureStarted(context)
         val svc = PodcastPlayerService.instance
@@ -66,7 +85,13 @@ object PodcastPlayerBridge {
     }
 
     fun togglePlayPause() {
+        val exo = PodcastPlayerService.instance?.playerForFocus()
+        if (exo?.playWhenReady != true) AudibleFocus.claimPodcast()
         PodcastPlayerService.instance?.togglePlayPause()
+    }
+
+    fun pause() {
+        PodcastPlayerService.instance?.pausePlayback()
     }
 
     fun seekTo(positionMs: Long) {

@@ -46,7 +46,14 @@ export async function ensureSchema() {
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS signature TEXT`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS alipay_account TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS alipay_name TEXT`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_account TEXT`)
+  await query(`ALTER TABLE users ALTER COLUMN phone DROP NOT NULL`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_openid TEXT`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_unionid TEXT`)
+  await query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS users_wechat_openid_unique ON users (wechat_openid) WHERE wechat_openid IS NOT NULL`,
+  )
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_by_user_id BIGINT REFERENCES users (id) ON DELETE SET NULL`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_bound_at TIMESTAMPTZ`)
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS users_buddy_id_unique ON users (buddy_id) WHERE buddy_id IS NOT NULL`)
@@ -264,5 +271,100 @@ export async function ensureSchema() {
   await query('DROP INDEX IF EXISTS mnemonic_images_word_provider')
   await query(
     'CREATE UNIQUE INDEX IF NOT EXISTS mnemonic_images_word_meaning ON mnemonic_images (word_key, provider, meaning_key)',
+  )
+  await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_changed_at TIMESTAMPTZ')
+  await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_requested_at TIMESTAMPTZ')
+  await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_due_at TIMESTAMPTZ')
+  await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_reason TEXT')
+  await query(`
+    CREATE TABLE IF NOT EXISTS account_deletion_logs (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT,
+      phone_masked TEXT,
+      phone_hash TEXT,
+      reason TEXT,
+      requested_at TIMESTAMPTZ,
+      due_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      completed_reason TEXT
+    )
+  `)
+  await query('CREATE INDEX IF NOT EXISTS users_deletion_due ON users (deletion_due_at) WHERE deletion_due_at IS NOT NULL')
+  await query('CREATE INDEX IF NOT EXISTS account_deletion_logs_completed ON account_deletion_logs (completed_at DESC)')
+  await query(`
+    CREATE TABLE IF NOT EXISTS short_videos (
+      id BIGSERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      author TEXT NOT NULL DEFAULT '词搭子',
+      caption TEXT,
+      video_url TEXT NOT NULL,
+      cover_url TEXT,
+      category TEXT NOT NULL DEFAULT 'speaking',
+      keywords JSONB NOT NULL DEFAULT '[]'::jsonb,
+      duration_ms INTEGER,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      published BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query(
+    'CREATE INDEX IF NOT EXISTS short_videos_published_sort ON short_videos (published, sort_order ASC, id DESC)',
+  )
+  await query('CREATE INDEX IF NOT EXISTS short_videos_category ON short_videos (category, published)')
+  await query(`
+    CREATE TABLE IF NOT EXISTS short_video_watches (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT REFERENCES users (id) ON DELETE SET NULL,
+      device_key TEXT,
+      video_id BIGINT NOT NULL REFERENCES short_videos (id) ON DELETE CASCADE,
+      category TEXT NOT NULL,
+      watch_ms INTEGER NOT NULL DEFAULT 0,
+      completed BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query(
+    'CREATE INDEX IF NOT EXISTS short_video_watches_user ON short_video_watches (user_id, created_at DESC)',
+  )
+  await query(
+    'CREATE INDEX IF NOT EXISTS short_video_watches_device ON short_video_watches (device_key, created_at DESC)',
+  )
+  await query(
+    'CREATE INDEX IF NOT EXISTS short_video_watches_video ON short_video_watches (video_id, created_at DESC)',
+  )
+  await query(`
+    CREATE TABLE IF NOT EXISTS short_video_favorites (
+      user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+      video_id BIGINT NOT NULL REFERENCES short_videos (id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, video_id)
+    )
+  `)
+  await query(
+    'CREATE INDEX IF NOT EXISTS short_video_favorites_user_created ON short_video_favorites (user_id, created_at DESC)',
+  )
+  await query(
+    'CREATE INDEX IF NOT EXISTS short_video_favorites_video ON short_video_favorites (video_id)',
+  )
+  await query(`
+    CREATE TABLE IF NOT EXISTS point_orders (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+      package_id TEXT NOT NULL,
+      out_trade_no TEXT NOT NULL UNIQUE,
+      points INTEGER NOT NULL,
+      amount_fen INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      alipay_trade_no TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      paid_at TIMESTAMPTZ
+    )
+  `)
+  await query(
+    'CREATE INDEX IF NOT EXISTS point_orders_user ON point_orders (user_id, created_at DESC)',
+  )
+  await query(
+    'CREATE INDEX IF NOT EXISTS point_orders_status ON point_orders (status, created_at DESC)',
   )
 }

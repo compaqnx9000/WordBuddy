@@ -36,6 +36,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.CardGiftcard
 import androidx.compose.material.icons.outlined.Check
@@ -126,6 +128,8 @@ fun ProfileScreen(
         cb(CheckInResult.Failed("未实现"))
     },
     onOpenPointsMall: () -> Unit = {},
+    onOpenBuyPoints: () -> Unit = {},
+    onOpenShortFavorites: () -> Unit = {},
     onOpenTools: () -> Unit = {},
     buddyId: String? = null,
     onLogin: () -> Unit = {},
@@ -492,11 +496,27 @@ fun ProfileScreen(
         val rightMenus: @Composable () -> Unit = {
             ProfileMenuCard {
                 ProfileMenuRow(
+                    icon = Icons.Outlined.AccountBalanceWallet,
+                    iconTint = Stellar.Pink,
+                    title = "充值积分",
+                    trailing = "测试价 ¥0.10",
+                    onClick = onOpenBuyPoints,
+                )
+                ProfileMenuDivider()
+                ProfileMenuRow(
                     icon = Icons.Outlined.CardGiftcard,
                     iconTint = Stellar.Gold,
                     title = "积分兑礼",
                     trailing = "可用 ${checkIn.totalPoints} 分",
                     onClick = onOpenPointsMall,
+                )
+                ProfileMenuDivider()
+                ProfileMenuRow(
+                    icon = Icons.Outlined.BookmarkBorder,
+                    iconTint = Stellar.Cyan,
+                    title = "短视频收藏",
+                    trailing = "可取消收藏",
+                    onClick = onOpenShortFavorites,
                 )
                 ProfileMenuDivider()
                 ProfileMenuRow(

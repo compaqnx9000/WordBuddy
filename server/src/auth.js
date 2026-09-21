@@ -2,10 +2,16 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import jwt from 'jsonwebtoken'
 import { query } from './db.js'
 import { extractDeviceInfo, isPrivateIp, normalizeIp, resolveIpLocation } from './device.js'
+import {
+  ACCOUNT_DELETED_CODE,
+  ACCOUNT_DELETED_MESSAGE,
+  finalizeDueAccountById,
+} from './deletion.js'
 
 const TOKEN_TTL = '30d'
 export const SESSION_REPLACED_CODE = 'SESSION_REPLACED'
 export const SESSION_REPLACED_MESSAGE = '账号已在其他设备登录'
+export { ACCOUNT_DELETED_CODE, ACCOUNT_DELETED_MESSAGE }
 
 export function signToken(user, sessionVersion = 0) {
   return jwt.sign(
@@ -35,11 +41,17 @@ async function assertActiveSession(payload) {
     throw err
   }
   const row = (
-    await query('SELECT session_version FROM users WHERE id = $1', [userId])
+    await query('SELECT session_version, deletion_due_at FROM users WHERE id = $1', [userId])
   ).rows[0]
   if (!row) {
-    const err = new Error('登录已过期')
-    err.code = 'SESSION_EXPIRED'
+    const err = new Error(ACCOUNT_DELETED_MESSAGE)
+    err.code = ACCOUNT_DELETED_CODE
+    throw err
+  }
+  if (row.deletion_due_at && new Date(row.deletion_due_at).getTime() <= Date.now()) {
+    await finalizeDueAccountById(userId)
+    const err = new Error(ACCOUNT_DELETED_MESSAGE)
+    err.code = ACCOUNT_DELETED_CODE
     throw err
   }
   const tokenSv = Number(payload.sv ?? 0)
@@ -66,6 +78,10 @@ export async function authRequired(req, res, next) {
   } catch (error) {
     if (error?.code === SESSION_REPLACED_CODE) {
       res.status(401).json({ error: SESSION_REPLACED_MESSAGE, code: SESSION_REPLACED_CODE })
+      return
+    }
+    if (error?.code === ACCOUNT_DELETED_CODE) {
+      res.status(401).json({ error: ACCOUNT_DELETED_MESSAGE, code: ACCOUNT_DELETED_CODE })
       return
     }
     res.status(401).json({ error: '登录已过期' })

@@ -1,4 +1,5 @@
 import { query } from './db.js'
+import { adjustPoints, aiImagePointsCost, getPointsBalance } from './points.js'
 
 const inflight = new Map()
 
@@ -173,28 +174,79 @@ async function loadCached(key, provider, sense) {
   return null
 }
 
-async function createMnemonicImage({ word, meaningHint, provider }) {
+async function createMnemonicImage({ word, meaningHint, provider, userId = null }) {
   const key = wordKey(word)
   if (!key) throw fail(400, '请填写单词')
   const sense = meaningKey(meaningHint)
   const cached = await loadCached(key, provider, sense)
-  if (cached) return { bytes: cached, provider, cached: true }
+  if (cached) {
+    return {
+      bytes: cached,
+      provider,
+      cached: true,
+      pointsSpent: 0,
+      pointsCost: aiImagePointsCost(),
+      balance: userId ? await getPointsBalance(userId) : null,
+    }
+  }
 
-  const scene = provider === 'siliconflow' ? await englishScene(word, meaningHint) : String(meaningHint || '').trim()
-  const prompt = provider === 'siliconflow'
-    ? mnemonicPrompt(word, scene)
-    : `simple cute educational mnemonic illustration for English word "${String(word).trim()}"${scene ? `, specifically meaning: ${scene}` : ''}, clean white background, no text, no letters, no watermark, everyday life scene`
-  const bytes = provider === 'siliconflow'
-    ? await fetchSiliconFlow(prompt)
-    : await fetchPollinations(prompt)
-  await query(
-    `INSERT INTO mnemonic_images (word_key, provider, meaning_key, image, prompt)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (word_key, provider, meaning_key) DO NOTHING`,
-    [key, provider, sense, bytes, prompt],
-  )
-  const stored = await loadCached(key, provider, sense)
-  return { bytes: stored || bytes, provider, cached: false }
+  const cost = aiImagePointsCost()
+  let balanceAfter = null
+  if (cost > 0) {
+    if (!userId) throw fail(401, '请先登录后再生成配图')
+    const debited = await adjustPoints({
+      userId,
+      delta: -cost,
+      reason: 'ai_image',
+      refType: 'mnemonic',
+      refId: `${provider}:${key}`,
+    })
+    if (!debited.ok) {
+      const err = fail(402, debited.error || '积分不足')
+      err.code = debited.code || 'INSUFFICIENT_POINTS'
+      err.need = debited.need
+      err.balance = debited.balance
+      err.pointsCost = cost
+      throw err
+    }
+    balanceAfter = debited.balance
+  }
+
+  try {
+    const scene = provider === 'siliconflow' ? await englishScene(word, meaningHint) : String(meaningHint || '').trim()
+    const prompt = provider === 'siliconflow'
+      ? mnemonicPrompt(word, scene)
+      : `simple cute educational mnemonic illustration for English word "${String(word).trim()}"${scene ? `, specifically meaning: ${scene}` : ''}, clean white background, no text, no letters, no watermark, everyday life scene`
+    const bytes = provider === 'siliconflow'
+      ? await fetchSiliconFlow(prompt)
+      : await fetchPollinations(prompt)
+    await query(
+      `INSERT INTO mnemonic_images (word_key, provider, meaning_key, image, prompt)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (word_key, provider, meaning_key) DO NOTHING`,
+      [key, provider, sense, bytes, prompt],
+    )
+    const stored = await loadCached(key, provider, sense)
+    return {
+      bytes: stored || bytes,
+      provider,
+      cached: false,
+      pointsSpent: cost,
+      pointsCost: cost,
+      balance: balanceAfter,
+    }
+  } catch (error) {
+    if (cost > 0 && userId) {
+      await adjustPoints({
+        userId,
+        delta: cost,
+        reason: 'ai_image_refund',
+        refType: 'mnemonic',
+        refId: `${provider}:${key}`,
+      }).catch(() => {})
+    }
+    throw error
+  }
 }
 
 export function getOrCreateMnemonicImage(input) {
@@ -206,6 +258,7 @@ export function getOrCreateMnemonicImage(input) {
     word: input.word,
     meaningHint: input.meaningHint,
     provider,
+    userId: input.userId ?? null,
   }).finally(() => {
     inflight.delete(key)
   })

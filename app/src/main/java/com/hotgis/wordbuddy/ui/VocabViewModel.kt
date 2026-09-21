@@ -1,6 +1,7 @@
 package com.hotgis.wordbuddy.ui
 
 import android.app.Application
+import com.hotgis.wordbuddy.auth.WeChatAuth
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -146,6 +147,10 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     val notebooks: StateFlow<List<Notebook>> = repo.notebooks
     private val _session = MutableStateFlow(sessionStore.load())
     val session: StateFlow<UserSession?> = _session.asStateFlow()
+    private val _accountDeletion = MutableStateFlow<HotWordsApi.AccountDeletionStatus?>(null)
+    val accountDeletion: StateFlow<HotWordsApi.AccountDeletionStatus?> = _accountDeletion.asStateFlow()
+    private val _accountDeletionBusy = MutableStateFlow(false)
+    val accountDeletionBusy: StateFlow<Boolean> = _accountDeletionBusy.asStateFlow()
     private val _rememberedAccounts = MutableStateFlow(accountStore.list())
     val rememberedAccounts: StateFlow<List<RememberedAccount>> = _rememberedAccounts.asStateFlow()
     private val _accountSwitching = MutableStateFlow(false)
@@ -266,9 +271,10 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     fun validateSessionNow() {
         val token = _session.value?.token ?: return
         viewModelScope.launch {
-            runCatching { api.fetchMe(token) }
-                .onSuccess { remoteNullable ->
-                    val remote = remoteNullable ?: return@onSuccess
+            runCatching { api.fetchMeSnapshot(token) }
+                .onSuccess { snapshot ->
+                    val remote = snapshot?.session ?: return@onSuccess
+                    _accountDeletion.value = snapshot.deletion
                     val current = _session.value ?: return@onSuccess
                     val merged = current.copy(
                         phone = remote.phone.ifBlank { current.phone },
@@ -681,7 +687,12 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 repo.updateImageBlob(id, bytes)
                 syncLookupImage(id)
             }.onFailure { error ->
-                val detail = error.message?.takeIf { it.isNotBlank() }
+                val api = error as? com.hotgis.wordbuddy.data.ApiException
+                val detail = when {
+                    api?.httpCode == 402 || api?.code == "INSUFFICIENT_POINTS" ->
+                        (api.message?.takeIf { it.isNotBlank() } ?: "积分不足") + "，请先购买积分"
+                    else -> error.message?.takeIf { it.isNotBlank() }
+                }
                 _ui.update {
                     it.copy(
                         imageError = detail ?: "AI 生图失败，请检查网络后再试（免费接口有时会忙）",
@@ -2269,6 +2280,23 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun loginWithWechat() {
+        if (_login.value.loggingIn) return
+        viewModelScope.launch {
+            _login.update { it.copy(loggingIn = true, error = null) }
+            runCatching {
+                val code = WeChatAuth.signIn(getApplication()).await()
+                api.loginWithWechat(code)
+            }.onSuccess { result ->
+                val session = result.session ?: error("登录失败")
+                enterSession(session)
+            }.onFailure { error ->
+                _login.update { it.copy(error = error.message ?: "微信登录失败") }
+            }
+            _login.update { it.copy(loggingIn = false) }
+        }
+    }
+
     private fun enterSession(session: UserSession) {
         val previousUserId = _session.value?.userId
         if (previousUserId != null && previousUserId != session.userId) {
@@ -2370,6 +2398,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     signature = remote.signature ?: target.session.signature,
                     email = remote.email ?: target.session.email,
                     alipayAccount = remote.alipayAccount ?: target.session.alipayAccount,
+                    alipayName = remote.alipayName ?: target.session.alipayName,
                     wechatAccount = remote.wechatAccount ?: target.session.wechatAccount,
                     networkRegion = remote.networkRegion ?: target.session.networkRegion,
                     networkRegionDetail = remote.networkRegionDetail ?: target.session.networkRegionDetail,
@@ -2386,6 +2415,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private fun clearActiveSessionKeepingAccounts() {
         sessionStore.clear()
         _session.value = null
+        _accountDeletion.value = null
+        _accountDeletionBusy.value = false
         _checkIn.value = CheckInState()
         _avatarBitmap.value = null
         _avatarBusy.value = false
@@ -2436,13 +2467,15 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun syncProfileFromServer() {
         val current = _session.value ?: return
-        val remote = runCatching { api.fetchMe(current.token) }
+        val snapshot = runCatching { api.fetchMeSnapshot(current.token) }
             .onFailure { error ->
-                if (error is ApiException && error.isSessionReplaced) {
+                if (error is ApiException && (error.isSessionReplaced || error.isAccountDeleted)) {
                     // AuthSessionEvents already notified; avoid double work.
                 }
             }
             .getOrNull() ?: return
+        val remote = snapshot.session
+        _accountDeletion.value = snapshot.deletion
         val merged = current.copy(
             phone = remote.phone.ifBlank { current.phone },
             avatarUrl = remote.avatarUrl ?: current.avatarUrl,
@@ -2459,6 +2492,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             signature = remote.signature ?: current.signature,
             email = remote.email ?: current.email,
             alipayAccount = remote.alipayAccount ?: current.alipayAccount,
+            alipayName = remote.alipayName ?: current.alipayName,
             wechatAccount = remote.wechatAccount ?: current.wechatAccount,
             networkRegion = remote.networkRegion ?: current.networkRegion,
             networkRegionDetail = remote.networkRegionDetail ?: current.networkRegionDetail,
@@ -2542,6 +2576,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         signature: String? = null,
         email: String? = null,
         alipayAccount: String? = null,
+        alipayName: String? = null,
         wechatAccount: String? = null,
         onResult: (Result<Unit>) -> Unit,
     ) {
@@ -2569,10 +2604,17 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             onResult(Result.failure(IllegalArgumentException("支付宝账号至少 3 位")))
             return
         }
-        val nextWechat = wechatAccount?.trim()
-        if (nextWechat != null && nextWechat.isNotEmpty() && nextWechat.length < 3) {
-            onResult(Result.failure(IllegalArgumentException("微信收款标识至少 3 位")))
+        val nextAlipayName = alipayName?.trim()
+        if (nextAlipayName != null && nextAlipayName.isNotEmpty() && nextAlipayName.length < 2) {
+            onResult(Result.failure(IllegalArgumentException("支付宝实名至少 2 个字")))
             return
+        }
+        val nextWechat = wechatAccount?.trim()
+        if (nextWechat != null && nextWechat.isNotEmpty()) {
+            if (nextWechat.length < 18 || !nextWechat.startsWith("o")) {
+                onResult(Result.failure(IllegalArgumentException("请填写微信 OpenID（以 o 开头，不是微信号）")))
+                return
+            }
         }
         viewModelScope.launch {
             runCatching {
@@ -2584,6 +2626,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     signature = signature,
                     email = nextEmail,
                     alipayAccount = nextAlipay,
+                    alipayName = nextAlipayName,
                     wechatAccount = nextWechat,
                 )
             }.onSuccess { remote ->
@@ -2616,6 +2659,35 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 applyProfileSession(remote)
                 onResult(Result.success(Unit))
             }.onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun requestAlipayAuthInfo(onResult: (Result<String>) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.fetchAlipayAuthInfo(token) }
+                .onSuccess { onResult(Result.success(it)) }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun completeAlipayBind(authCode: String, onResult: (Result<Unit>) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.bindAlipay(token, authCode) }
+                .onSuccess { remote ->
+                    applyProfileSession(remote)
+                    onResult(Result.success(Unit))
+                }
+                .onFailure { onResult(Result.failure(it)) }
         }
     }
 
@@ -2653,6 +2725,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             signature = remote.signature,
             email = remote.email,
             alipayAccount = remote.alipayAccount,
+            alipayName = remote.alipayName,
             wechatAccount = remote.wechatAccount,
             networkRegion = remote.networkRegion,
             networkRegionDetail = remote.networkRegionDetail,
@@ -2799,6 +2872,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                         signature = remote.signature ?: current.signature,
                         email = remote.email ?: current.email,
                         alipayAccount = remote.alipayAccount ?: current.alipayAccount,
+                        alipayName = remote.alipayName ?: current.alipayName,
                         wechatAccount = remote.wechatAccount ?: current.wechatAccount,
                         networkRegion = remote.networkRegion ?: current.networkRegion,
                         networkRegionDetail = remote.networkRegionDetail
@@ -2808,6 +2882,77 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     _session.value = merged
                     accountStore.upsert(merged)
                     refreshRememberedAccounts()
+                    onResult(Result.success(Unit))
+                }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun refreshAccountDeletion() {
+        val token = _session.value?.token ?: return
+        _accountDeletionBusy.value = true
+        viewModelScope.launch {
+            runCatching { api.fetchAccountDeletion(token) }
+                .onSuccess { _accountDeletion.value = it }
+                .onFailure { /* keep last known status */ }
+            _accountDeletionBusy.value = false
+        }
+    }
+
+    fun sendDeletionCode(force: Boolean = false, onResult: (Result<String?>) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.sendDeletionCode(token, force) }
+                .onSuccess { onResult(Result.success(it)) }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun requestAccountDeletion(
+        code: String,
+        reason: String?,
+        force: Boolean = false,
+        onResult: (Result<HotWordsApi.AccountDeletionStatus>) -> Unit,
+    ) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        val sms = code.trim()
+        if (!Regex("^\\d{6}$").matches(sms)) {
+            onResult(Result.failure(IllegalArgumentException("请输入6位验证码")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.requestAccountDeletion(token, sms, reason, force) }
+                .onSuccess {
+                    if (it.deleted || it.immediate) {
+                        _accountDeletion.value = null
+                        logout()
+                    } else {
+                        _accountDeletion.value = it
+                    }
+                    onResult(Result.success(it))
+                }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun cancelAccountDeletion(onResult: (Result<Unit>) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.cancelAccountDeletion(token) }
+                .onSuccess {
+                    _accountDeletion.value = it
                     onResult(Result.success(Unit))
                 }
                 .onFailure { onResult(Result.failure(it)) }

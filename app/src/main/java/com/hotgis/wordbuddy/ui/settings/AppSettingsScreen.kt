@@ -43,10 +43,12 @@ import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.PersonOff
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -78,8 +80,19 @@ import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.stellarGlass
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.hotgis.wordbuddy.media.MediaDiskCaches
+import androidx.media3.common.util.UnstableApi
+import androidx.annotation.OptIn as AndroidXOptIn
+import androidx.compose.runtime.LaunchedEffect
 import com.hotgis.wordbuddy.ui.profile.ChangePasswordDialog
 
+@AndroidXOptIn(UnstableApi::class)
 @Composable
 fun AppSettingsScreen(
     settings: StudySettings,
@@ -96,14 +109,31 @@ fun AppSettingsScreen(
         confirmPassword: String,
         onResult: (Result<Unit>) -> Unit,
     ) -> Unit = { _, _, _, _ -> },
+    deletionPending: Boolean = false,
+    onOpenAccountDeletion: () -> Unit = {},
     modifier: Modifier = Modifier,
     title: String = "设置",
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    var showClearCacheConfirm by remember { mutableStateOf(false) }
+    var cacheBusy by remember { mutableStateOf(false) }
+    var cacheLabel by remember { mutableStateOf("计算中…") }
     var showChangePassword by remember { mutableStateOf(false) }
     var changePasswordBusy by remember { mutableStateOf(false) }
     var changePasswordError by remember { mutableStateOf<String?>(null) }
+
+    fun refreshCacheSize() {
+        scope.launch {
+            val label = withContext(Dispatchers.IO) {
+                MediaDiskCaches.formatSize(MediaDiskCaches.usedBytes(context))
+            }
+            cacheLabel = label
+        }
+    }
+
+    LaunchedEffect(Unit) { refreshCacheSize() }
 
     if (showLogoutConfirm) {
         StellarConfirmDialog(
@@ -115,6 +145,29 @@ fun AppSettingsScreen(
             onConfirm = {
                 showLogoutConfirm = false
                 onLogout()
+            },
+        )
+    }
+
+    if (showClearCacheConfirm) {
+        StellarConfirmDialog(
+            title = "清除本地缓存",
+            message = "将清除短视频与播客的本地媒体缓存（约 $cacheLabel）。下次播放会重新从网络加载。不影响账号与词库数据。",
+            confirmText = if (cacheBusy) "清除中…" else "清除",
+            destructive = true,
+            onDismiss = { if (!cacheBusy) showClearCacheConfirm = false },
+            onConfirm = {
+                if (cacheBusy) return@StellarConfirmDialog
+                cacheBusy = true
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        MediaDiskCaches.clearAll(context)
+                    }
+                    cacheBusy = false
+                    showClearCacheConfirm = false
+                    refreshCacheSize()
+                    Toast.makeText(context, "缓存已清除", Toast.LENGTH_SHORT).show()
+                }
             },
         )
     }
@@ -208,6 +261,7 @@ fun AppSettingsScreen(
                     aiImageAutoGen = settings.aiImageAutoGen,
                     imageProvider = settings.imageProvider,
                     podcastPlayWhenScreenOff = settings.podcastPlayWhenScreenOff,
+                    shortsMetaVisibleDefault = settings.shortsMetaVisibleDefault,
                     notebooks = notebooks,
                     defaultNotebookId = settings.defaultNotebookId,
                     onAutoPronounce = { enabled -> onChange { it.copy(speakOnPageChange = enabled) } },
@@ -217,7 +271,16 @@ fun AppSettingsScreen(
                     onPodcastPlayWhenScreenOff = { enabled ->
                         onChange { it.copy(podcastPlayWhenScreenOff = enabled) }
                     },
+                    onShortsMetaVisibleDefault = { enabled ->
+                        onChange { it.copy(shortsMetaVisibleDefault = enabled) }
+                    },
                     onDefaultNotebook = { id -> onChange { it.copy(defaultNotebookId = id) } },
+                )
+
+                StorageCacheCard(
+                    cacheLabel = cacheLabel,
+                    busy = cacheBusy,
+                    onClear = { showClearCacheConfirm = true },
                 )
 
                 if (loggedIn) {
@@ -228,6 +291,8 @@ fun AppSettingsScreen(
                             changePasswordError = null
                             showChangePassword = true
                         },
+                        deletionPending = deletionPending,
+                        onOpenAccountDeletion = onOpenAccountDeletion,
                     )
 
                     SettingsActionGroup {
@@ -456,6 +521,7 @@ private fun PreferencesCard(
     aiImageAutoGen: Boolean,
     imageProvider: ImageGenProvider,
     podcastPlayWhenScreenOff: Boolean,
+    shortsMetaVisibleDefault: Boolean,
     notebooks: List<Notebook>,
     defaultNotebookId: Long,
     onAutoPronounce: (Boolean) -> Unit,
@@ -463,6 +529,7 @@ private fun PreferencesCard(
     onAiImageAutoGen: (Boolean) -> Unit,
     onImageProvider: (ImageGenProvider) -> Unit,
     onPodcastPlayWhenScreenOff: (Boolean) -> Unit,
+    onShortsMetaVisibleDefault: (Boolean) -> Unit,
     onDefaultNotebook: (Long) -> Unit,
 ) {
     Column(
@@ -522,6 +589,15 @@ private fun PreferencesCard(
         )
         PreferenceDivider()
         PreferenceToggle(
+            icon = Icons.Filled.Visibility,
+            title = "短视频默认显示文案",
+            subtitle = "关闭后播放时默认藏文案，仍可单条点开",
+            checked = shortsMetaVisibleDefault,
+            accentOnHover = Stellar.Cyan,
+            onChecked = onShortsMetaVisibleDefault,
+        )
+        PreferenceDivider()
+        PreferenceToggle(
             icon = Icons.Filled.AutoAwesome,
             title = "AI 自动生成配图",
             subtitle = "收藏生词时自动生成助记图",
@@ -539,10 +615,52 @@ private fun PreferencesCard(
 }
 
 @Composable
+private fun StorageCacheCard(
+    cacheLabel: String,
+    busy: Boolean,
+    onClear: () -> Unit,
+) {
+    Spacer(Modifier.height(14.sdp()))
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .stellarGlass()
+            .padding(16.sdp()),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.sdp()),
+        ) {
+            Icon(
+                Icons.Filled.Storage,
+                contentDescription = null,
+                tint = Stellar.Cyan,
+                modifier = Modifier.size(22.sdp()),
+            )
+            Text(
+                text = "存储与缓存",
+                color = Stellar.OnSurface,
+                fontSize = 20.ssp(),
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.height(18.sdp()))
+        PreferenceAction(
+            icon = Icons.Filled.DeleteOutline,
+            title = "清除媒体缓存",
+            subtitle = if (busy) "正在清除…" else "短视频 / 播客本地缓存 · 当前 $cacheLabel",
+            onClick = onClear,
+        )
+    }
+}
+
+@Composable
 private fun AccountSecurityCard(
     biometricLogin: Boolean,
     onBiometricLogin: (Boolean) -> Unit,
     onChangePassword: () -> Unit,
+    deletionPending: Boolean,
+    onOpenAccountDeletion: () -> Unit,
 ) {
     Column(
         Modifier
@@ -583,6 +701,14 @@ private fun AccountSecurityCard(
             accentOnHover = Stellar.Cyan,
             onChecked = onBiometricLogin,
         )
+        PreferenceDivider()
+        PreferenceAction(
+            icon = Icons.Filled.PersonOff,
+            title = "注销账号",
+            subtitle = if (deletionPending) "注销冷静期中，可随时撤销" else "阅读须知并验证后进入7天冷静期",
+            onClick = onOpenAccountDeletion,
+            destructive = true,
+        )
     }
 }
 
@@ -592,6 +718,7 @@ private fun PreferenceAction(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
+    destructive: Boolean = false,
 ) {
     Row(
         Modifier
@@ -610,7 +737,7 @@ private fun PreferenceAction(
         Column(Modifier.weight(1f)) {
             Text(
                 text = title,
-                color = Stellar.OnSurface,
+                color = if (destructive) Stellar.Pink else Stellar.OnSurface,
                 fontSize = 15.ssp(),
                 fontWeight = FontWeight.SemiBold,
             )

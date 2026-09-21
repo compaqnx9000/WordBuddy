@@ -68,9 +68,12 @@ class ApiException(
 ) : Exception(message) {
     val isSessionReplaced: Boolean
         get() = code == SESSION_REPLACED_CODE
+    val isAccountDeleted: Boolean
+        get() = code == ACCOUNT_DELETED_CODE
 
     companion object {
         const val SESSION_REPLACED_CODE = "SESSION_REPLACED"
+        const val ACCOUNT_DELETED_CODE = "ACCOUNT_DELETED"
     }
 }
 
@@ -137,6 +140,17 @@ class HotWordsApi {
                 ),
             )
         }
+
+    suspend fun loginWithWechat(code: String): AuthResult = withContext(Dispatchers.IO) {
+        parseAuth(
+            request(
+                "POST",
+                "/auth/wechat",
+                auth = null,
+                body = JSONObject().put("code", code),
+            ),
+        )
+    }
 
     suspend fun changePassword(token: String, oldPassword: String, newPassword: String) =
         withContext(Dispatchers.IO) {
@@ -222,10 +236,113 @@ class HotWordsApi {
             root.optString("avatarUrl").ifBlank { error("上传失败") }
         }
 
-    suspend fun fetchMe(token: String): UserSession? = withContext(Dispatchers.IO) {
+    data class AccountDeletionCondition(
+        val key: String,
+        val title: String,
+        val ok: Boolean,
+        val detail: String,
+    )
+
+    data class AccountDeletionStatus(
+        val pending: Boolean,
+        val cooldownDays: Int,
+        val requestedAt: String?,
+        val dueAt: String?,
+        val dueAtLabel: String,
+        val reason: String,
+        val allPassed: Boolean,
+        val remainingPoints: Int,
+        val phoneMasked: String,
+        val conditions: List<AccountDeletionCondition>,
+        val immediate: Boolean = false,
+        val deleted: Boolean = false,
+    )
+
+    data class MeSnapshot(
+        val session: UserSession,
+        val deletion: AccountDeletionStatus?,
+    )
+
+    suspend fun fetchMe(token: String): UserSession? = fetchMeSnapshot(token)?.session
+
+    suspend fun fetchMeSnapshot(token: String): MeSnapshot? = withContext(Dispatchers.IO) {
         val root = request("GET", "/me", auth = token)
         val user = root.optJSONObject("user") ?: return@withContext null
-        parseUserSession(token = token, root = root, user = user)
+        MeSnapshot(
+            session = parseUserSession(token = token, root = root, user = user),
+            deletion = parseDeletion(root.optJSONObject("deletion")),
+        )
+    }
+
+    suspend fun fetchAccountDeletion(token: String): AccountDeletionStatus = withContext(Dispatchers.IO) {
+        parseDeletion(request("GET", "/me/deletion", auth = token))
+            ?: error("无法加载注销状态")
+    }
+
+    suspend fun sendDeletionCode(token: String, force: Boolean = false): String? = withContext(Dispatchers.IO) {
+        val root = request(
+            "POST",
+            "/me/deletion/send-code",
+            auth = token,
+            body = JSONObject().put("force", force),
+        )
+        if (root.has("debugCode") && !root.isNull("debugCode")) root.optString("debugCode") else null
+    }
+
+    suspend fun requestAccountDeletion(
+        token: String,
+        code: String,
+        reason: String?,
+        force: Boolean = false,
+    ): AccountDeletionStatus =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject()
+                .put("agreed", true)
+                .put("code", code)
+                .put("force", force)
+                .put("forceAgreed", force)
+            if (!reason.isNullOrBlank()) body.put("reason", reason)
+            parseDeletion(request("POST", "/me/deletion", auth = token, body = body))
+                ?: error("提交注销失败")
+        }
+
+    suspend fun cancelAccountDeletion(token: String): AccountDeletionStatus = withContext(Dispatchers.IO) {
+        parseDeletion(request("POST", "/me/deletion/cancel", auth = token, body = JSONObject()))
+            ?: error("撤销失败")
+    }
+
+    private fun parseDeletion(root: JSONObject?): AccountDeletionStatus? {
+        if (root == null) return null
+        val conditions = root.optJSONArray("conditions")
+        val items = buildList {
+            if (conditions != null) {
+                for (i in 0 until conditions.length()) {
+                    val item = conditions.optJSONObject(i) ?: continue
+                    add(
+                        AccountDeletionCondition(
+                            key = item.optString("key"),
+                            title = item.optString("title"),
+                            ok = item.optBoolean("ok"),
+                            detail = item.optString("detail"),
+                        ),
+                    )
+                }
+            }
+        }
+        return AccountDeletionStatus(
+            pending = root.optBoolean("pending"),
+            cooldownDays = root.optInt("cooldownDays", 7),
+            requestedAt = optNullableString(root, "requestedAt"),
+            dueAt = optNullableString(root, "dueAt"),
+            dueAtLabel = root.optString("dueAtLabel").trim(),
+            reason = root.optString("reason").trim(),
+            allPassed = root.optBoolean("allPassed"),
+            remainingPoints = root.optInt("remainingPoints", 0),
+            phoneMasked = root.optString("phoneMasked").trim(),
+            conditions = items,
+            immediate = root.optBoolean("immediate"),
+            deleted = root.optBoolean("deleted"),
+        )
     }
 
     data class InviteInfo(
@@ -282,6 +399,7 @@ class HotWordsApi {
         signature: String? = null,
         email: String? = null,
         alipayAccount: String? = null,
+        alipayName: String? = null,
         wechatAccount: String? = null,
     ): UserSession = withContext(Dispatchers.IO) {
         val body = JSONObject()
@@ -291,6 +409,7 @@ class HotWordsApi {
         if (signature != null) body.put("signature", signature)
         if (email != null) body.put("email", email)
         if (alipayAccount != null) body.put("alipayAccount", alipayAccount)
+        if (alipayName != null) body.put("alipayName", alipayName)
         if (wechatAccount != null) body.put("wechatAccount", wechatAccount)
         if (shippingName != null || shippingPhone != null || shippingDetail != null) {
             body.put(
@@ -310,10 +429,27 @@ class HotWordsApi {
         withContext(Dispatchers.IO) {
             val root = request("POST", "/me/network-region/refresh", auth = token, body = JSONObject())
             val user = root.getJSONObject("user")
-            val session = parseUserSession(token = token, root = root, user = user)
-            val message = root.optString("message").ifBlank { "网络属地已刷新" }
-            session to message
+        val session = parseUserSession(token = token, root = root, user = user)
+        val message = root.optString("message").ifBlank { "网络属地已刷新" }
+        session to message
+    }
+
+    suspend fun fetchAlipayAuthInfo(token: String): String = withContext(Dispatchers.IO) {
+        val root = request("POST", "/me/alipay/auth-info", auth = token, body = JSONObject())
+        root.optString("authInfo").trim().ifBlank {
+            throw IllegalStateException("无法发起支付宝授权")
         }
+    }
+
+    suspend fun bindAlipay(token: String, authCode: String): UserSession = withContext(Dispatchers.IO) {
+        val root = request(
+            "POST",
+            "/me/alipay/bind",
+            auth = token,
+            body = JSONObject().put("authCode", authCode),
+        )
+        parseUserSession(token = token, root = root, user = root.getJSONObject("user"))
+    }
 
     private fun parseUserSession(token: String, root: JSONObject, user: JSONObject): UserSession {
         val avatarUrl = optNullableString(root, "avatarUrl")
@@ -340,6 +476,7 @@ class HotWordsApi {
             signature = optNullableString(user, "signature"),
             email = optNullableString(user, "email"),
             alipayAccount = optNullableString(user, "alipayAccount"),
+            alipayName = optNullableString(user, "alipayName"),
             wechatAccount = optNullableString(user, "wechatAccount"),
             networkRegion = optNullableString(user, "networkRegion"),
             networkRegionDetail = optNullableString(user, "networkRegionDetail"),
@@ -392,6 +529,87 @@ class HotWordsApi {
             for (i in 0 until items.length()) {
                 val obj = items.optJSONObject(i) ?: continue
                 add(GiftCategory(id = obj.optString("id"), name = obj.optString("name")))
+            }
+        }
+    }
+
+    suspend fun fetchShortsFeed(
+        token: String? = null,
+        limit: Int = 20,
+        excludeIds: List<String> = emptyList(),
+    ): List<com.hotgis.wordbuddy.ui.shorts.ShortClip> = withContext(Dispatchers.IO) {
+        val exclude = excludeIds.joinToString(",")
+        val path = buildString {
+            append("/shorts/feed?limit=$limit")
+            if (exclude.isNotBlank()) append("&exclude=${enc(exclude)}")
+        }
+        val root = request("GET", path, auth = token)
+        val items = root.optJSONArray("items") ?: JSONArray()
+        buildList {
+            for (i in 0 until items.length()) {
+                val obj = items.optJSONObject(i) ?: continue
+                add(parseShortClip(obj))
+            }
+        }
+    }
+
+    suspend fun reportShortWatch(
+        token: String? = null,
+        videoId: String,
+        watchMs: Long,
+        completed: Boolean = false,
+    ) = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("watchMs", watchMs.coerceAtLeast(0))
+            .put("completed", completed)
+        request("POST", "/shorts/${enc(videoId)}/watch", auth = token, body = body)
+        Unit
+    }
+
+    private fun parseShortClip(obj: JSONObject): com.hotgis.wordbuddy.ui.shorts.ShortClip {
+        val keywords = obj.optJSONArray("keywords") ?: obj.optJSONArray("relatedWords") ?: JSONArray()
+        val words = buildList {
+            for (i in 0 until keywords.length()) {
+                val w = keywords.optString(i).trim()
+                if (w.isNotEmpty()) add(w)
+            }
+        }
+        return com.hotgis.wordbuddy.ui.shorts.ShortClip(
+            id = obj.optString("id"),
+            videoUrl = obj.optString("videoUrl"),
+            title = obj.optString("title"),
+            author = obj.optString("author", "词搭子"),
+            caption = obj.optString("caption"),
+            relatedWords = words,
+            category = obj.optString("category", "speaking"),
+            categoryName = obj.optString("categoryName", "口语"),
+            coverUrl = obj.optString("coverUrl").trim().takeIf { it.isNotEmpty() },
+            favorited = obj.optBoolean("favorited", false),
+        )
+    }
+
+    suspend fun setShortFavorite(
+        token: String,
+        videoId: String,
+        favorited: Boolean,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("favorited", favorited)
+        val root = request("POST", "/shorts/${enc(videoId)}/favorite", auth = token, body = body)
+        root.optBoolean("favorited", favorited)
+    }
+
+    suspend fun fetchShortFavorites(
+        token: String,
+        page: Int = 1,
+        pageSize: Int = 40,
+    ): List<com.hotgis.wordbuddy.ui.shorts.ShortClip> = withContext(Dispatchers.IO) {
+        val path = "/me/short-favorites?page=$page&pageSize=$pageSize"
+        val root = request("GET", path, auth = token)
+        val items = root.optJSONArray("items") ?: JSONArray()
+        buildList {
+            for (i in 0 until items.length()) {
+                val obj = items.optJSONObject(i) ?: continue
+                add(parseShortClip(obj))
             }
         }
     }
@@ -467,10 +685,12 @@ class HotWordsApi {
         token: String,
         channel: String,
         account: String,
+        realName: String? = null,
     ): WithdrawResult = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("channel", channel)
             .put("account", account)
+        if (!realName.isNullOrBlank()) body.put("realName", realName)
         val root = request("POST", "/me/withdrawals", auth = token, body = body)
         WithdrawResult(
             message = root.optString("message").ifBlank { "提现成功" },
@@ -741,6 +961,71 @@ class HotWordsApi {
         android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
     }
 
+    suspend fun fetchPointPackages(): PointPackagesPayload = withContext(Dispatchers.IO) {
+        val root = request("GET", "/point-packages", auth = null)
+        val items = root.optJSONArray("items") ?: JSONArray()
+        PointPackagesPayload(
+            items = buildList {
+                for (i in 0 until items.length()) {
+                    val obj = items.optJSONObject(i) ?: continue
+                    add(
+                        PointPackage(
+                            id = obj.optString("id"),
+                            title = obj.optString("title"),
+                            subtitle = obj.optString("subtitle"),
+                            priceFen = obj.optInt("priceFen"),
+                            points = obj.optInt("points"),
+                            badge = obj.optString("badge").trim().takeIf { it.isNotEmpty() },
+                        ),
+                    )
+                }
+            },
+            aiImagePointsCost = root.optInt("aiImagePointsCost", 5),
+            sandbox = root.optBoolean("sandbox", true),
+        )
+    }
+
+    suspend fun createPointOrder(token: String, packageId: String): PointPurchaseResult =
+        withContext(Dispatchers.IO) {
+            val root = request(
+                "POST",
+                "/me/point-orders",
+                auth = token,
+                body = JSONObject().put("packageId", packageId),
+            )
+            val order = root.optJSONObject("order") ?: JSONObject()
+            PointPurchaseResult(
+                orderId = order.optLong("id"),
+                orderInfo = root.optString("orderInfo").takeIf { it.isNotBlank() },
+                sandbox = root.optBoolean("sandbox", true),
+                points = order.optInt("points"),
+            )
+        }
+
+    suspend fun simulatePointOrderPay(token: String, orderId: Long): PointOrderPayResult =
+        withContext(Dispatchers.IO) {
+            val root = request("POST", "/me/point-orders/$orderId/simulate-pay", auth = token)
+            PointOrderPayResult(
+                order = parsePointOrder(root.optJSONObject("order") ?: JSONObject()),
+                balance = if (root.has("balance") && !root.isNull("balance")) root.optInt("balance") else null,
+            )
+        }
+
+    suspend fun getPointOrder(token: String, orderId: Long): PointOrder = withContext(Dispatchers.IO) {
+        val root = request("GET", "/me/point-orders/$orderId", auth = token)
+        parsePointOrder(root.optJSONObject("order") ?: JSONObject())
+    }
+
+    private fun parsePointOrder(obj: JSONObject): PointOrder = PointOrder(
+        id = obj.optLong("id"),
+        packageId = obj.optString("packageId"),
+        outTradeNo = obj.optString("outTradeNo"),
+        points = obj.optInt("points"),
+        amountFen = obj.optInt("amountFen"),
+        status = obj.optString("status"),
+        statusLabel = obj.optString("statusLabel"),
+    )
+
     suspend fun createWord(token: String, notebookId: Long, entry: VocabEntry): VocabEntry =
         withContext(Dispatchers.IO) {
             val root = request(
@@ -966,7 +1251,7 @@ class HotWordsApi {
             if (code !in 200..299) {
                 val errCode = json.optString("code").trim().ifBlank { null }
                 val message = json.optString("error").ifBlank { "http $code" }
-                if (errCode == ApiException.SESSION_REPLACED_CODE) {
+                if (errCode == ApiException.SESSION_REPLACED_CODE || errCode == ApiException.ACCOUNT_DELETED_CODE) {
                     AuthSessionEvents.notifyReplaced(message)
                 }
                 throw ApiException(message, code = errCode, httpCode = code)

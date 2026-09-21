@@ -13,6 +13,19 @@ import {
 import { mapDeviceRow } from './device.js'
 import { todayShanghai } from './checkin.js'
 import { GIFT_CATEGORIES, mapGift, mapOrder, normalizeGiftStock } from './gifts.js'
+import {
+  SHORT_CATEGORIES,
+  listAdminShorts,
+  listUserShortFavoritesAdmin,
+  mapShortVideo,
+  normalizeCategory,
+  normalizeKeywords,
+  validateKeywords,
+} from './shorts.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import express from 'express'
 
 export const adminRouter = Router()
 
@@ -66,6 +79,8 @@ function mapUser(row) {
     buddyId: row.buddy_id || null,
     signature: row.signature || null,
     email: row.email || null,
+    deletionRequestedAt: iso(row.deletion_requested_at),
+    deletionDueAt: iso(row.deletion_due_at),
     shippingName: row.shipping_name || null,
     shippingPhone: row.shipping_phone || null,
     shippingDetail: row.shipping_detail || null,
@@ -265,6 +280,7 @@ adminRouter.get('/users', adminRequired, async (req, res) => {
            u.last_device_label, u.last_device_platform, u.last_ip, u.last_ip_location, u.user_level,
            u.nickname, u.gender, u.region, u.buddy_id, u.signature, u.email,
            u.shipping_name, u.shipping_phone, u.shipping_detail,
+           u.deletion_requested_at, u.deletion_due_at,
            (u.password_hash IS NOT NULL) AS has_password,
            (SELECT count(*)::int FROM notebooks n WHERE n.owner_user_id = u.id) AS notebook_count,
            (SELECT count(*)::int FROM words w
@@ -290,6 +306,7 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
               last_device_label, last_device_platform, last_ip, last_ip_location, user_level,
               nickname, gender, region, buddy_id, signature, email,
               shipping_name, shipping_phone, shipping_detail,
+              deletion_requested_at, deletion_due_at,
               (password_hash IS NOT NULL) AS has_password,
               (SELECT count(*)::int FROM user_devices d WHERE d.user_id = users.id) AS device_count
        FROM users WHERE id = $1`,
@@ -300,7 +317,8 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
     res.status(404).json({ error: '用户不存在' })
     return
   }
-  const [notebooks, logins, passwords, sms, devices, checkIn, checkInLogs] = await Promise.all([
+  const [notebooks, logins, passwords, sms, devices, checkIn, checkInLogs, shortFavorites] =
+    await Promise.all([
     query(
       `SELECT n.id, n.kind, n.slug, n.name, n.published, n.sort_order, n.owner_user_id, n.created_at,
               (SELECT count(*)::int FROM words w WHERE w.notebook_id = n.id) AS word_count
@@ -346,6 +364,7 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
        ORDER BY checkin_date DESC LIMIT 60`,
       [id],
     ),
+    listUserShortFavoritesAdmin({ userId: id, limit: 80 }),
   ])
   const checkInRow = checkIn.rows[0]
   res.json({
@@ -383,6 +402,7 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
       pointsEarned: Number(row.points_earned || 0),
       createdAt: iso(row.created_at),
     })),
+    shortFavorites,
   })
 })
 
@@ -1091,4 +1111,278 @@ adminRouter.patch('/gift-orders/:id', adminRequired, async (req, res) => {
   }
   await audit(req, 'update_gift_order', 'gift_order', id, { status })
   res.json({ item: mapOrder(row) })
+})
+
+const shortsUploadRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../uploads/videos')
+fs.mkdirSync(shortsUploadRoot, { recursive: true })
+
+function formatWatchMs(ms) {
+  const n = Math.max(0, Number(ms) || 0)
+  const totalSec = Math.floor(n / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (h > 0) return `${h}小时${m}分${s}秒`
+  if (m > 0) return `${m}分${s}秒`
+  return `${s}秒`
+}
+
+adminRouter.get('/shorts/stats', adminRequired, async (req, res) => {
+  const days = Math.min(365, Math.max(1, Number(req.query.days) || 30))
+  const { page, pageSize, offset } = pageParams(req)
+  const q = String(req.query.q || '').trim()
+
+  const categoryTotals = (
+    await query(
+      `SELECT category,
+              COALESCE(SUM(watch_ms), 0)::bigint AS watch_ms,
+              count(*)::int AS events,
+              count(DISTINCT COALESCE(user_id::text, 'd:' || COALESCE(device_key, '')))::int AS viewers
+       FROM short_video_watches
+       WHERE created_at > now() - ($1 || ' days')::interval
+       GROUP BY category
+       ORDER BY watch_ms DESC`,
+      [String(days)],
+    )
+  ).rows.map((row) => {
+    const meta = SHORT_CATEGORIES.find((c) => c.id === row.category)
+    return {
+      category: row.category,
+      categoryName: meta?.name || row.category,
+      watchMs: Number(row.watch_ms || 0),
+      watchLabel: formatWatchMs(row.watch_ms),
+      events: Number(row.events || 0),
+      viewers: Number(row.viewers || 0),
+    }
+  })
+
+  const params = [String(days)]
+  let userFilter = ''
+  if (q) {
+    params.push(`%${q}%`)
+    userFilter = ` AND (u.phone ILIKE $${params.length} OR u.nickname ILIKE $${params.length} OR w.device_key ILIKE $${params.length})`
+  }
+
+  const total = (
+    await query(
+      `SELECT count(*)::int AS n FROM (
+         SELECT COALESCE(w.user_id::text, 'd:' || COALESCE(w.device_key, 'anon')) AS viewer_key
+         FROM short_video_watches w
+         LEFT JOIN users u ON u.id = w.user_id
+         WHERE w.created_at > now() - ($1 || ' days')::interval
+         ${userFilter}
+         GROUP BY viewer_key
+       ) t`,
+      params,
+    )
+  ).rows[0].n
+
+  params.push(pageSize, offset)
+  const rows = (
+    await query(
+      `SELECT
+         w.user_id,
+         max(u.phone) AS phone,
+         max(u.nickname) AS nickname,
+         max(u.avatar_url) AS avatar_url,
+         max(w.device_key) AS device_key,
+         COALESCE(SUM(w.watch_ms) FILTER (WHERE w.category = 'speaking'), 0)::bigint AS speaking_ms,
+         COALESCE(SUM(w.watch_ms) FILTER (WHERE w.category = 'vocab'), 0)::bigint AS vocab_ms,
+         COALESCE(SUM(w.watch_ms) FILTER (WHERE w.category = 'listening'), 0)::bigint AS listening_ms,
+         COALESCE(SUM(w.watch_ms), 0)::bigint AS total_ms,
+         count(*)::int AS events,
+         max(w.created_at) AS last_watched_at
+       FROM short_video_watches w
+       LEFT JOIN users u ON u.id = w.user_id
+       WHERE w.created_at > now() - ($1 || ' days')::interval
+       ${userFilter}
+       GROUP BY w.user_id, CASE WHEN w.user_id IS NULL THEN w.device_key ELSE NULL END
+       ORDER BY total_ms DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    )
+  ).rows
+
+  res.json({
+    days,
+    categories: SHORT_CATEGORIES,
+    categoryTotals,
+    items: rows.map((row) => ({
+      userId: row.user_id == null ? null : Number(row.user_id),
+      phone: row.phone || null,
+      nickname: row.nickname || null,
+      avatarUrl: row.avatar_url || null,
+      deviceKey: row.user_id == null ? row.device_key || null : null,
+      speakingMs: Number(row.speaking_ms || 0),
+      vocabMs: Number(row.vocab_ms || 0),
+      listeningMs: Number(row.listening_ms || 0),
+      totalMs: Number(row.total_ms || 0),
+      speakingLabel: formatWatchMs(row.speaking_ms),
+      vocabLabel: formatWatchMs(row.vocab_ms),
+      listeningLabel: formatWatchMs(row.listening_ms),
+      totalLabel: formatWatchMs(row.total_ms),
+      events: Number(row.events || 0),
+      lastWatchedAt: iso(row.last_watched_at),
+      preferredCategory:
+        [
+          { id: 'speaking', ms: Number(row.speaking_ms || 0) },
+          { id: 'vocab', ms: Number(row.vocab_ms || 0) },
+          { id: 'listening', ms: Number(row.listening_ms || 0) },
+        ].sort((a, b) => b.ms - a.ms)[0]?.id || null,
+    })),
+    total,
+    page,
+    pageSize,
+  })
+})
+
+adminRouter.get('/shorts', adminRequired, async (req, res) => {
+  const { page, pageSize } = pageParams(req)
+  const q = String(req.query.q || '').trim()
+  const category = String(req.query.category || '').trim()
+  const published = String(req.query.published || '').trim()
+  const data = await listAdminShorts({ q, category, published, page, pageSize })
+  res.json({ ...data, categories: SHORT_CATEGORIES })
+})
+
+adminRouter.post(
+  '/shorts/upload',
+  adminRequired,
+  express.raw({ type: () => true, limit: '40mb' }),
+  async (req, res) => {
+    try {
+      const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from([])
+      if (!buf.length) {
+        res.status(400).json({ error: '空文件' })
+        return
+      }
+      if (buf.length > 40 * 1024 * 1024) {
+        res.status(400).json({ error: '文件过大（上限 40MB）' })
+        return
+      }
+      const rawName = String(req.query.filename || req.get('x-filename') || 'video.mp4')
+      const safe = rawName.replace(/[^\w.\u4e00-\u9fff-]+/g, '_').slice(0, 80) || 'video.mp4'
+      const name = `${Date.now()}-${safe.endsWith('.mp4') ? safe : `${safe}.mp4`}`
+      const dest = path.join(shortsUploadRoot, name)
+      fs.writeFileSync(dest, buf)
+      const url = `/uploads/videos/${name}`
+      await audit(req, 'upload_short_video', 'short_video', null, { url, bytes: buf.length })
+      res.json({ url, bytes: buf.length })
+    } catch (error) {
+      console.error('[admin/shorts/upload]', error)
+      res.status(500).json({ error: '上传失败' })
+    }
+  },
+)
+
+adminRouter.post('/shorts', adminRequired, async (req, res) => {
+  const title = String(req.body?.title || '').trim()
+  const videoUrl = String(req.body?.videoUrl || '').trim()
+  if (!title) {
+    res.status(400).json({ error: '请填写标题' })
+    return
+  }
+  if (!videoUrl) {
+    res.status(400).json({ error: '请上传或填写视频地址' })
+    return
+  }
+  const keywords = normalizeKeywords(req.body?.keywords)
+  const kwErr = validateKeywords(keywords)
+  if (kwErr) {
+    res.status(400).json({ error: kwErr })
+    return
+  }
+  const category = normalizeCategory(req.body?.category)
+  const row = (
+    await query(
+      `INSERT INTO short_videos
+        (title, author, caption, video_url, cover_url, category, keywords, duration_ms, sort_order, published)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10)
+       RETURNING *`,
+      [
+        title,
+        String(req.body?.author || '词搭子').trim() || '词搭子',
+        String(req.body?.caption || '').trim() || null,
+        videoUrl,
+        String(req.body?.coverUrl || '').trim() || null,
+        category,
+        JSON.stringify(keywords),
+        req.body?.durationMs != null ? Math.max(0, Number(req.body.durationMs) || 0) : null,
+        Number(req.body?.sortOrder) || 0,
+        req.body?.published !== false,
+      ],
+    )
+  ).rows[0]
+  await audit(req, 'create_short_video', 'short_video', row.id, { title, category })
+  res.json({ item: mapShortVideo(row) })
+})
+
+adminRouter.patch('/shorts/:id', adminRequired, async (req, res) => {
+  const id = Number(req.params.id)
+  const existing = (await query('SELECT * FROM short_videos WHERE id = $1', [id])).rows[0]
+  if (!existing) {
+    res.status(404).json({ error: '视频不存在' })
+    return
+  }
+  const title = req.body?.title != null ? String(req.body.title).trim() : existing.title
+  if (!title) {
+    res.status(400).json({ error: '请填写标题' })
+    return
+  }
+  let keywords = Array.isArray(existing.keywords) ? existing.keywords : []
+  if (req.body?.keywords != null) {
+    keywords = normalizeKeywords(req.body.keywords)
+    const kwErr = validateKeywords(keywords)
+    if (kwErr) {
+      res.status(400).json({ error: kwErr })
+      return
+    }
+  }
+  const videoUrl =
+    req.body?.videoUrl != null ? String(req.body.videoUrl).trim() : existing.video_url
+  if (!videoUrl) {
+    res.status(400).json({ error: '请填写视频地址' })
+    return
+  }
+  const category =
+    req.body?.category != null ? normalizeCategory(req.body.category) : existing.category
+  const published =
+    req.body?.published != null ? Boolean(req.body.published) : existing.published
+  const row = (
+    await query(
+      `UPDATE short_videos SET
+         title=$1, author=$2, caption=$3, video_url=$4, cover_url=$5,
+         category=$6, keywords=$7::jsonb, duration_ms=$8, sort_order=$9, published=$10
+       WHERE id=$11 RETURNING *`,
+      [
+        title,
+        req.body?.author != null ? String(req.body.author).trim() || '词搭子' : existing.author,
+        req.body?.caption != null ? String(req.body.caption).trim() : existing.caption,
+        videoUrl,
+        req.body?.coverUrl != null ? String(req.body.coverUrl).trim() || null : existing.cover_url,
+        category,
+        JSON.stringify(keywords),
+        req.body?.durationMs != null
+          ? Math.max(0, Number(req.body.durationMs) || 0)
+          : existing.duration_ms,
+        req.body?.sortOrder != null ? Number(req.body.sortOrder) || 0 : existing.sort_order,
+        published,
+        id,
+      ],
+    )
+  ).rows[0]
+  await audit(req, 'update_short_video', 'short_video', id, { title, category, published })
+  res.json({ item: mapShortVideo(row) })
+})
+
+adminRouter.delete('/shorts/:id', adminRequired, async (req, res) => {
+  const id = Number(req.params.id)
+  const row = (await query('DELETE FROM short_videos WHERE id = $1 RETURNING id, title, video_url', [id]))
+    .rows[0]
+  if (!row) {
+    res.status(404).json({ error: '视频不存在' })
+    return
+  }
+  await audit(req, 'delete_short_video', 'short_video', id, { title: row.title })
+  res.json({ ok: true })
 })

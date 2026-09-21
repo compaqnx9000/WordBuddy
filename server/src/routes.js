@@ -20,7 +20,7 @@ import {
 } from './auth.js'
 import { newLoginCode, sendCode, skipVerify } from './sms.js'
 import { getUserCheckIn, performUserCheckIn, performMakeupCheckIn } from './checkin.js'
-import { resolveIpLocation } from './device.js'
+import { resolveIpLocation, extractDeviceInfo } from './device.js'
 import {
   GIFT_CATEGORIES,
   getGift,
@@ -29,10 +29,29 @@ import {
   redeemGift,
 } from './gifts.js'
 import {
+  publicBaseFromReq,
+  recommendShorts,
+  recordWatch,
+  setShortFavorite,
+  listShortFavorites,
+  SHORT_CATEGORIES,
+} from './shorts.js'
+import {
+  createPointOrder,
+  getPointOrderForUser,
+  handleAlipayNotify,
+  listPointPackages,
+  listUserPointOrders,
+  simulatePayOrder,
+} from './pointOrders.js'
+import { aiImagePointsCost } from './points.js'
+import { alipayConfig, buildAppAuthInfo, exchangeAlipayAuthCode } from './alipay.js'
+import {
   createWithdrawal,
   listWithdrawals,
   withdrawConfig,
 } from './withdrawals.js'
+import { exchangeWechatCode, wechatLoginConfig } from './wechatLogin.js'
 import {
   INVITE_REWARD_INVITEE,
   INVITE_REWARD_INVITER,
@@ -42,8 +61,33 @@ import {
   normalizeInviteCode,
 } from './invite.js'
 import { getOrCreateMnemonicImage, normalizeImageProvider } from './images.js'
+import {
+  ACCOUNT_DELETED_CODE,
+  assertNotDeleting,
+  cancelAccountDeletion,
+  finalizeDueAccountByPhone,
+  getDeletionStatus,
+  requestAccountDeletion,
+} from './deletion.js'
 
 export const router = Router()
+
+function sendAppError(res, error, fallbackStatus = 400) {
+  const status = Number(error.status) || fallbackStatus
+  const payload = { error: error.message || '请求失败' }
+  if (error.code) payload.code = error.code
+  res.status(status).json(payload)
+}
+
+async function guardAccountActive(req, res) {
+  try {
+    await assertNotDeleting(req.user.id)
+    return true
+  } catch (error) {
+    sendAppError(res, error, 409)
+    return false
+  }
+}
 
 const uploadsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../uploads')
 
@@ -52,7 +96,7 @@ const PAGE_SIZE_MAX = 200
 const USER_PROFILE_SQL = `id, phone, avatar_url, user_level, nickname,
               shipping_name, shipping_phone, shipping_detail,
               gender, region, buddy_id, signature, email,
-              alipay_account, wechat_account,
+              alipay_account, alipay_name, wechat_account, wechat_openid,
               last_ip, last_ip_location`
 
 async function loadUserProfileRow(userId) {
@@ -287,6 +331,7 @@ router.post('/auth/login', async (req, res) => {
     res.status(400).json({ error: '请输入正确的手机号' })
     return
   }
+  await finalizeDueAccountByPhone(phone)
 
   const password = String(req.body?.password || '')
   const code = String(req.body?.code || '').trim()
@@ -341,6 +386,7 @@ router.post('/auth/login', async (req, res) => {
 
 router.post('/auth/register', async (req, res) => {
   const phone = normalizePhone(req.body?.phone)
+  if (phone) await finalizeDueAccountByPhone(phone)
   const code = String(req.body?.code || '').trim()
   const password = normalizePassword(req.body?.password)
   const inviteCode = normalizeInviteCode(req.body?.inviteCode || req.body?.invite || '')
@@ -395,6 +441,47 @@ router.post('/auth/register', async (req, res) => {
   // Ensure buddy id before responding so share works immediately.
   await loadUserProfileRow(user.id)
   await finishLogin(req, res, user, 'register', invite?.ok ? invite : null)
+})
+
+router.post('/auth/wechat', async (req, res) => {
+  const cfg = wechatLoginConfig()
+  if (!cfg.loginReady) {
+    res.status(503).json({ error: '微信登录尚未配置，请先用手机号登录' })
+    return
+  }
+  const exchanged = await exchangeWechatCode(req.body?.code)
+  if (!exchanged.ok) {
+    await recordLoginEvent(req, { method: 'wechat', success: false })
+    res.status(400).json({ error: exchanged.error })
+    return
+  }
+  const openid = exchanged.openid
+  const existing = (
+    await query(
+      'SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE wechat_openid = $1',
+      [openid],
+    )
+  ).rows[0]
+  if (existing) {
+    await query(
+      `UPDATE users
+       SET wechat_account = $2,
+           wechat_unionid = COALESCE($3, wechat_unionid)
+       WHERE id = $1`,
+      [existing.id, openid, exchanged.unionid],
+    )
+    await finishLogin(req, res, existing, 'wechat')
+    return
+  }
+  const user = (
+    await query(
+      `INSERT INTO users (phone, wechat_openid, wechat_unionid, wechat_account)
+       VALUES (NULL, $1, $2, $1)
+       RETURNING id, phone, password_hash, avatar_url, user_level`,
+      [openid, exchanged.unionid],
+    )
+  ).rows[0]
+  await finishLogin(req, res, user, 'wechat')
 })
 
 /** Public invite preview for landing page. */
@@ -488,12 +575,23 @@ router.get('/me', authRequired, async (req, res) => {
   const level = Math.min(7, Math.max(0, Number.isFinite(Number(row.user_level)) ? Number(row.user_level) : 0))
   const checkIn = await getUserCheckIn(req.user.id)
   const profile = mapUserProfile(row, req.user)
+  let deletion = null
+  try {
+    deletion = await getDeletionStatus(req.user.id)
+  } catch (error) {
+    if (error.code === ACCOUNT_DELETED_CODE) {
+      sendAppError(res, error, 401)
+      return
+    }
+    throw error
+  }
   res.json({
     user: profile,
     vocabNotebookId: Number(vocabNotebookId),
     avatarUrl: profile.avatarUrl,
     level,
     checkIn,
+    deletion,
   })
 })
 
@@ -584,11 +682,30 @@ router.patch('/me', authRequired, async (req, res) => {
     alipayAccount = next || null
   }
 
+  let alipayName = row.alipay_name
+  if (req.body?.alipayName != null) {
+    const next = String(req.body.alipayName).trim().slice(0, 32)
+    if (next && next.length < 2) {
+      res.status(400).json({ error: '支付宝实名至少 2 个字' })
+      return
+    }
+    alipayName = next || null
+  }
+
+  if (alipayAccount && !String(alipayName || '').trim()) {
+    res.status(400).json({ error: '请填写支付宝实名（须与账号一致）' })
+    return
+  }
+
   let wechatAccount = row.wechat_account
   if (req.body?.wechatAccount != null) {
     const next = String(req.body.wechatAccount).trim().slice(0, 64)
     if (next && next.length < 3) {
-      res.status(400).json({ error: '微信收款标识至少 3 位' })
+      res.status(400).json({ error: '微信 OpenID 至少 3 位' })
+      return
+    }
+    if (next && !/^o[A-Za-z0-9_-]{16,63}$/.test(next)) {
+      res.status(400).json({ error: '请填写微信 OpenID（以 o 开头，不是微信号）' })
       return
     }
     wechatAccount = next || null
@@ -614,7 +731,8 @@ router.patch('/me', authRequired, async (req, res) => {
          signature = $9,
          email = $10,
          alipay_account = $11,
-         wechat_account = $12
+         alipay_name = $12,
+         wechat_account = $13
        WHERE id = $1
        RETURNING ${USER_PROFILE_SQL}`,
       [
@@ -629,6 +747,7 @@ router.patch('/me', authRequired, async (req, res) => {
         signature,
         email,
         alipayAccount,
+        alipayName,
         wechatAccount,
       ],
     )
@@ -640,6 +759,48 @@ router.patch('/me', authRequired, async (req, res) => {
     avatarUrl: profile.avatarUrl,
     level: profile.level,
   })
+})
+
+router.post('/me/alipay/auth-info', authRequired, async (req, res) => {
+  try {
+    const built = buildAppAuthInfo()
+    if (!built.ok) {
+      res.status(400).json({ error: built.error || '无法发起支付宝授权' })
+      return
+    }
+    res.json({ authInfo: built.authInfo })
+  } catch (error) {
+    console.error('[alipay] auth-info', error)
+    res.status(400).json({ error: '无法发起支付宝授权' })
+  }
+})
+
+router.post('/me/alipay/bind', authRequired, async (req, res) => {
+  try {
+    const exchanged = await exchangeAlipayAuthCode(req.body?.authCode)
+    if (!exchanged.ok) {
+      res.status(400).json({ error: exchanged.error || '支付宝绑定失败' })
+      return
+    }
+    const updated = (
+      await query(
+        `UPDATE users SET alipay_account = $2, alipay_name = NULL
+         WHERE id = $1
+         RETURNING ${USER_PROFILE_SQL}`,
+        [req.user.id, exchanged.identity],
+      )
+    ).rows[0]
+    const profile = mapUserProfile(updated, req.user)
+    res.json({
+      user: profile,
+      vocabNotebookId: Number(await ensureUserNotebook(req.user.id)),
+      avatarUrl: profile.avatarUrl,
+      level: profile.level,
+    })
+  } catch (error) {
+    console.error('[alipay] bind', error)
+    sendAppError(res, error)
+  }
 })
 
 router.post('/me/network-region/refresh', authRequired, async (req, res) => {
@@ -692,7 +853,9 @@ function mapUserProfile(row, fallbackUser = {}) {
     signature: row?.signature || null,
     email: row?.email || null,
     alipayAccount: row?.alipay_account || null,
+    alipayName: row?.alipay_name || null,
     wechatAccount: row?.wechat_account || null,
+    wechatOpenId: row?.wechat_openid || null,
     networkRegion: shortNetworkRegion(location),
     networkRegionDetail: location,
   }
@@ -756,6 +919,90 @@ router.get('/gifts/categories', (_req, res) => {
   res.json({ items: GIFT_CATEGORIES })
 })
 
+router.get('/shorts/categories', (_req, res) => {
+  res.json({ items: SHORT_CATEGORIES })
+})
+
+router.get('/shorts/feed', optionalAuth, async (req, res) => {
+  try {
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20))
+    const excludeRaw = String(req.query.exclude || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const device = extractDeviceInfo(req)
+    const items = await recommendShorts({
+      userId: req.user?.id ?? null,
+      deviceKey: req.user?.id ? null : device.deviceKey,
+      limit,
+      excludeIds: excludeRaw,
+      absoluteBase: publicBaseFromReq(req),
+    })
+    res.json({ items, categories: SHORT_CATEGORIES })
+  } catch (error) {
+    console.error('[shorts/feed]', error)
+    res.status(500).json({ error: '短视频加载失败' })
+  }
+})
+
+router.post('/shorts/:id/watch', optionalAuth, async (req, res) => {
+  try {
+    const device = extractDeviceInfo(req)
+    const result = await recordWatch({
+      videoId: req.params.id,
+      userId: req.user?.id ?? null,
+      deviceKey: req.user?.id ? null : device.deviceKey,
+      watchMs: req.body?.watchMs,
+      completed: Boolean(req.body?.completed),
+    })
+    if (!result.ok) {
+      res.status(400).json({ error: result.error || '上报失败' })
+      return
+    }
+    res.json({ ok: true, skipped: Boolean(result.skipped) })
+  } catch (error) {
+    console.error('[shorts/watch]', error)
+    res.status(500).json({ error: '上报失败' })
+  }
+})
+
+router.post('/shorts/:id/favorite', authRequired, async (req, res) => {
+  try {
+    const favorited =
+      req.body?.favorited === undefined ? true : Boolean(req.body.favorited)
+    const result = await setShortFavorite({
+      userId: req.user.id,
+      videoId: req.params.id,
+      favorited,
+    })
+    if (!result.ok) {
+      res.status(400).json({ error: result.error || '收藏失败' })
+      return
+    }
+    res.json({ ok: true, favorited: result.favorited })
+  } catch (error) {
+    console.error('[shorts/favorite]', error)
+    res.status(500).json({ error: '收藏失败' })
+  }
+})
+
+router.get('/me/short-favorites', authRequired, async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1)
+    const pageSize = Math.min(60, Math.max(1, Number(req.query.pageSize) || 40))
+    const data = await listShortFavorites({
+      userId: req.user.id,
+      page,
+      pageSize,
+      absoluteBase: publicBaseFromReq(req),
+    })
+    res.json(data)
+  } catch (error) {
+    console.error('[me/short-favorites]', error)
+    res.status(500).json({ error: '加载收藏失败' })
+  }
+})
+
 router.get('/gifts', async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1)
   const pageSize = Math.min(60, Math.max(1, Number(req.query.pageSize) || 40))
@@ -775,6 +1022,7 @@ router.get('/gifts/:id', async (req, res) => {
 })
 
 router.post('/gifts/:id/redeem', authRequired, async (req, res) => {
+  if (!(await guardAccountActive(req, res))) return
   try {
     const result = await redeemGift(req.user.id, Number(req.params.id), {
       name: req.body?.name,
@@ -832,10 +1080,12 @@ router.get('/me/withdrawals', authRequired, async (req, res) => {
 })
 
 router.post('/me/withdrawals', authRequired, async (req, res) => {
+  if (!(await guardAccountActive(req, res))) return
   try {
     const result = await createWithdrawal(req.user.id, {
       channel: req.body?.channel,
       account: req.body?.account,
+      realName: req.body?.realName,
     })
     if (!result.ok) {
       res.status(400).json({
@@ -887,6 +1137,7 @@ router.post('/me/avatar', authRequired, async (req, res) => {
 })
 
 router.post('/auth/change-password', authRequired, async (req, res) => {
+  if (!(await guardAccountActive(req, res))) return
   const oldPassword = normalizePassword(req.body?.oldPassword)
   const newPassword = normalizePassword(req.body?.newPassword)
   if (!oldPassword) {
@@ -912,7 +1163,10 @@ router.post('/auth/change-password', authRequired, async (req, res) => {
     res.status(400).json({ error: '当前密码不正确' })
     return
   }
-  await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashPassword(newPassword), user.id])
+  await query('UPDATE users SET password_hash = $1, password_changed_at = now() WHERE id = $2', [
+    hashPassword(newPassword),
+    user.id,
+  ])
   await recordPasswordEvent(req, user.id, 'change')
   res.json({ ok: true })
 })
@@ -947,6 +1201,7 @@ router.post('/auth/verify-password', authRequired, async (req, res) => {
  * Rotates session and returns a fresh JWT (phone claim updates).
  */
 router.post('/auth/change-phone', authRequired, async (req, res) => {
+  if (!(await guardAccountActive(req, res))) return
   const password = normalizePassword(req.body?.password)
   const newPhone = normalizePhone(req.body?.newPhone ?? req.body?.phone)
   const code = String(req.body?.code || '').trim()
@@ -986,7 +1241,7 @@ router.post('/auth/change-phone', authRequired, async (req, res) => {
     return
   }
   try {
-    await query('UPDATE users SET phone = $1 WHERE id = $2', [newPhone, user.id])
+    await query('UPDATE users SET phone = $1, phone_changed_at = now() WHERE id = $2', [newPhone, user.id])
   } catch (error) {
     if (error?.code === '23505') {
       res.status(400).json({ error: '该手机号已被其他账号使用' })
@@ -1614,6 +1869,87 @@ router.get('/homophones/:id/likes', authRequired, async (req, res) => {
   res.json({ total, items, nextOffset })
 })
 
+router.get('/me/deletion', authRequired, async (req, res) => {
+  try {
+    res.json(await getDeletionStatus(req.user.id))
+  } catch (error) {
+    sendAppError(res, error, 400)
+  }
+})
+
+router.post('/me/deletion/send-code', authRequired, async (req, res) => {
+  try {
+    const user = (await query('SELECT phone FROM users WHERE id = $1', [req.user.id])).rows[0]
+    if (!user) {
+      res.status(404).json({ error: '用户不存在' })
+      return
+    }
+    const force = req.body?.force === true
+    const status = await getDeletionStatus(req.user.id)
+    if (status.pending) {
+      res.status(400).json({ error: '已提交注销申请，可在冷静期内撤销' })
+      return
+    }
+    if (!force && !status.allPassed) {
+      res.status(400).json({ error: '暂不满足注销条件，请先处理未完成事项，或勾选强行注销' })
+      return
+    }
+    const code = newLoginCode()
+    await query(
+      `INSERT INTO sms_codes (phone, code, expires_at)
+       VALUES ($1, $2, now() + interval '10 minutes')`,
+      [user.phone, code],
+    )
+    await sendCode(user.phone, code)
+    const payload = { ok: true, expiresInSec: 600, phoneMasked: status.phoneMasked }
+    if (skipVerify()) payload.debugCode = code
+    res.json(payload)
+  } catch (error) {
+    console.error('[me/deletion/send-code]', error)
+    sendAppError(res, error, 502)
+  }
+})
+
+router.post('/me/deletion', authRequired, async (req, res) => {
+  try {
+    if (req.body?.agreed !== true) {
+      res.status(400).json({ error: '请先阅读并同意《账号注销须知》' })
+      return
+    }
+    const force = req.body?.force === true
+    if (force && req.body?.forceAgreed !== true) {
+      res.status(400).json({ error: '请勾选同意强行注销' })
+      return
+    }
+    const user = (await query('SELECT phone FROM users WHERE id = $1', [req.user.id])).rows[0]
+    if (!user) {
+      res.status(404).json({ error: '用户不存在' })
+      return
+    }
+    const checked = await verifySmsCode(user.phone, String(req.body?.code || '').trim())
+    if (!checked.ok) {
+      res.status(400).json({ error: checked.error })
+      return
+    }
+    const deletion = await requestAccountDeletion(req.user.id, {
+      reason: req.body?.reason,
+      force,
+    })
+    await consumeSms(checked.smsId)
+    res.json(deletion)
+  } catch (error) {
+    sendAppError(res, error, 400)
+  }
+})
+
+router.post('/me/deletion/cancel', authRequired, async (req, res) => {
+  try {
+    res.json(await cancelAccountDeletion(req.user.id))
+  } catch (error) {
+    sendAppError(res, error, 400)
+  }
+})
+
 router.post('/mnemonic-images', authRequired, async (req, res) => {
   try {
     const provider = normalizeImageProvider(req.body?.provider)
@@ -1621,14 +1957,110 @@ router.post('/mnemonic-images', authRequired, async (req, res) => {
       word: req.body?.word,
       meaningHint: req.body?.meaningHint,
       provider,
+      userId: req.user.id,
     })
     res.json({
       provider: result.provider,
       cached: result.cached,
+      pointsSpent: result.pointsSpent ?? 0,
+      pointsCost: result.pointsCost ?? aiImagePointsCost(),
+      balance: result.balance ?? null,
       imageBase64: Buffer.from(result.bytes).toString('base64'),
     })
   } catch (error) {
     const status = Number(error.status) || 502
-    res.status(status).json({ error: error.message || '生图失败' })
+    res.status(status).json({
+      error: error.message || '生图失败',
+      code: error.code || null,
+      need: error.need ?? null,
+      balance: error.balance ?? null,
+      pointsCost: error.pointsCost ?? aiImagePointsCost(),
+    })
+  }
+})
+
+router.get('/point-packages', (_req, res) => {
+  const cfg = alipayConfig()
+  res.json({
+    items: listPointPackages(),
+    aiImagePointsCost: aiImagePointsCost(),
+    sandbox: cfg.sandbox,
+  })
+})
+
+router.post('/me/point-orders', authRequired, async (req, res) => {
+  try {
+    const result = await createPointOrder({
+      userId: req.user.id,
+      packageId: String(req.body?.packageId || '').trim(),
+    })
+    if (!result.ok) {
+      res.status(400).json({ error: result.error || '下单失败' })
+      return
+    }
+    res.json({
+      order: result.order,
+      orderInfo: result.orderInfo,
+      sandbox: result.sandbox,
+      package: result.package,
+    })
+  } catch (error) {
+    console.error('[point-orders/create]', error)
+    res.status(500).json({ error: '下单失败' })
+  }
+})
+
+router.get('/me/point-orders', authRequired, async (req, res) => {
+  try {
+    const data = await listUserPointOrders(req.user.id, {
+      page: req.query.page,
+      pageSize: req.query.pageSize,
+    })
+    res.json(data)
+  } catch (error) {
+    console.error('[point-orders/list]', error)
+    res.status(500).json({ error: '加载订单失败' })
+  }
+})
+
+router.get('/me/point-orders/:id', authRequired, async (req, res) => {
+  try {
+    const order = await getPointOrderForUser(req.user.id, Number(req.params.id))
+    if (!order) {
+      res.status(404).json({ error: '订单不存在' })
+      return
+    }
+    res.json({ order })
+  } catch (error) {
+    console.error('[point-orders/get]', error)
+    res.status(500).json({ error: '加载订单失败' })
+  }
+})
+
+router.post('/me/point-orders/:id/simulate-pay', authRequired, async (req, res) => {
+  try {
+    const result = await simulatePayOrder({
+      userId: req.user.id,
+      orderId: Number(req.params.id),
+    })
+    if (!result.ok) {
+      res.status(400).json({ error: result.error || '模拟支付失败' })
+      return
+    }
+    res.json({ ok: true, order: result.order, balance: result.balance ?? null })
+  } catch (error) {
+    console.error('[point-orders/simulate]', error)
+    res.status(500).json({ error: '模拟支付失败' })
+  }
+})
+
+router.post('/alipay/notify', async (req, res) => {
+  try {
+    const params = { ...(req.body || {}) }
+    const result = await handleAlipayNotify(params)
+    res.type('text/plain').send(result.reply || 'failure')
+  } catch (error) {
+    console.error('[alipay/notify]', error)
+    res.type('text/plain').send('failure')
   }
 })

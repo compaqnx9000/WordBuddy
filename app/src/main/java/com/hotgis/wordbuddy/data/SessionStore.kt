@@ -20,6 +20,7 @@ data class UserSession(
     val signature: String? = null,
     val email: String? = null,
     val alipayAccount: String? = null,
+    val alipayName: String? = null,
     val wechatAccount: String? = null,
     /** Short display label, e.g. 北京 */
     val networkRegion: String? = null,
@@ -67,6 +68,7 @@ class SessionStore(context: Context) {
             signature = prefs.getString(KEY_SIGNATURE, null)?.trim()?.takeIf { it.isNotEmpty() },
             email = prefs.getString(KEY_EMAIL, null)?.trim()?.takeIf { it.isNotEmpty() },
             alipayAccount = prefs.getString(KEY_ALIPAY, null)?.trim()?.takeIf { it.isNotEmpty() },
+            alipayName = prefs.getString(KEY_ALIPAY_NAME, null)?.trim()?.takeIf { it.isNotEmpty() },
             wechatAccount = prefs.getString(KEY_WECHAT, null)?.trim()?.takeIf { it.isNotEmpty() },
             networkRegion = prefs.getString(KEY_NET_REGION, null)?.trim()?.takeIf { it.isNotEmpty() },
             networkRegionDetail = prefs.getString(KEY_NET_DETAIL, null)?.trim()?.takeIf { it.isNotEmpty() },
@@ -91,6 +93,7 @@ class SessionStore(context: Context) {
             .putString(KEY_SIGNATURE, session.signature.orEmpty())
             .putString(KEY_EMAIL, session.email.orEmpty())
             .putString(KEY_ALIPAY, session.alipayAccount.orEmpty())
+            .putString(KEY_ALIPAY_NAME, session.alipayName.orEmpty())
             .putString(KEY_WECHAT, session.wechatAccount.orEmpty())
             .putString(KEY_NET_REGION, session.networkRegion.orEmpty())
             .putString(KEY_NET_DETAIL, session.networkRegionDetail.orEmpty())
@@ -119,6 +122,7 @@ class SessionStore(context: Context) {
         private const val KEY_SIGNATURE = "signature"
         private const val KEY_EMAIL = "email"
         private const val KEY_ALIPAY = "alipay_account"
+        private const val KEY_ALIPAY_NAME = "alipay_name"
         private const val KEY_WECHAT = "wechat_account"
         private const val KEY_NET_REGION = "network_region"
         private const val KEY_NET_DETAIL = "network_region_detail"

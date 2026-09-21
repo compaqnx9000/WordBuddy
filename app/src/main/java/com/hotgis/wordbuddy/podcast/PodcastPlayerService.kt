@@ -108,6 +108,13 @@ class PodcastPlayerService : MediaSessionService() {
             }
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (
+                    playWhenReady &&
+                    (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST ||
+                        reason == Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE)
+                ) {
+                    AudibleFocus.claimPodcast()
+                }
                 publishPlayerState(exo)
             }
 
@@ -204,6 +211,15 @@ class PodcastPlayerService : MediaSessionService() {
         }
         publishPlayerState(exo)
     }
+
+    fun pausePlayback() {
+        val exo = player ?: return
+        exo.pause()
+        publishPlayerState(exo)
+    }
+
+    /** Used by the bridge to see if a toggle will start audio. */
+    fun playerForFocus(): ExoPlayer? = player
 
     private fun publishPlayerState(exo: ExoPlayer) {
         val duration = exo.duration

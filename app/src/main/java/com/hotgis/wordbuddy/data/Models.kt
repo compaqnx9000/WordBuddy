@@ -183,9 +183,50 @@ data class StudySettings(
     val biometricLogin: Boolean = false,
     /** When true, podcast/radio keeps playing after the screen turns off. Default off. */
     val podcastPlayWhenScreenOff: Boolean = false,
+    /** Default visibility of short-video caption/meta block. Per-video override still allowed. */
+    val shortsMetaVisibleDefault: Boolean = true,
 )
 
 data class LookupResult(
     val entry: VocabEntry,
     val saved: Boolean,
+)
+
+data class PointPackage(
+    val id: String,
+    val title: String,
+    val subtitle: String = "",
+    val priceFen: Int,
+    val points: Int,
+    val badge: String? = null,
+) {
+    val amountYuan: String get() = "%.2f".format(priceFen / 100.0)
+}
+
+data class PointPackagesPayload(
+    val items: List<PointPackage>,
+    val aiImagePointsCost: Int,
+    val sandbox: Boolean,
+)
+
+data class PointOrder(
+    val id: Long,
+    val packageId: String,
+    val outTradeNo: String,
+    val points: Int,
+    val amountFen: Int,
+    val status: String,
+    val statusLabel: String = "",
+)
+
+data class PointPurchaseResult(
+    val orderId: Long,
+    val orderInfo: String?,
+    val sandbox: Boolean,
+    val points: Int,
+)
+
+data class PointOrderPayResult(
+    val order: PointOrder,
+    val balance: Int?,
 )

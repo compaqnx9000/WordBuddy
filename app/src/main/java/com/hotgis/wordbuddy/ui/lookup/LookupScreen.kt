@@ -84,6 +84,7 @@ fun LookupScreen(
     onPickLookupImage: (Uri) -> Unit,
     onGenerateAiForLookup: (String) -> Unit,
     onEnsureLoginForAiImage: () -> Boolean = { true },
+    onOpenBuyPoints: () -> Unit = {},
     onClearImageError: () -> Unit,
     onUpdateDefinitions: (Long, List<Definition>) -> Unit,
     homophones: List<WordHomophone> = emptyList(),
@@ -186,6 +187,7 @@ fun LookupScreen(
             onGenerateAi = { meaning ->
                 onGenerateAiForLookup(meaning)
             },
+            onBuyPoints = onOpenBuyPoints,
             onDismiss = {
                 showImageDialog = false
                 onClearImageError()
