@@ -51,7 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hotgis.wordbuddy.R
 import com.hotgis.wordbuddy.data.AccountStore
-import com.hotgis.wordbuddy.data.HotWordsApi
+import com.hotgis.wordbuddy.data.WordBuddyApi
 import com.hotgis.wordbuddy.data.RememberedAccount
 import com.hotgis.wordbuddy.ui.components.WordBuddyAvatarIcon
 import com.hotgis.wordbuddy.ui.design.sdp
@@ -302,7 +302,7 @@ private fun AccountAvatar(url: String?) {
         }
         bitmap = withContext(Dispatchers.IO) {
             runCatching {
-                val bytes = HotWordsApi().fetchAvatarBytes(url)
+                val bytes = WordBuddyApi().fetchAvatarBytes(url)
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             }.getOrNull()
         }

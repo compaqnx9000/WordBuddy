@@ -388,6 +388,8 @@ CREATE TABLE IF NOT EXISTS point_orders (
     amount_fen INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     alipay_trade_no TEXT,
+    pay_channel TEXT,
+    provider_trade_no TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     paid_at TIMESTAMPTZ

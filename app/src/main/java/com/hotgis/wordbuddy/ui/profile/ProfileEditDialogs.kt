@@ -657,32 +657,6 @@ fun EditInviteCodeDialog(
 }
 
 @Composable
-fun EditWechatAccountDialog(
-    initial: String,
-    busy: Boolean,
-    error: String?,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
-) {
-    var value by remember { mutableStateOf(initial) }
-    ProfileFormDialog(
-        title = "微信收款账号",
-        subtitle = "用于积分提现。微信登录成功后会自动填入本 App 的 OpenID；也可以手动粘贴（以英文字母 o 开头，不能填微信号）。",
-        busy = busy,
-        error = error,
-        confirmText = "保存",
-        onDismiss = onDismiss,
-        onConfirm = { onConfirm(value.trim()) },
-    ) {
-        ProfileTextField(
-            value = value,
-            onValueChange = { if (it.length <= 64) value = it },
-            placeholder = "微信 OpenID（o 开头）",
-        )
-    }
-}
-
-@Composable
 fun BuddyQrDialog(
     buddyId: String,
     qrBitmap: Bitmap?,

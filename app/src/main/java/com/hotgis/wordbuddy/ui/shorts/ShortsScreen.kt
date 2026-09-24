@@ -73,7 +73,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.hotgis.wordbuddy.ads.DrawFeedController
 import com.hotgis.wordbuddy.ads.findActivity
-import com.hotgis.wordbuddy.data.HotWordsApi
+import com.hotgis.wordbuddy.data.WordBuddyApi
 import com.hotgis.wordbuddy.media.ShortsVideoCache
 import com.hotgis.wordbuddy.podcast.AudibleFocus
 import com.hotgis.wordbuddy.podcast.AudibleOwner
@@ -105,7 +105,7 @@ fun ShortsScreen(
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
-    val api = remember { HotWordsApi() }
+    val api = remember { WordBuddyApi() }
     val scope = rememberCoroutineScope()
     var clips by remember { mutableStateOf<List<ShortClip>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -549,7 +549,7 @@ fun FavoriteClipPlayer(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val api = remember { HotWordsApi() }
+    val api = remember { WordBuddyApi() }
     val scope = rememberCoroutineScope()
     var current by remember(clip.id) { mutableStateOf(clip) }
     Box(

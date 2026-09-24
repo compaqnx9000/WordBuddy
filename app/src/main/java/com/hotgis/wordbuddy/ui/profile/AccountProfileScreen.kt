@@ -64,7 +64,8 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.hotgis.wordbuddy.ads.findActivity
-import com.hotgis.wordbuddy.data.HotWordsApi
+import com.hotgis.wordbuddy.auth.WeChatAuth
+import com.hotgis.wordbuddy.data.WordBuddyApi
 import com.hotgis.wordbuddy.data.InviteStore
 import com.hotgis.wordbuddy.pay.AlipayPayHelper
 import com.hotgis.wordbuddy.pay.isAlipayAuthIdentity
@@ -103,6 +104,8 @@ fun AccountProfileScreen(
     onUploadAvatar: (Uri, (Result<Unit>) -> Unit) -> Unit,
     onRequestAlipayAuthInfo: ((Result<String>) -> Unit) -> Unit,
     onCompleteAlipayBind: (String, (Result<Unit>) -> Unit) -> Unit,
+    onCompleteWechatBind: (String, (Result<Unit>) -> Unit) -> Unit,
+    wechatLoginConfigured: Boolean = false,
     onUpdateAccountProfile: (
         nickname: String?,
         gender: String?,
@@ -123,8 +126,8 @@ fun AccountProfileScreen(
         onResult: (Result<Unit>) -> Unit,
     ) -> Unit,
     onUpdateShipping: (String, String, String, (Result<Unit>) -> Unit) -> Unit,
-    onFetchInviteInfo: ((Result<HotWordsApi.InviteInfo>) -> Unit) -> Unit = {},
-    onBindInviteCode: (String, (Result<HotWordsApi.BindInviteResult>) -> Unit) -> Unit = { _, cb ->
+    onFetchInviteInfo: ((Result<WordBuddyApi.InviteInfo>) -> Unit) -> Unit = {},
+    onBindInviteCode: (String, (Result<WordBuddyApi.BindInviteResult>) -> Unit) -> Unit = { _, cb ->
         cb(Result.failure(IllegalStateException("未实现")))
     },
     modifier: Modifier = Modifier,
@@ -132,14 +135,15 @@ fun AccountProfileScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var alipayBinding by remember { mutableStateOf(false) }
+    var wechatBinding by remember { mutableStateOf(false) }
     var showUnbindAlipay by remember { mutableStateOf(false) }
+    var showUnbindWechat by remember { mutableStateOf(false) }
     var showAvatarSource by remember { mutableStateOf(false) }
     var showNickname by remember { mutableStateOf(false) }
     var showGender by remember { mutableStateOf(false) }
     var showRegion by remember { mutableStateOf(false) }
     var showSignature by remember { mutableStateOf(false) }
     var showEmail by remember { mutableStateOf(false) }
-    var showWechat by remember { mutableStateOf(false) }
     var showPhone by remember { mutableStateOf(false) }
     var showShipping by remember { mutableStateOf(false) }
     var showQr by remember { mutableStateOf(false) }
@@ -295,6 +299,37 @@ fun AccountProfileScreen(
         }
     }
 
+    fun bindWechat() {
+        if (wechatBinding) return
+        if (!wechatLoginConfigured || !WeChatAuth.isConfigured()) {
+            Toast.makeText(context, "微信登录尚未配置", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val activity = context.findActivity()
+        if (activity == null) {
+            Toast.makeText(context, "无法打开微信", Toast.LENGTH_SHORT).show()
+            return
+        }
+        wechatBinding = true
+        scope.launch {
+            val auth = runCatching { WeChatAuth.signIn(activity).await() }.getOrElse {
+                wechatBinding = false
+                Toast.makeText(context, it.message ?: "调起微信失败", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            onCompleteWechatBind(auth) { result ->
+                wechatBinding = false
+                result
+                    .onSuccess {
+                        Toast.makeText(context, "微信已绑定", Toast.LENGTH_SHORT).show()
+                    }
+                    .onFailure {
+                        Toast.makeText(context, it.message ?: "绑定失败", Toast.LENGTH_SHORT).show()
+                    }
+            }
+        }
+    }
+
     if (showUnbindAlipay) {
         AlertDialog(
             onDismissRequest = { if (!editBusy) showUnbindAlipay = false },
@@ -332,6 +367,49 @@ fun AccountProfileScreen(
                 TextButton(
                     enabled = !editBusy,
                     onClick = { showUnbindAlipay = false },
+                ) {
+                    Text("取消", color = Stellar.OnSurfaceVariant)
+                }
+            },
+        )
+    }
+
+    if (showUnbindWechat) {
+        AlertDialog(
+            onDismissRequest = { if (!editBusy) showUnbindWechat = false },
+            containerColor = Stellar.SurfaceContainer,
+            titleContentColor = Stellar.CyanSoft,
+            textContentColor = Stellar.OnSurfaceVariant,
+            title = {
+                Text("解除微信绑定", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column {
+                    Text("解绑后不能用该微信提现，也不能用此微信直接登录当前账号。需要时可重新调起微信绑定。")
+                    if (!editError.isNullOrBlank()) {
+                        Spacer(Modifier.height(8.sdp()))
+                        Text(editError.orEmpty(), color = Stellar.Pink, fontSize = 13.ssp())
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !editBusy,
+                    onClick = {
+                        saveProfile(
+                            wechatValue = "",
+                            successMessage = "已解除微信绑定",
+                            onSuccess = { showUnbindWechat = false },
+                        )
+                    },
+                ) {
+                    Text(if (editBusy) "解绑中…" else "解绑", color = Stellar.Pink)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !editBusy,
+                    onClick = { showUnbindWechat = false },
                 ) {
                     Text("取消", color = Stellar.OnSurfaceVariant)
                 }
@@ -450,26 +528,6 @@ fun AccountProfileScreen(
                     emailValue = value,
                     successMessage = "邮箱已更新",
                     onSuccess = { showEmail = false },
-                )
-            },
-        )
-    }
-    if (showWechat) {
-        EditWechatAccountDialog(
-            initial = wechatAccount.orEmpty(),
-            busy = editBusy,
-            error = editError,
-            onDismiss = {
-                if (!editBusy) {
-                    showWechat = false
-                    editError = null
-                }
-            },
-            onConfirm = { value ->
-                saveProfile(
-                    wechatValue = value,
-                    successMessage = "微信账号已保存",
-                    onSuccess = { showWechat = false },
                 )
             },
         )
@@ -800,12 +858,44 @@ fun AccountProfileScreen(
                     },
                 )
                 AccountProfileDivider()
+                val wechatBound = !wechatAccount.isNullOrBlank()
                 AccountProfileRow(
                     title = "微信账号",
-                    value = wechatAccount?.takeIf { it.isNotBlank() } ?: "去设置",
+                    value = when {
+                        wechatBinding -> "正在打开微信…"
+                        wechatBound -> "已绑定"
+                        else -> "去绑定"
+                    },
                     onClick = {
-                        editError = null
-                        showWechat = true
+                        if (!wechatBinding && !editBusy) bindWechat()
+                    },
+                    trailingContent = if (wechatBound && !wechatBinding) {
+                        {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "已绑定",
+                                    color = Stellar.OnSurfaceVariant.copy(alpha = 0.92f),
+                                    fontSize = 15.ssp(),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(Modifier.width(10.sdp()))
+                                Text(
+                                    text = "解绑",
+                                    color = Stellar.Pink,
+                                    fontSize = 15.ssp(),
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.clickable {
+                                        if (!editBusy) {
+                                            editError = null
+                                            showUnbindWechat = true
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    } else {
+                        null
                     },
                 )
             }

@@ -54,6 +54,7 @@ import com.hotgis.wordbuddy.data.Notebook
 import com.hotgis.wordbuddy.data.VocabEntry
 import com.hotgis.wordbuddy.data.WordHomophone
 import com.hotgis.wordbuddy.ui.auth.BiometricUnlockScreen
+import com.hotgis.wordbuddy.ui.auth.BindPhoneAfterWechatScreen
 import com.hotgis.wordbuddy.ui.auth.LoginScreen
 import com.hotgis.wordbuddy.ui.card.CardModeScreen
 import com.hotgis.wordbuddy.ui.components.MainBottomBar
@@ -298,8 +299,11 @@ fun HotWordsRoot(
     BackHandler {
         when {
             needsBiometricUnlock -> onExit()
-            showLogin -> {
+            showLogin || login.needBindPhone || (session != null && session!!.phone.isBlank()) -> {
                 pendingExit = false
+                if (login.needBindPhone || (session != null && session!!.phone.isBlank())) {
+                    viewModel.cancelWechatPhoneBind()
+                }
                 showLogin = false
                 loginHint = null
             }
@@ -451,7 +455,32 @@ fun HotWordsRoot(
             StellarSystemBars(
                 lightTheme = ui.settings.appTheme == AppTheme.Light,
             )
-            if (showLogin) {
+            if (showLogin || login.needBindPhone || (session != null && session!!.phone.isBlank())) {
+                if (login.needBindPhone || (session != null && session!!.phone.isBlank())) {
+                    BindPhoneAfterWechatScreen(
+                        modifier = Modifier.fillMaxSize(),
+                        phone = login.phone,
+                        code = login.code,
+                        password = login.password,
+                        passwordConfirm = login.passwordConfirm,
+                        buddyIdHint = login.buddyIdHint ?: session?.buddyId,
+                        sending = login.sending,
+                        loggingIn = login.loggingIn,
+                        countdownSec = login.countdownSec,
+                        error = login.error,
+                        onPhoneChange = viewModel::setLoginPhone,
+                        onCodeChange = viewModel::setLoginCode,
+                        onPasswordChange = viewModel::setLoginPassword,
+                        onPasswordConfirmChange = viewModel::setLoginPasswordConfirm,
+                        onSendCode = viewModel::sendLoginCode,
+                        onBind = viewModel::submitWechatPhoneBind,
+                        onBack = {
+                            viewModel.cancelWechatPhoneBind()
+                            showLogin = true
+                            loginHint = "请绑定手机号后再使用"
+                        },
+                    )
+                } else {
                 LoginScreen(
                     modifier = Modifier.fillMaxSize(),
                     phone = login.phone,
@@ -484,7 +513,17 @@ fun HotWordsRoot(
                     onLogin = viewModel::submitLogin,
                     wechatEnabled = com.hotgis.wordbuddy.auth.WeChatAuth.isConfigured(),
                     onWechatLogin = viewModel::loginWithWechat,
+                    alipayEnabled = true,
+                    onAlipayLogin = {
+                        val host = activity ?: context as? Activity
+                        if (host == null) {
+                            Toast.makeText(context, "无法打开支付宝", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.loginWithAlipay(host)
+                        }
+                    },
                 )
+                }
                 return@HotWordsTheme
             }
             if (showSwitchAccount) {
@@ -739,6 +778,8 @@ fun HotWordsRoot(
                         onUploadAvatar = viewModel::uploadAvatar,
                         onRequestAlipayAuthInfo = viewModel::requestAlipayAuthInfo,
                         onCompleteAlipayBind = viewModel::completeAlipayBind,
+                        onCompleteWechatBind = viewModel::completeWechatBind,
+                        wechatLoginConfigured = com.hotgis.wordbuddy.auth.WeChatAuth.isConfigured(),
                         onUpdateAccountProfile = { nickname, gender, region, signature, email, alipay, alipayName, wechat, onResult ->
                             viewModel.updateAccountProfile(
                                 nickname = nickname,

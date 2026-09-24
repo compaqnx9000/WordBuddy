@@ -1,8 +1,8 @@
 {
-  "versionCode": 108,
-  "versionName": "1.17",
+  "versionCode": 115,
+  "versionName": "1.24",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "已绑定的支付宝可以在个人资料里解绑。",
-  "releasedAt": "2026-09-21T13:55:00.000Z"
+  "notes": "支持微信购买积分与微信提现（需配置商户 API 证书后生效）。",
+  "releasedAt": "2026-09-24T05:15:00.000Z"
 }

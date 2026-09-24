@@ -40,18 +40,20 @@ import {
   createPointOrder,
   getPointOrderForUser,
   handleAlipayNotify,
+  handleWechatPayNotify,
   listPointPackages,
   listUserPointOrders,
+  pointPayConfig,
   simulatePayOrder,
 } from './pointOrders.js'
 import { aiImagePointsCost } from './points.js'
-import { alipayConfig, buildAppAuthInfo, exchangeAlipayAuthCode } from './alipay.js'
+import { alipayConfig, buildAppAuthInfo, exchangeAlipayAuthCode, fetchAlipayUserProfile } from './alipay.js'
 import {
   createWithdrawal,
   listWithdrawals,
   withdrawConfig,
 } from './withdrawals.js'
-import { exchangeWechatCode, wechatLoginConfig } from './wechatLogin.js'
+import { exchangeWechatCode, fetchWechatUserProfile, wechatLoginConfig } from './wechatLogin.js'
 import {
   INVITE_REWARD_INVITEE,
   INVITE_REWARD_INVITER,
@@ -294,6 +296,53 @@ async function consumeSms(smsId) {
   if (smsId) await query('UPDATE sms_codes SET consumed_at = now() WHERE id = $1', [smsId])
 }
 
+async function applyWechatProfile(userId, wxProfile) {
+  return applyOauthProfile(userId, wxProfile, 'wechat')
+}
+
+async function applyOauthProfile(userId, profile, source = 'oauth') {
+  const nickname = String(profile?.nickname || '').trim().slice(0, 32)
+  const headimgurl = String(profile?.headimgurl || '').trim()
+  const gender =
+    Number(profile?.sex) === 1 ? '男' : Number(profile?.sex) === 2 ? '女' : null
+
+  let avatarUrl = null
+  if (headimgurl.startsWith('http')) {
+    try {
+      const response = await fetch(headimgurl, { signal: AbortSignal.timeout(12_000) })
+      if (response.ok) {
+        const buf = Buffer.from(await response.arrayBuffer())
+        if (buf.length >= 80 && buf.length <= 1_800_000) {
+          const dir = path.join(uploadsRoot, 'avatars')
+          fs.mkdirSync(dir, { recursive: true })
+          const fileName = `${userId}.jpg`
+          fs.writeFileSync(path.join(dir, fileName), buf)
+          avatarUrl = `/uploads/avatars/${fileName}`
+        }
+      }
+    } catch (error) {
+      console.error(`[${source}-login] avatar download failed`, userId, error?.message || error)
+    }
+  }
+
+  await query(
+    `UPDATE users SET
+       nickname = CASE
+         WHEN $2::text IS NULL OR $2 = '' THEN nickname
+         WHEN nickname IS NULL OR btrim(nickname) = '' THEN $2
+         ELSE nickname
+       END,
+       gender = CASE
+         WHEN $3::text IS NULL THEN gender
+         WHEN gender IS NULL OR btrim(gender) = '' THEN $3
+         ELSE gender
+       END,
+       avatar_url = CASE WHEN $4::text IS NOT NULL THEN $4 ELSE avatar_url END
+     WHERE id = $1`,
+    [userId, nickname || null, gender, avatarUrl],
+  )
+}
+
 async function finishLogin(req, res, user, method, invite = null) {
   const vocabNotebookId = await ensureUserNotebook(user.id)
   // Single-device policy: each successful login invalidates older JWTs.
@@ -306,9 +355,11 @@ async function finishLogin(req, res, user, method, invite = null) {
   })
   const profileRow = await loadUserProfileRow(user.id)
   const profile = mapUserProfile(profileRow, user)
+  const phone = String(profile.phone || user.phone || '').trim()
   const payload = {
     isNewUser: false,
-    token: signToken(user, sessionVersion),
+    needsPhoneBind: !phone,
+    token: signToken({ id: user.id, phone: phone || null }, sessionVersion),
     user: profile,
     vocabNotebookId: Number(vocabNotebookId),
     avatarUrl: profile.avatarUrl,
@@ -456,12 +507,14 @@ router.post('/auth/wechat', async (req, res) => {
     return
   }
   const openid = exchanged.openid
+  const wxProfile = await fetchWechatUserProfile(exchanged.accessToken, openid)
   const existing = (
     await query(
       'SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE wechat_openid = $1',
       [openid],
     )
   ).rows[0]
+  let user = existing
   if (existing) {
     await query(
       `UPDATE users
@@ -470,18 +523,207 @@ router.post('/auth/wechat', async (req, res) => {
        WHERE id = $1`,
       [existing.id, openid, exchanged.unionid],
     )
-    await finishLogin(req, res, existing, 'wechat')
+  } else {
+    user = (
+      await query(
+        `INSERT INTO users (phone, wechat_openid, wechat_unionid, wechat_account)
+         VALUES (NULL, $1, $2, $1)
+         RETURNING id, phone, password_hash, avatar_url, user_level`,
+        [openid, exchanged.unionid],
+      )
+    ).rows[0]
+  }
+  if (wxProfile.ok) {
+    await applyWechatProfile(user.id, wxProfile)
+  }
+  await finishLogin(req, res, user, 'wechat')
+})
+
+/** Public authInfo for Alipay AuthTask (login before session exists). */
+router.post('/auth/alipay/auth-info', async (_req, res) => {
+  try {
+    const built = buildAppAuthInfo()
+    if (!built.ok) {
+      res.status(503).json({ error: built.error || '支付宝登录尚未配置' })
+      return
+    }
+    res.json({ authInfo: built.authInfo })
+  } catch (error) {
+    console.error('[alipay] auth-info public', error)
+    res.status(503).json({ error: '支付宝登录尚未配置' })
+  }
+})
+
+router.post('/auth/alipay', async (req, res) => {
+  try {
+    const exchanged = await exchangeAlipayAuthCode(req.body?.authCode || req.body?.code)
+    if (!exchanged.ok) {
+      await recordLoginEvent(req, { method: 'alipay', success: false })
+      res.status(400).json({ error: exchanged.error || '支付宝授权失败' })
+      return
+    }
+    const identity = exchanged.identity
+    const existing = (
+      await query(
+        'SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE alipay_account = $1',
+        [identity],
+      )
+    ).rows[0]
+    let user = existing
+    if (!existing) {
+      user = (
+        await query(
+          `INSERT INTO users (phone, alipay_account, alipay_name)
+           VALUES (NULL, $1, NULL)
+           RETURNING id, phone, password_hash, avatar_url, user_level`,
+          [identity],
+        )
+      ).rows[0]
+    }
+    if (exchanged.accessToken) {
+      const aliProfile = await fetchAlipayUserProfile(exchanged.accessToken)
+      if (aliProfile.ok) {
+        await applyOauthProfile(user.id, aliProfile, 'alipay')
+      }
+    }
+    await finishLogin(req, res, user, 'alipay')
+  } catch (error) {
+    console.error('[alipay] login', error)
+    await recordLoginEvent(req, { method: 'alipay', success: false })
+    sendAppError(res, error)
+  }
+})
+
+/** Bind WeChat OpenID to the current logged-in account (profile payout). */
+router.post('/me/wechat/bind', authRequired, async (req, res) => {
+  try {
+    if (!(await guardAccountActive(req, res))) return
+    const exchanged = await exchangeWechatCode(req.body?.authCode || req.body?.code)
+    if (!exchanged.ok) {
+      res.status(400).json({ error: exchanged.error || '微信授权失败' })
+      return
+    }
+    const openid = exchanged.openid
+    const taken = (
+      await query(
+        'SELECT id FROM users WHERE wechat_openid = $1 AND id <> $2 LIMIT 1',
+        [openid, req.user.id],
+      )
+    ).rows[0]
+    if (taken) {
+      res.status(400).json({ error: '该微信已绑定其他账号' })
+      return
+    }
+    const wxProfile = await fetchWechatUserProfile(exchanged.accessToken, openid)
+    await query(
+      `UPDATE users
+       SET wechat_openid = $2,
+           wechat_unionid = COALESCE($3, wechat_unionid),
+           wechat_account = $2
+       WHERE id = $1`,
+      [req.user.id, openid, exchanged.unionid],
+    )
+    if (wxProfile.ok) {
+      await applyWechatProfile(req.user.id, wxProfile)
+    }
+    const profileRow = await loadUserProfileRow(req.user.id)
+    const profile = mapUserProfile(profileRow, req.user)
+    res.json({
+      user: profile,
+      vocabNotebookId: Number(await ensureUserNotebook(req.user.id)),
+      avatarUrl: profile.avatarUrl,
+      level: profile.level,
+    })
+  } catch (error) {
+    console.error('[wechat] bind', error)
+    sendAppError(res, error)
+  }
+})
+
+/** Public invite preview for landing page. */
+router.post('/auth/bind-phone', authRequired, async (req, res) => {
+  if (!(await guardAccountActive(req, res))) return
+  const phone = normalizePhone(req.body?.phone)
+  const code = String(req.body?.code || '').trim()
+  const passwordRaw = req.body?.password
+  const password =
+    passwordRaw == null || String(passwordRaw).trim() === ''
+      ? null
+      : normalizePassword(passwordRaw)
+  if (!phone) {
+    res.status(400).json({ error: '请输入正确的手机号' })
     return
   }
-  const user = (
+  if (passwordRaw != null && String(passwordRaw).trim() !== '' && !password) {
+    res.status(400).json({ error: '密码需要 6 到 32 位' })
+    return
+  }
+  const me = (
     await query(
-      `INSERT INTO users (phone, wechat_openid, wechat_unionid, wechat_account)
-       VALUES (NULL, $1, $2, $1)
-       RETURNING id, phone, password_hash, avatar_url, user_level`,
-      [openid, exchanged.unionid],
+      'SELECT id, phone, password_hash, wechat_openid, alipay_account FROM users WHERE id = $1',
+      [req.user.id],
     )
   ).rows[0]
-  await finishLogin(req, res, user, 'wechat')
+  if (!me) {
+    res.status(404).json({ error: '用户不存在' })
+    return
+  }
+  if (String(me.phone || '').trim()) {
+    res.status(400).json({ error: '已绑定手机号，无需重复绑定' })
+    return
+  }
+  const hasWechat = Boolean(String(me.wechat_openid || '').trim())
+  const hasAlipay = Boolean(String(me.alipay_account || '').trim())
+  if (!hasWechat && !hasAlipay) {
+    res.status(400).json({ error: '当前账号不是第三方登录账号' })
+    return
+  }
+  const checked = await verifySmsCode(phone, code)
+  if (!checked.ok) {
+    res.status(400).json({ error: checked.error })
+    return
+  }
+  const taken = (
+    await query('SELECT id, wechat_openid FROM users WHERE phone = $1 AND id <> $2 LIMIT 1', [
+      phone,
+      me.id,
+    ])
+  ).rows[0]
+  if (taken) {
+    res.status(400).json({
+      error: '该手机号已注册。请用手机号登录；如需合并微信，请联系客服。',
+    })
+    return
+  }
+  try {
+    const fields = ['phone = $2', 'phone_changed_at = now()']
+    const params = [me.id, phone]
+    if (password) {
+      fields.push(`password_hash = $${params.length + 1}`)
+      params.push(hashPassword(password))
+      fields.push('password_changed_at = now()')
+    }
+    await query(`UPDATE users SET ${fields.join(', ')} WHERE id = $1`, params)
+  } catch (error) {
+    if (error?.code === '23505') {
+      res.status(400).json({ error: '该手机号已被其他账号使用' })
+      return
+    }
+    throw error
+  }
+  if (checked.smsId) await consumeSms(checked.smsId)
+  const sessionVersion = await rotateSessionVersion(me.id)
+  const profileRow = await loadUserProfileRow(me.id)
+  const profile = mapUserProfile(profileRow, { id: me.id, phone })
+  res.json({
+    ok: true,
+    needsPhoneBind: false,
+    token: signToken({ id: me.id, phone }, sessionVersion),
+    user: profile,
+    vocabNotebookId: Number(await ensureUserNotebook(me.id)),
+    avatarUrl: profile.avatarUrl,
+    level: profile.level,
+  })
 })
 
 /** Public invite preview for landing page. */
@@ -698,17 +940,20 @@ router.patch('/me', authRequired, async (req, res) => {
   }
 
   let wechatAccount = row.wechat_account
+  let wechatOpenId = row.wechat_openid
   if (req.body?.wechatAccount != null) {
     const next = String(req.body.wechatAccount).trim().slice(0, 64)
     if (next && next.length < 3) {
-      res.status(400).json({ error: '微信 OpenID 至少 3 位' })
+      res.status(400).json({ error: '微信账号无效' })
       return
     }
     if (next && !/^o[A-Za-z0-9_-]{16,63}$/.test(next)) {
-      res.status(400).json({ error: '请填写微信 OpenID（以 o 开头，不是微信号）' })
+      res.status(400).json({ error: '微信账号无效' })
       return
     }
     wechatAccount = next || null
+    // Clearing payout WeChat also unbinds login OpenID.
+    if (!wechatAccount) wechatOpenId = null
   }
 
   // 搭子号为系统唯一识别码，禁止用户修改
@@ -732,7 +977,8 @@ router.patch('/me', authRequired, async (req, res) => {
          email = $10,
          alipay_account = $11,
          alipay_name = $12,
-         wechat_account = $13
+         wechat_account = $13,
+         wechat_openid = $14
        WHERE id = $1
        RETURNING ${USER_PROFILE_SQL}`,
       [
@@ -749,6 +995,7 @@ router.patch('/me', authRequired, async (req, res) => {
         alipayAccount,
         alipayName,
         wechatAccount,
+        wechatOpenId,
       ],
     )
   ).rows[0]
@@ -790,7 +1037,14 @@ router.post('/me/alipay/bind', authRequired, async (req, res) => {
         [req.user.id, exchanged.identity],
       )
     ).rows[0]
-    const profile = mapUserProfile(updated, req.user)
+    if (exchanged.accessToken) {
+      const aliProfile = await fetchAlipayUserProfile(exchanged.accessToken)
+      if (aliProfile.ok) {
+        await applyOauthProfile(req.user.id, aliProfile, 'alipay')
+      }
+    }
+    const profileRow = await loadUserProfileRow(req.user.id)
+    const profile = mapUserProfile(profileRow || updated, req.user)
     res.json({
       user: profile,
       vocabNotebookId: Number(await ensureUserNotebook(req.user.id)),
@@ -1980,11 +2234,15 @@ router.post('/mnemonic-images', authRequired, async (req, res) => {
 })
 
 router.get('/point-packages', (_req, res) => {
-  const cfg = alipayConfig()
+  const pay = pointPayConfig()
+  const ali = alipayConfig()
   res.json({
     items: listPointPackages(),
     aiImagePointsCost: aiImagePointsCost(),
-    sandbox: cfg.sandbox,
+    sandbox: ali.sandbox,
+    alipayReady: pay.alipayReady || ali.sandbox,
+    wechatReady: pay.wechatReady,
+    channels: pay.channels,
   })
 })
 
@@ -1993,6 +2251,7 @@ router.post('/me/point-orders', authRequired, async (req, res) => {
     const result = await createPointOrder({
       userId: req.user.id,
       packageId: String(req.body?.packageId || '').trim(),
+      channel: String(req.body?.channel || 'alipay').trim(),
     })
     if (!result.ok) {
       res.status(400).json({ error: result.error || '下单失败' })
@@ -2000,7 +2259,9 @@ router.post('/me/point-orders', authRequired, async (req, res) => {
     }
     res.json({
       order: result.order,
+      channel: result.channel,
       orderInfo: result.orderInfo,
+      wechatPay: result.wechatPay,
       sandbox: result.sandbox,
       package: result.package,
     })
@@ -2062,5 +2323,15 @@ router.post('/alipay/notify', async (req, res) => {
   } catch (error) {
     console.error('[alipay/notify]', error)
     res.type('text/plain').send('failure')
+  }
+})
+
+router.post('/wechat/notify', async (req, res) => {
+  try {
+    const result = await handleWechatPayNotify(req.body || {})
+    res.status(result.httpStatus || (result.ok ? 200 : 500)).json(result.reply || { code: 'FAIL', message: '失败' })
+  } catch (error) {
+    console.error('[wechat/notify]', error)
+    res.status(500).json({ code: 'FAIL', message: '失败' })
   }
 })

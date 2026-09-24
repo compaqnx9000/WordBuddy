@@ -15,7 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 object AppUpdater {
-    suspend fun fetchLatest(api: HotWordsApi = HotWordsApi()): AppUpdateInfo =
+    suspend fun fetchLatest(api: WordBuddyApi = WordBuddyApi()): AppUpdateInfo =
         api.checkAppUpdate()
 
     suspend fun downloadApk(

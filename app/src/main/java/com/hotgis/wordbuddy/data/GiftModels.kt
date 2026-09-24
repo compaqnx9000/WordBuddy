@@ -82,6 +82,8 @@ data class WithdrawConfig(
     val amountFen: Int = 1,
     val amountYuan: String = "0.01",
     val pointsCost: Int = 1,
+    val alipayReady: Boolean = true,
+    val wechatReady: Boolean = true,
     val channels: List<WithdrawChannel> = emptyList(),
     val note: String = "",
 )

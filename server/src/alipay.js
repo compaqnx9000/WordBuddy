@@ -349,7 +349,8 @@ export function buildAppAuthInfo() {
     method: 'alipay.open.auth.sdk.code.get',
     pid: cfg.pid,
     product_id: 'APP_FAST_LOGIN',
-    scope: 'kuaijie',
+    // auth_user：可调 alipay.user.info.share 获取昵称/头像；kuaijie 仅快捷登录标识。
+    scope: 'auth_user',
     sign_type: 'RSA2',
     target_id: targetId,
   }
@@ -390,7 +391,47 @@ export async function exchangeAlipayAuthCode(code) {
   const openId = String(data.open_id || '').trim()
   const identity = (userId || openId).slice(0, 128)
   if (!identity) return { ok: false, error: '支付宝未返回用户标识' }
-  return { ok: true, identity }
+  const accessToken = String(data.access_token || '').trim() || null
+  return { ok: true, identity, accessToken, userId: userId || null, openId: openId || null }
+}
+
+/** Fetch nickname / avatar after oauth (requires auth_user scope). */
+export async function fetchAlipayUserProfile(accessToken) {
+  const token = String(accessToken || '').trim()
+  if (!token) return { ok: false, error: '缺少支付宝授权令牌' }
+  const cfg = alipayConfig()
+  if (!cfg.appId || !cfg.privateKey) {
+    return { ok: false, error: '支付宝未配置 APPID 或应用私钥' }
+  }
+  const params = attachCertParams(
+    {
+      app_id: cfg.appId,
+      method: 'alipay.user.info.share',
+      format: 'JSON',
+      charset: 'utf-8',
+      sign_type: 'RSA2',
+      timestamp: formatAlipayTimestamp(new Date()),
+      version: '1.0',
+      auth_token: token,
+      biz_content: '{}',
+    },
+    cfg,
+  )
+  const post = await postAlipay(cfg, 'alipay.user.info.share', params)
+  if (!post.ok) return post
+  const data = post.data || {}
+  if (data.sub_code || data.sub_msg || (data.code && data.code !== '10000')) {
+    console.error('[alipay] userinfo', data.sub_code || data.code, data.sub_msg || data.msg)
+    return { ok: false, error: data.sub_msg || data.msg || '获取支付宝资料失败' }
+  }
+  const genderRaw = String(data.gender || '').trim().toUpperCase()
+  const sex = genderRaw === 'M' ? 1 : genderRaw === 'F' ? 2 : 0
+  return {
+    ok: true,
+    nickname: String(data.nick_name || data.user_name || '').trim().slice(0, 32) || null,
+    headimgurl: String(data.avatar || '').trim() || null,
+    sex,
+  }
 }
 
 export function identityType(loginId) {

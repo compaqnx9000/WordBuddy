@@ -44,12 +44,12 @@ export function withdrawConfig() {
     const parts = [amountText]
     parts.push(
       wechatReady
-        ? '微信需填写该商户 App 下的 OpenID，提交后可能要在微信里确认收款。'
-        : '微信商家转账尚未配置商户号/证书，暂时无法打到微信。',
+        ? '微信请先在个人资料中绑定微信；提交后可能要在微信里确认收款。'
+        : '微信商家转账尚未配置商户 API 证书，暂时无法打到微信。',
     )
     parts.push(
       alipayReady
-        ? '支付宝需账号与实名一致。'
+        ? '支付宝请先在个人资料中绑定支付宝。'
         : '支付宝应用还在审核/未上线，暂可能无法打款。',
     )
     note = parts.join('')
@@ -66,14 +66,16 @@ export function withdrawConfig() {
       {
         id: 'wechat',
         name: '微信提现',
-        accountLabel: '微信 OpenID',
-        accountHint: '请填写微信 OpenID（以 o 开头），不能填微信号',
+        accountLabel: '微信账号',
+        accountHint: '请在个人资料中调起微信绑定',
+        ready: sandbox || wechatReady,
       },
       {
         id: 'alipay',
         name: '支付宝提现',
-        accountLabel: '支付宝账号（手机号或邮箱）',
-        accountHint: '请填写收款支付宝登录账号，并填写与账号一致的实名',
+        accountLabel: '支付宝账号',
+        accountHint: '请在个人资料中调起支付宝绑定',
+        ready: sandbox || alipayReady,
       },
     ],
     note,
@@ -162,19 +164,19 @@ export async function createWithdrawal(userId, { channel, account, realName } = 
   }
   const profile = (
     await query(
-      'SELECT alipay_account, alipay_name, wechat_account FROM users WHERE id = $1',
+      'SELECT alipay_account, alipay_name, wechat_account, wechat_openid FROM users WHERE id = $1',
       [userId],
     )
   ).rows[0]
   const saved =
     ch === 'wechat'
-      ? String(profile?.wechat_account || '').trim()
+      ? String(profile?.wechat_openid || profile?.wechat_account || '').trim()
       : String(profile?.alipay_account || '').trim()
   let acct = String(account || '').trim() || saved
   if (!acct || acct.length < 3 || acct.length > 128) {
     return {
       ok: false,
-      error: ch === 'wechat' ? '请先在个人资料中设置微信收款账号' : '请先绑定支付宝收款账号',
+      error: ch === 'wechat' ? '请先在个人资料中绑定微信账号' : '请先绑定支付宝收款账号',
     }
   }
   const payeeName = String(realName || profile?.alipay_name || '').trim()
@@ -187,7 +189,7 @@ export async function createWithdrawal(userId, { channel, account, realName } = 
     return { ok: false, error: '请先绑定当前手机上的支付宝账号' }
   }
   if (ch === 'wechat' && !cfg.sandbox && !isWechatOpenId(acct)) {
-    return { ok: false, error: '请填写微信 OpenID（以 o 开头，不是微信号）' }
+    return { ok: false, error: '请先在个人资料中绑定微信账号' }
   }
 
   const amountFen = cfg.amountFen

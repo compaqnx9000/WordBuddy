@@ -207,6 +207,8 @@ data class PointPackagesPayload(
     val items: List<PointPackage>,
     val aiImagePointsCost: Int,
     val sandbox: Boolean,
+    val alipayReady: Boolean = true,
+    val wechatReady: Boolean = false,
 )
 
 data class PointOrder(
@@ -219,9 +221,21 @@ data class PointOrder(
     val statusLabel: String = "",
 )
 
+data class WechatPayOrderParams(
+    val appId: String,
+    val partnerId: String,
+    val prepayId: String,
+    val packageValue: String,
+    val nonceStr: String,
+    val timeStamp: String,
+    val sign: String,
+)
+
 data class PointPurchaseResult(
     val orderId: Long,
+    val channel: String,
     val orderInfo: String?,
+    val wechatPay: WechatPayOrderParams?,
     val sandbox: Boolean,
     val points: Int,
 )

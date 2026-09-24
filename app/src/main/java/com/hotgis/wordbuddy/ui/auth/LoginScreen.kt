@@ -91,6 +91,8 @@ fun LoginScreen(
     onLogin: () -> Unit,
     wechatEnabled: Boolean = false,
     onWechatLogin: () -> Unit = {},
+    alipayEnabled: Boolean = true,
+    onAlipayLogin: () -> Unit = {},
     modifier: Modifier = Modifier,
     hint: String? = null,
     onBack: (() -> Unit)? = null,
@@ -291,21 +293,38 @@ fun LoginScreen(
             }
         }
         if (!needPassword) {
-            Spacer(Modifier.height(16.sdp()))
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.sdp()))
-                    .background(if (wechatEnabled) Color(0xFF07C160) else Stellar.SurfaceHigh)
-                    .clickable(enabled = wechatEnabled && !loggingIn, onClick = onWechatLogin)
-                    .padding(vertical = 14.sdp()),
-                contentAlignment = Alignment.Center,
+            Spacer(Modifier.height(28.sdp()))
+            Text(
+                text = "其他登录方式",
+                color = Stellar.OnSurfaceVariant.copy(alpha = 0.75f),
+                fontSize = 12.ssp(),
+            )
+            Spacer(Modifier.height(14.sdp()))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(28.sdp()),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                SocialLoginIcon(
+                    iconRes = R.drawable.ic_wechat,
+                    contentDescription = if (wechatEnabled) "微信登录" else "微信登录尚未配置",
+                    enabled = wechatEnabled && !loggingIn,
+                    accent = Color(0xFF07C160),
+                    onClick = onWechatLogin,
+                )
+                SocialLoginIcon(
+                    iconRes = R.drawable.ic_alipay,
+                    contentDescription = if (alipayEnabled) "支付宝登录" else "支付宝登录尚未配置",
+                    enabled = alipayEnabled && !loggingIn,
+                    accent = Color(0xFF1677FF),
+                    onClick = onAlipayLogin,
+                )
+            }
+            if (!wechatEnabled && !alipayEnabled) {
+                Spacer(Modifier.height(8.sdp()))
                 Text(
-                    text = if (wechatEnabled) "微信登录" else "微信登录（尚未配置）",
-                    color = if (wechatEnabled) Color.White else Stellar.OnSurfaceVariant,
-                    fontSize = 16.ssp(),
-                    fontWeight = FontWeight.Bold,
+                    text = "第三方登录尚未配置",
+                    color = Stellar.OnSurfaceVariant.copy(alpha = 0.55f),
+                    fontSize = 11.ssp(),
                 )
             }
         }
@@ -322,6 +341,39 @@ fun LoginScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(28.sdp()))
+    }
+}
+
+@Composable
+private fun SocialLoginIcon(
+    iconRes: Int,
+    contentDescription: String,
+    enabled: Boolean,
+    accent: Color,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(52.sdp())
+            .clip(CircleShape)
+            .background(
+                if (enabled) Color.White.copy(alpha = 0.92f) else Stellar.SurfaceHigh,
+            )
+            .border(
+                1.dp,
+                if (enabled) accent.copy(alpha = 0.35f) else Stellar.Outline.copy(alpha = 0.35f),
+                CircleShape,
+            )
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            painter = painterResource(iconRes),
+            contentDescription = contentDescription,
+            modifier = Modifier.size(34.sdp()),
+            contentScale = ContentScale.Fit,
+            alpha = if (enabled) 1f else 0.35f,
+        )
     }
 }
 
@@ -381,7 +433,7 @@ private fun LoginModeTab(
 }
 
 @Composable
-private fun BrandMark() {
+internal fun BrandMark() {
     val logoShape = RoundedCornerShape(28.sdp())
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(contentAlignment = Alignment.Center) {
@@ -424,7 +476,7 @@ private fun BrandMark() {
 }
 
 @Composable
-private fun LoginField(
+internal fun LoginField(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,

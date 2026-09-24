@@ -62,7 +62,7 @@ import androidx.compose.ui.unit.dp
 import com.hotgis.wordbuddy.data.GiftCategory
 import com.hotgis.wordbuddy.data.GiftItem
 import com.hotgis.wordbuddy.data.GiftOrder
-import com.hotgis.wordbuddy.data.HotWordsApi
+import com.hotgis.wordbuddy.data.WordBuddyApi
 import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
@@ -97,7 +97,7 @@ fun PointsMallScreen(
     onLogin: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val api = remember { HotWordsApi() }
+    val api = remember { WordBuddyApi() }
     var categories by remember { mutableStateOf(listOf(GiftCategory("recommend", "推荐"))) }
     var category by remember { mutableStateOf("recommend") }
     var gifts by remember { mutableStateOf<List<GiftItem>>(emptyList()) }
@@ -406,7 +406,7 @@ fun GiftDetailScreen(
     onSaveShipping: (name: String, phone: String, detail: String) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier,
 ) {
-    val api = remember { HotWordsApi() }
+    val api = remember { WordBuddyApi() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var gift by remember { mutableStateOf<GiftItem?>(null) }
@@ -723,7 +723,7 @@ fun GiftOrdersScreen(
     onLogin: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val api = remember { HotWordsApi() }
+    val api = remember { WordBuddyApi() }
     var orders by remember { mutableStateOf<List<GiftOrder>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
 

@@ -52,7 +52,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import com.hotgis.wordbuddy.data.HotWordsApi
+import com.hotgis.wordbuddy.data.WordBuddyApi
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
 import com.hotgis.wordbuddy.ui.lookup.Stellar
@@ -76,7 +76,7 @@ fun ShortFavoritesScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val api = remember { HotWordsApi() }
+    val api = remember { WordBuddyApi() }
     val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<ShortClip>>(emptyList()) }
     var selected by remember { mutableStateOf(setOf<String>()) }

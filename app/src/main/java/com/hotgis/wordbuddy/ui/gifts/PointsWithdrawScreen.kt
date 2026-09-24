@@ -56,7 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.hotgis.wordbuddy.R
-import com.hotgis.wordbuddy.data.HotWordsApi
+import com.hotgis.wordbuddy.data.WordBuddyApi
 import com.hotgis.wordbuddy.data.WithdrawConfig
 import com.hotgis.wordbuddy.data.WithdrawalItem
 import com.hotgis.wordbuddy.pay.isAlipayAuthIdentity
@@ -88,7 +88,7 @@ fun PointsWithdrawScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val api = remember { HotWordsApi() }
+    val api = remember { WordBuddyApi() }
     val scope = rememberCoroutineScope()
     var config by remember { mutableStateOf<WithdrawConfig?>(null) }
     var history by remember { mutableStateOf<List<WithdrawalItem>>(emptyList()) }
@@ -117,6 +117,9 @@ fun PointsWithdrawScreen(
                 history = items
                 if (cfg.channels.none { it.id == channel }) {
                     channel = cfg.channels.firstOrNull()?.id ?: "alipay"
+                }
+                if (channel == "wechat" && !cfg.sandbox && !cfg.wechatReady && cfg.alipayReady) {
+                    channel = "alipay"
                 }
             }.onFailure {
                 error = it.message ?: "加载失败"
@@ -303,7 +306,7 @@ fun PointsWithdrawScreen(
                         Spacer(Modifier.height(8.sdp()))
                         Text(
                             text = if (selectedAccount.isBlank()) {
-                                "尚未${if (channel == "wechat") "设置微信" else "绑定支付宝"}收款账号"
+                                "尚未${if (channel == "wechat") "绑定微信" else "绑定支付宝"}收款账号"
                             } else {
                                 "尚未填写支付宝实名，打款会被拒绝"
                             },
@@ -341,9 +344,14 @@ fun PointsWithdrawScreen(
                                 selectedAccount.length < 3 -> {
                                     Toast.makeText(
                                         context,
-                                        if (channel == "wechat") "请先在个人资料中设置收款账号" else "请先绑定支付宝账号",
+                                        if (channel == "wechat") "请先在个人资料中绑定微信" else "请先绑定支付宝账号",
                                         Toast.LENGTH_SHORT,
                                     ).show()
+                                }
+                                channel == "wechat" &&
+                                    cfg?.sandbox != true &&
+                                    cfg?.wechatReady != true -> {
+                                    Toast.makeText(context, "微信提现尚未开通（商户证书未配置）", Toast.LENGTH_SHORT).show()
                                 }
                                 channel == "alipay" &&
                                     cfg?.sandbox != true &&
@@ -360,7 +368,7 @@ fun PointsWithdrawScreen(
                                     (selectedAccount.length < 18 || !selectedAccount.startsWith("o")) -> {
                                     Toast.makeText(
                                         context,
-                                        "请填写微信 OpenID（以 o 开头，不是微信号）",
+                                        "请先在个人资料中绑定微信账号",
                                         Toast.LENGTH_SHORT,
                                     ).show()
                                 }

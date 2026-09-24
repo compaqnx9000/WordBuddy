@@ -367,4 +367,6 @@ export async function ensureSchema() {
   await query(
     'CREATE INDEX IF NOT EXISTS point_orders_status ON point_orders (status, created_at DESC)',
   )
+  await query('ALTER TABLE point_orders ADD COLUMN IF NOT EXISTS pay_channel TEXT')
+  await query('ALTER TABLE point_orders ADD COLUMN IF NOT EXISTS provider_trade_no TEXT')
 }

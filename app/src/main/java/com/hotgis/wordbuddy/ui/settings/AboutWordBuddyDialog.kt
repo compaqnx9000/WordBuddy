@@ -52,7 +52,7 @@ import com.hotgis.wordbuddy.BuildConfig
 import com.hotgis.wordbuddy.R
 import com.hotgis.wordbuddy.data.AppUpdateInfo
 import com.hotgis.wordbuddy.data.AppUpdater
-import com.hotgis.wordbuddy.data.HotWordsApi
+import com.hotgis.wordbuddy.data.WordBuddyApi
 import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
@@ -70,7 +70,7 @@ fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
-    val api = remember { HotWordsApi() }
+    val api = remember { WordBuddyApi() }
     var detailTitle by remember { mutableStateOf<String?>(null) }
     var detailMessage by remember { mutableStateOf("") }
     var detailConfirm by remember { mutableStateOf("知道了") }

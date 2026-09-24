@@ -10,7 +10,7 @@ export function wechatLoginConfig() {
   }
 }
 
-/** Exchange a mobile SendAuth code for the user's OpenID. Secret stays on the server. */
+/** Exchange a mobile SendAuth code for OpenID + access_token. Secret stays on the server. */
 export async function exchangeWechatCode(code) {
   const cfg = wechatLoginConfig()
   if (!cfg.loginReady) {
@@ -34,7 +34,8 @@ export async function exchangeWechatCode(code) {
     return { ok: false, error: '连接微信失败，请稍后重试' }
   }
   const openid = String(data?.openid || '').trim()
-  if (!openid) {
+  const accessToken = String(data?.access_token || '').trim()
+  if (!openid || !accessToken) {
     const message = String(data?.errmsg || '').trim()
     console.error('[wechat-login] exchange failed', data?.errcode, message)
     return { ok: false, error: wechatAuthError(data?.errcode, message) }
@@ -42,7 +43,37 @@ export async function exchangeWechatCode(code) {
   return {
     ok: true,
     openid,
+    accessToken,
     unionid: String(data?.unionid || '').trim() || null,
+  }
+}
+
+/** Fetch nickname / avatar after oauth. Requires snsapi_userinfo scope. */
+export async function fetchWechatUserProfile(accessToken, openid) {
+  const token = String(accessToken || '').trim()
+  const id = String(openid || '').trim()
+  if (!token || !id) return { ok: false, error: '缺少微信授权信息' }
+  const url = new URL(`${OPEN_HOST}/sns/userinfo`)
+  url.searchParams.set('access_token', token)
+  url.searchParams.set('openid', id)
+  url.searchParams.set('lang', 'zh_CN')
+  let data
+  try {
+    const response = await fetch(url, { method: 'GET' })
+    data = await response.json()
+  } catch (error) {
+    console.error('[wechat-login] userinfo failed', error)
+    return { ok: false, error: '获取微信资料失败' }
+  }
+  if (data?.errcode) {
+    console.error('[wechat-login] userinfo err', data.errcode, data.errmsg)
+    return { ok: false, error: wechatAuthError(data.errcode, data.errmsg) }
+  }
+  return {
+    ok: true,
+    nickname: String(data?.nickname || '').trim().slice(0, 32) || null,
+    headimgurl: String(data?.headimgurl || '').trim() || null,
+    sex: Number(data?.sex) || 0,
   }
 }
 

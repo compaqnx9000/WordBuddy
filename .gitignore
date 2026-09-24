@@ -20,12 +20,10 @@
 /.tools
 .cursor/apk-build-needed
 /outputs/
-h5/node_modules/
 server/node_modules/
 server/uploads/avatars/*.jpg
 server/uploads/avatars/*.jpeg
 server/uploads/avatars/*.png
-h5/dist/
 tmp_dict/
 .env
 .env.*

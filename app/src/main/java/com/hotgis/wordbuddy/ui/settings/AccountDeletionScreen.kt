@@ -52,7 +52,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.hotgis.wordbuddy.data.HotWordsApi
+import com.hotgis.wordbuddy.data.WordBuddyApi
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
 import com.hotgis.wordbuddy.ui.lookup.Stellar
@@ -73,7 +73,7 @@ private val DELETION_REASONS = listOf(
 
 @Composable
 fun AccountDeletionScreen(
-    status: HotWordsApi.AccountDeletionStatus?,
+    status: WordBuddyApi.AccountDeletionStatus?,
     busy: Boolean,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
@@ -82,7 +82,7 @@ fun AccountDeletionScreen(
         code: String,
         reason: String?,
         force: Boolean,
-        onResult: (Result<HotWordsApi.AccountDeletionStatus>) -> Unit,
+        onResult: (Result<WordBuddyApi.AccountDeletionStatus>) -> Unit,
     ) -> Unit,
     onCancelDeletion: ((Result<Unit>) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
@@ -419,7 +419,7 @@ private fun NoticeLine(text: String) {
 
 @Composable
 private fun CheckStep(
-    status: HotWordsApi.AccountDeletionStatus?,
+    status: WordBuddyApi.AccountDeletionStatus?,
     forceAgree: Boolean,
     onForceAgree: (Boolean) -> Unit,
 ) {
@@ -491,7 +491,7 @@ private fun CheckStep(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun VerifyStep(
-    status: HotWordsApi.AccountDeletionStatus?,
+    status: WordBuddyApi.AccountDeletionStatus?,
     forceMode: Boolean,
     code: String,
     onCode: (String) -> Unit,
@@ -584,7 +584,7 @@ private fun VerifyStep(
 }
 
 @Composable
-private fun PendingStep(status: HotWordsApi.AccountDeletionStatus?) {
+private fun PendingStep(status: WordBuddyApi.AccountDeletionStatus?) {
     Column(
         Modifier
             .fillMaxWidth()

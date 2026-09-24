@@ -2,6 +2,7 @@ package com.hotgis.wordbuddy.ui
 
 import android.app.Application
 import com.hotgis.wordbuddy.auth.WeChatAuth
+import com.hotgis.wordbuddy.pay.AlipayPayHelper
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -26,7 +27,7 @@ import com.hotgis.wordbuddy.data.CheckInState
 import com.hotgis.wordbuddy.data.CheckInResult
 import com.hotgis.wordbuddy.data.InviteStore
 import com.hotgis.wordbuddy.data.VocabEntry
-import com.hotgis.wordbuddy.data.HotWordsApi
+import com.hotgis.wordbuddy.data.WordBuddyApi
 import com.hotgis.wordbuddy.data.AuthSessionEvents
 import com.hotgis.wordbuddy.data.ApiException
 import com.hotgis.wordbuddy.data.WordHeads
@@ -124,6 +125,9 @@ data class LoginUi(
     val inviteCode: String = "",
     val mode: LoginMode = LoginMode.SMS,
     val needPassword: Boolean = false,
+    /** WeChat login succeeded but phone is still missing. */
+    val needBindPhone: Boolean = false,
+    val buddyIdHint: String? = null,
     val sending: Boolean = false,
     val loggingIn: Boolean = false,
     val countdownSec: Int = 0,
@@ -137,7 +141,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private val accountStore = AccountStore(application)
     private val checkInStore = CheckInStore(application)
     private val inviteStore = InviteStore(application)
-    private val api = HotWordsApi()
+    private val api = WordBuddyApi()
     private val dictionary = DictionaryClient()
     private val tts = TtsPlayer(application)
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy/MM/dd")
@@ -147,8 +151,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     val notebooks: StateFlow<List<Notebook>> = repo.notebooks
     private val _session = MutableStateFlow(sessionStore.load())
     val session: StateFlow<UserSession?> = _session.asStateFlow()
-    private val _accountDeletion = MutableStateFlow<HotWordsApi.AccountDeletionStatus?>(null)
-    val accountDeletion: StateFlow<HotWordsApi.AccountDeletionStatus?> = _accountDeletion.asStateFlow()
+    private val _accountDeletion = MutableStateFlow<WordBuddyApi.AccountDeletionStatus?>(null)
+    val accountDeletion: StateFlow<WordBuddyApi.AccountDeletionStatus?> = _accountDeletion.asStateFlow()
     private val _accountDeletionBusy = MutableStateFlow(false)
     val accountDeletionBusy: StateFlow<Boolean> = _accountDeletionBusy.asStateFlow()
     private val _rememberedAccounts = MutableStateFlow(accountStore.list())
@@ -243,6 +247,12 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             refreshRememberedAccounts()
             LauncherIcons.apply(getApplication(), session.level)
             loadAvatarBitmap()
+            if (session.phone.isBlank()) {
+                _login.value = LoginUi(
+                    needBindPhone = true,
+                    buddyIdHint = session.buddyId,
+                )
+            }
             viewModelScope.launch { bootstrapSession() }
         } else {
             LauncherIcons.apply(getApplication(), 0)
@@ -2289,9 +2299,134 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 api.loginWithWechat(code)
             }.onSuccess { result ->
                 val session = result.session ?: error("登录失败")
-                enterSession(session)
+                if (result.needsPhoneBind || session.phone.isBlank()) {
+                    // Keep token so bind-phone can call authenticated API.
+                    sessionStore.save(session)
+                    _session.value = session
+                    accountStore.upsert(session)
+                    loadAvatarBitmap()
+                    _login.update {
+                        it.copy(
+                            needBindPhone = true,
+                            buddyIdHint = session.buddyId,
+                            phone = "",
+                            code = "",
+                            password = "",
+                            passwordConfirm = "",
+                            loggingIn = false,
+                            error = null,
+                        )
+                    }
+                } else {
+                    enterSession(session)
+                    _login.update { LoginUi() }
+                }
             }.onFailure { error ->
-                _login.update { it.copy(error = error.message ?: "微信登录失败") }
+                _login.update { it.copy(error = error.message ?: "微信登录失败", loggingIn = false) }
+            }
+            if (!_login.value.needBindPhone) {
+                _login.update { it.copy(loggingIn = false) }
+            }
+        }
+    }
+
+    fun loginWithAlipay(activity: android.app.Activity) {
+        if (_login.value.loggingIn) return
+        viewModelScope.launch {
+            _login.update { it.copy(loggingIn = true, error = null) }
+            runCatching {
+                if (!AlipayPayHelper.isInstalled(activity)) {
+                    error("请先安装支付宝 App")
+                }
+                val authInfo = api.fetchAlipayLoginAuthInfo()
+                val auth = AlipayPayHelper.auth(activity, authInfo)
+                when {
+                    auth.cancelled -> error("已取消支付宝授权")
+                    auth.authCode.isNullOrBlank() ->
+                        error(auth.memo.ifBlank { "支付宝授权失败" })
+                    else -> api.loginWithAlipay(auth.authCode)
+                }
+            }.onSuccess { result ->
+                val session = result.session ?: error("登录失败")
+                if (result.needsPhoneBind || session.phone.isBlank()) {
+                    sessionStore.save(session)
+                    _session.value = session
+                    accountStore.upsert(session)
+                    loadAvatarBitmap()
+                    _login.update {
+                        it.copy(
+                            needBindPhone = true,
+                            buddyIdHint = session.buddyId,
+                            phone = "",
+                            code = "",
+                            password = "",
+                            passwordConfirm = "",
+                            loggingIn = false,
+                            error = null,
+                        )
+                    }
+                } else {
+                    enterSession(session)
+                    _login.update { LoginUi() }
+                }
+            }.onFailure { error ->
+                _login.update { it.copy(error = error.message ?: "支付宝登录失败", loggingIn = false) }
+            }
+            if (!_login.value.needBindPhone) {
+                _login.update { it.copy(loggingIn = false) }
+            }
+        }
+    }
+
+    fun cancelWechatPhoneBind() {
+        // Incomplete WeChat account without phone — sign out.
+        logout()
+        _login.update { LoginUi(error = "请绑定手机号后再使用") }
+    }
+
+    fun submitWechatPhoneBind() {
+        val state = _login.value
+        if (state.loggingIn) return
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            _login.update { it.copy(error = "登录已失效，请重新微信登录") }
+            return
+        }
+        val phone = state.phone.trim()
+        if (phone.length != 11) {
+            _login.update { it.copy(error = "请输入11位手机号") }
+            return
+        }
+        if (state.code.length != 6) {
+            _login.update { it.copy(error = "请输入6位验证码") }
+            return
+        }
+        val password = state.password.trim()
+        if (password.isNotEmpty()) {
+            if (password.length !in 6..32) {
+                _login.update { it.copy(error = "密码需要 6 到 32 位") }
+                return
+            }
+            if (password != state.passwordConfirm) {
+                _login.update { it.copy(error = "两次输入的密码不一致") }
+                return
+            }
+        }
+        viewModelScope.launch {
+            _login.update { it.copy(loggingIn = true, error = null) }
+            runCatching {
+                api.bindPhoneAfterWechat(
+                    token = token,
+                    phone = phone,
+                    code = state.code,
+                    password = password.ifBlank { null },
+                )
+            }.onSuccess { result ->
+                val session = result.session ?: error("绑定失败")
+                enterSession(session)
+                _login.update { LoginUi() }
+            }.onFailure { error ->
+                _login.update { it.copy(error = error.message ?: "绑定失败", loggingIn = false) }
             }
             _login.update { it.copy(loggingIn = false) }
         }
@@ -2513,7 +2648,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         refreshCheckIn()
     }
 
-    fun bindInviteCode(inviteCode: String, onResult: (Result<HotWordsApi.BindInviteResult>) -> Unit) {
+    fun bindInviteCode(inviteCode: String, onResult: (Result<WordBuddyApi.BindInviteResult>) -> Unit) {
         val token = _session.value?.token
         if (token.isNullOrBlank()) {
             onResult(Result.failure(IllegalStateException("请先登录")))
@@ -2535,7 +2670,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun fetchInviteInfo(onResult: (Result<HotWordsApi.InviteInfo>) -> Unit) {
+    fun fetchInviteInfo(onResult: (Result<WordBuddyApi.InviteInfo>) -> Unit) {
         val token = _session.value?.token
         if (token.isNullOrBlank()) {
             onResult(Result.failure(IllegalStateException("请先登录")))
@@ -2685,6 +2820,23 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             runCatching { api.bindAlipay(token, authCode) }
                 .onSuccess { remote ->
                     applyProfileSession(remote)
+                    onResult(Result.success(Unit))
+                }
+                .onFailure { onResult(Result.failure(it)) }
+        }
+    }
+
+    fun completeWechatBind(authCode: String, onResult: (Result<Unit>) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.bindWechat(token, authCode) }
+                .onSuccess { remote ->
+                    applyProfileSession(remote)
+                    loadAvatarBitmap()
                     onResult(Result.success(Unit))
                 }
                 .onFailure { onResult(Result.failure(it)) }
@@ -2916,7 +3068,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         code: String,
         reason: String?,
         force: Boolean = false,
-        onResult: (Result<HotWordsApi.AccountDeletionStatus>) -> Unit,
+        onResult: (Result<WordBuddyApi.AccountDeletionStatus>) -> Unit,
     ) {
         val token = _session.value?.token
         if (token.isNullOrBlank()) {

@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { pool, query } from './db.js'
 import { adjustPoints, aiImagePointsCost } from './points.js'
 import { alipayConfig, buildAppPayOrderInfo, verifyNotify } from './alipay.js'
+import { createWechatAppPrepay, parseWechatPayNotify, wechatConfig } from './wechat.js'
 
 function defaultPackages() {
   const cost = Math.max(1, aiImagePointsCost())
@@ -43,9 +44,24 @@ export function listPointPackages() {
   return defaultPackages()
 }
 
+export function pointPayConfig() {
+  const ali = alipayConfig()
+  const wx = wechatConfig()
+  return {
+    alipaySandbox: Boolean(ali.sandbox),
+    alipayReady: Boolean(!ali.sandbox && ali.configured),
+    wechatReady: Boolean(wx.payReady),
+    channels: [
+      { id: 'wechat', name: '微信支付', ready: Boolean(wx.payReady) },
+      { id: 'alipay', name: '支付宝', ready: Boolean(ali.sandbox || ali.configured) },
+    ],
+  }
+}
+
 function mapOrder(row) {
   if (!row) return null
   const amountFen = Math.max(0, Number(row.amount_fen || 0))
+  const channel = row.pay_channel || (row.alipay_trade_no ? 'alipay' : null)
   return {
     id: Number(row.id),
     packageId: row.package_id,
@@ -56,7 +72,9 @@ function mapOrder(row) {
     status: row.status,
     statusLabel:
       row.status === 'paid' ? '已支付' : row.status === 'closed' ? '已关闭' : '待支付',
+    payChannel: channel,
     alipayTradeNo: row.alipay_trade_no || null,
+    providerTradeNo: row.provider_trade_no || row.alipay_trade_no || null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     paidAt: row.paid_at ? new Date(row.paid_at).toISOString() : null,
   }
@@ -64,27 +82,64 @@ function mapOrder(row) {
 
 function newOutTradeNo(userId) {
   const ts = Date.now().toString(36)
-  const rand = crypto.randomBytes(4).toString('hex')
-  return `pts${userId}_${ts}${rand}`.slice(0, 64)
+  const rand = crypto.randomBytes(3).toString('hex')
+  // WeChat APP pay: 6-32 chars, [A-Za-z0-9_\-|*]
+  return `p${userId}${ts}${rand}`.replace(/[^A-Za-z0-9_\-|]/g, '').slice(0, 32)
 }
 
-export async function createPointOrder({ userId, packageId }) {
+export async function createPointOrder({ userId, packageId, channel = 'alipay' }) {
   const pkg = listPointPackages().find((p) => p.id === packageId)
   if (!pkg) return { ok: false, error: '积分包不存在' }
-  const cfg = alipayConfig()
+  const ch = String(channel || 'alipay').trim().toLowerCase()
+  if (ch !== 'alipay' && ch !== 'wechat') {
+    return { ok: false, error: '请选择微信支付或支付宝' }
+  }
+
+  const ali = alipayConfig()
+  const wx = wechatConfig()
+  if (ch === 'wechat' && !wx.payReady) {
+    return {
+      ok: false,
+      error: '微信支付尚未配置完成（需商户 API 证书、序列号与回调地址）',
+    }
+  }
+  if (ch === 'alipay' && !ali.sandbox && !ali.configured) {
+    return { ok: false, error: '支付宝支付尚未配置完成' }
+  }
+
   const outTradeNo = newOutTradeNo(userId)
   const row = (
     await query(
       `INSERT INTO point_orders
-         (user_id, package_id, out_trade_no, points, amount_fen, status)
-       VALUES ($1, $2, $3, $4, $5, 'pending')
+         (user_id, package_id, out_trade_no, points, amount_fen, status, pay_channel)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6)
        RETURNING *`,
-      [userId, pkg.id, outTradeNo, pkg.points, pkg.priceFen],
+      [userId, pkg.id, outTradeNo, pkg.points, pkg.priceFen, ch],
     )
   ).rows[0]
 
+  if (ch === 'wechat') {
+    const built = await createWechatAppPrepay({
+      outTradeNo,
+      description: `词搭子-${pkg.title}`,
+      amountFen: pkg.priceFen,
+      attach: String(row.id),
+    })
+    if (!built.ok) return { ok: false, error: built.error || '微信下单失败' }
+    return {
+      ok: true,
+      order: mapOrder(row),
+      channel: 'wechat',
+      wechatPay: built.pay,
+      orderInfo: null,
+      sandbox: false,
+      package: pkg,
+    }
+  }
+
   let orderInfo = null
-  if (!cfg.sandbox && cfg.configured) {
+  const sandbox = Boolean(ali.sandbox)
+  if (!sandbox && ali.configured) {
     const built = buildAppPayOrderInfo({
       outTradeNo,
       subject: `词搭子-${pkg.title}`,
@@ -98,8 +153,10 @@ export async function createPointOrder({ userId, packageId }) {
   return {
     ok: true,
     order: mapOrder(row),
+    channel: 'alipay',
     orderInfo,
-    sandbox: cfg.sandbox,
+    wechatPay: null,
+    sandbox,
     package: pkg,
   }
 }
@@ -111,7 +168,12 @@ export async function getPointOrderForUser(userId, orderId) {
   return mapOrder(row)
 }
 
-export async function fulfillPaidOrder({ outTradeNo, alipayTradeNo = null } = {}) {
+export async function fulfillPaidOrder({
+  outTradeNo,
+  providerTradeNo = null,
+  alipayTradeNo = null,
+} = {}) {
+  const tradeNo = providerTradeNo || alipayTradeNo || null
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
@@ -150,11 +212,12 @@ export async function fulfillPaidOrder({ outTradeNo, alipayTradeNo = null } = {}
         `UPDATE point_orders
          SET status = 'paid',
              alipay_trade_no = COALESCE($2, alipay_trade_no),
+             provider_trade_no = COALESCE($3, provider_trade_no),
              paid_at = now(),
              updated_at = now()
          WHERE id = $1
          RETURNING *`,
-        [row.id, alipayTradeNo],
+        [row.id, alipayTradeNo, tradeNo],
       )
     ).rows[0]
     await client.query('COMMIT')
@@ -174,9 +237,13 @@ export async function simulatePayOrder({ userId, orderId }) {
     await query('SELECT * FROM point_orders WHERE id = $1 AND user_id = $2', [orderId, userId])
   ).rows[0]
   if (!row) return { ok: false, error: '订单不存在' }
+  if (row.pay_channel && row.pay_channel !== 'alipay') {
+    return { ok: false, error: '该订单不是支付宝沙箱订单' }
+  }
   return fulfillPaidOrder({
     outTradeNo: row.out_trade_no,
     alipayTradeNo: `sandbox_${Date.now()}`,
+    providerTradeNo: `sandbox_${Date.now()}`,
   })
 }
 
@@ -192,8 +259,36 @@ export async function handleAlipayNotify(params) {
   }
   const outTradeNo = String(params.out_trade_no || '')
   const tradeNo = String(params.trade_no || '')
-  const result = await fulfillPaidOrder({ outTradeNo, alipayTradeNo: tradeNo })
+  const result = await fulfillPaidOrder({
+    outTradeNo,
+    alipayTradeNo: tradeNo,
+    providerTradeNo: tradeNo,
+  })
   return { ok: result.ok, reply: result.ok ? 'success' : 'failure' }
+}
+
+export async function handleWechatPayNotify(body) {
+  const parsed = parseWechatPayNotify(body)
+  if (!parsed.ok) {
+    return { ok: false, httpStatus: 400, reply: { code: 'FAIL', message: parsed.error } }
+  }
+  if (parsed.eventType && parsed.eventType !== 'TRANSACTION.SUCCESS') {
+    return { ok: true, httpStatus: 200, reply: { code: 'SUCCESS', message: '成功' } }
+  }
+  if (parsed.tradeState && parsed.tradeState !== 'SUCCESS') {
+    return { ok: true, httpStatus: 200, reply: { code: 'SUCCESS', message: '成功' } }
+  }
+  if (!parsed.outTradeNo) {
+    return { ok: false, httpStatus: 400, reply: { code: 'FAIL', message: '缺少订单号' } }
+  }
+  const result = await fulfillPaidOrder({
+    outTradeNo: parsed.outTradeNo,
+    providerTradeNo: parsed.transactionId,
+  })
+  if (!result.ok) {
+    return { ok: false, httpStatus: 500, reply: { code: 'FAIL', message: result.error || '入账失败' } }
+  }
+  return { ok: true, httpStatus: 200, reply: { code: 'SUCCESS', message: '成功' } }
 }
 
 export async function listUserPointOrders(userId, { page = 1, pageSize = 20 } = {}) {
