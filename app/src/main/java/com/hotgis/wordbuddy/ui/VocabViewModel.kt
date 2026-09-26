@@ -2060,12 +2060,13 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         val entry = when {
             saved == null -> withRelated
             else -> {
+                val mergedDefs = mergeDefinitionsPreferPos(saved.definitions, lookedUp.definitions)
                 val merged = saved.copy(
                     nearWords = near,
                     synonyms = synonyms,
                     antonyms = antonyms,
                     examples = examples,
-                    definitions = saved.definitions.ifEmpty { lookedUp.definitions },
+                    definitions = mergedDefs.ifEmpty { lookedUp.definitions },
                     ipaUk = lookedUp.ipaUk ?: saved.ipaUk,
                     ipaUs = lookedUp.ipaUs ?: saved.ipaUs,
                 )
@@ -3156,6 +3157,23 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             "toefl",
             "ielts",
         )
+
+        /** Keep saved meanings; fill blank POS from a fresh dictionary lookup. */
+        fun mergeDefinitionsPreferPos(
+            saved: List<Definition>,
+            lookedUp: List<Definition>,
+        ): List<Definition> {
+            if (saved.isEmpty()) return lookedUp
+            if (lookedUp.isEmpty() || saved.none { it.pos.isBlank() }) return saved
+            return saved.mapIndexed { index, def ->
+                if (def.pos.isNotBlank()) def
+                else {
+                    val fromLookup = lookedUp.getOrNull(index)?.pos?.takeIf { it.isNotBlank() }
+                        ?: lookedUp.firstOrNull { it.pos.isNotBlank() }?.pos
+                    if (fromLookup.isNullOrBlank()) def else def.copy(pos = fromLookup)
+                }
+            }
+        }
     }
 
     override fun onCleared() {

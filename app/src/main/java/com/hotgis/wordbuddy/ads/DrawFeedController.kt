@@ -5,8 +5,11 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Gravity
+import java.lang.ref.WeakReference
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -58,14 +61,32 @@ object DrawFeedController {
     @Volatile
     private var lastFailAtMs = 0L
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private val _lastStatus = MutableStateFlow("未请求")
+    val lastStatus: StateFlow<String> = _lastStatus.asStateFlow()
+
+    @Volatile
+    private var retryAttempt = 0
+    private var retryRunnable: Runnable? = null
+
+    private fun setStatus(activity: Activity, text: String) {
+        _lastStatus.value = text
+        AdDiagStore.report(activity, AdDiagStore.DRAW, text)
+    }
+
     fun start(activity: Activity) {
         released = false
+        retryAttempt = 0
+        cancelRetry()
         if (BuildConfig.CSJ_DRAW_CODE_ID.isBlank()) {
             Log.w(TAG, "CSJ_DRAW_CODE_ID empty — skip draw ads")
+            setStatus(activity, "未配置广告位")
             return
         }
         if (!PrivacyConsentStore.hasAccepted(activity)) {
             Log.w(TAG, "privacy not accepted — skip draw ads")
+            setStatus(activity, "未同意隐私")
             return
         }
         CsjSdkHolder.initAndStart(activity) { ok ->
@@ -129,11 +150,34 @@ object DrawFeedController {
 
     fun release() {
         released = true
+        cancelRetry()
         ads.values.forEach { bound ->
             runCatching { bound.ad.destroy() }
         }
         ads.clear()
         _readyKeys.value = emptyList()
+    }
+
+    private fun cancelRetry() {
+        retryRunnable?.let(mainHandler::removeCallbacks)
+        retryRunnable = null
+    }
+
+    /** Transient no-fill is common; retry a few times with backoff while the host lives. */
+    private fun scheduleRetry(activity: Activity) {
+        if (released) return
+        if (retryAttempt >= 4) return
+        cancelRetry()
+        val delayMs = longArrayOf(15_000L, 30_000L, 60_000L, 60_000L)[retryAttempt.coerceIn(0, 3)]
+        retryAttempt++
+        val weak = WeakReference(activity)
+        val task = Runnable {
+            val act = weak.get()
+            if (act == null || act.isFinishing || act.isDestroyed || released) return@Runnable
+            loadBatch(act)
+        }
+        retryRunnable = task
+        mainHandler.postDelayed(task, delayMs)
     }
 
     private fun loadBatch(activity: Activity) {
@@ -179,6 +223,8 @@ object DrawFeedController {
                         loading = false
                         lastFailAtMs = System.currentTimeMillis()
                         Log.w(TAG, "draw load fail: $code $message")
+                        setStatus(activity, "失败 $code ${message?.take(40).orEmpty()}")
+                        scheduleRetry(activity)
                     }
 
                     override fun onDrawFeedAdLoad(adsResult: MutableList<TTDrawFeedAd>?) {
@@ -192,8 +238,13 @@ object DrawFeedController {
                             Log.i(TAG, "draw load success count=${loaded.size}")
                             if (loaded.isEmpty()) {
                                 lastFailAtMs = System.currentTimeMillis()
+                                setStatus(activity, "空填充")
+                                scheduleRetry(activity)
                                 return@runOnUiThread
                             }
+                            retryAttempt = 0
+                            cancelRetry()
+                            setStatus(activity, "已加载 ${loaded.size} 条")
                             val keys = ArrayList<String>(loaded.size)
                             loaded.forEach { ad ->
                                 // Do NOT discard on !isReady here — template Draw ads often

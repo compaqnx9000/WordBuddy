@@ -9,6 +9,8 @@ import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -100,7 +102,7 @@ fun ShortsScreen(
     authToken: String? = null,
     metaVisibleDefault: Boolean = true,
     onOpenWord: (String) -> Unit = {},
-    onShare: () -> Unit = {},
+    onShare: (ShortClip) -> Unit = {},
     onRequireLogin: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -213,7 +215,7 @@ fun ShortsScreen(
                             active = pagerState.settledPage == page,
                             metaVisibleDefault = metaVisibleDefault,
                             onOpenWord = onOpenWord,
-                            onShare = onShare,
+                            onShare = { onShare(item.clip) },
                             onToggleFavorite = {
                                 val token = tokenState.value
                                 if (token.isNullOrBlank()) {
@@ -393,6 +395,7 @@ private fun DrawAdPage(
     }
 }
 
+@kotlin.OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ShortVideoPage(
     clip: ShortClip,
@@ -494,8 +497,11 @@ private fun ShortVideoPage(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(10.sdp()))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.sdp())) {
-                    clip.relatedWords.forEach { word ->
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.sdp()),
+                    verticalArrangement = Arrangement.spacedBy(8.sdp()),
+                ) {
+                    clip.relatedWords.take(20).forEach { word ->
                         Text(
                             text = word,
                             color = Stellar.Cyan,
@@ -545,7 +551,7 @@ fun FavoriteClipPlayer(
     onRequireLogin: () -> Unit,
     metaVisibleDefault: Boolean = true,
     onOpenWord: (String) -> Unit = {},
-    onShare: () -> Unit = {},
+    onShare: (ShortClip) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -562,7 +568,7 @@ fun FavoriteClipPlayer(
             active = true,
             metaVisibleDefault = metaVisibleDefault,
             onOpenWord = onOpenWord,
-            onShare = onShare,
+            onShare = { onShare(current) },
             onToggleFavorite = {
                 val token = authToken
                 if (token.isNullOrBlank()) {
@@ -702,7 +708,7 @@ private fun ShortVideoPlayer(
         factory = { ctx ->
             PlayerView(ctx).apply {
                 useController = false
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 setShutterBackgroundColor(android.graphics.Color.BLACK)
                 setBackgroundColor(android.graphics.Color.BLACK)
                 layoutParams = FrameLayout.LayoutParams(
@@ -714,13 +720,13 @@ private fun ShortVideoPlayer(
         update = { view ->
             view.player = player
             view.useController = false
-            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             view.layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
             view.post {
-                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 (view.parent as? ViewGroup)?.let { parent ->
                     if (parent.width > 0 && parent.height > 0) {
                         view.measure(

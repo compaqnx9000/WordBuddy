@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import java.lang.ref.WeakReference
 import com.bytedance.sdk.openadsdk.AdSlot
 import com.bytedance.sdk.openadsdk.TTAdConstant
 import com.bytedance.sdk.openadsdk.TTAdLoadType
@@ -49,6 +50,33 @@ object RewardVideoController {
     @Volatile
     private var rewardGranted = false
 
+    @Volatile
+    private var retryAttempt = 0
+    private var retryRunnable: Runnable? = null
+
+    private fun setStatus(activity: Activity, text: String) {
+        _lastStatus.value = text
+        AdDiagStore.report(activity, AdDiagStore.REWARD, text)
+    }
+
+    private fun scheduleRetry(activity: Activity) {
+        if (showing || cachedAd != null) return
+        if (retryAttempt >= 4) return
+        retryRunnable?.let(mainHandler::removeCallbacks)
+        val delayMs = longArrayOf(15_000L, 30_000L, 60_000L, 60_000L)[retryAttempt.coerceIn(0, 3)]
+        retryAttempt++
+        val weak = WeakReference(activity)
+        val task = Runnable {
+            val act = weak.get()
+            if (act == null || act.isFinishing || act.isDestroyed || showing || cachedAd != null) {
+                return@Runnable
+            }
+            load(act)
+        }
+        retryRunnable = task
+        mainHandler.postDelayed(task, delayMs)
+    }
+
     interface Callbacks {
         fun onShown()
         /** Fired when the SDK confirms the user earned the reward (watch complete). */
@@ -60,21 +88,24 @@ object RewardVideoController {
     fun preload(activity: Activity) {
         if (BuildConfig.CSJ_REWARD_CODE_ID.isBlank()) {
             Log.w(TAG, "CSJ_REWARD_CODE_ID empty — skip reward ads")
-            _lastStatus.value = "未配置广告位"
+            setStatus(activity, "未配置广告位")
             return
         }
         if (!PrivacyConsentStore.hasAccepted(activity)) {
             Log.w(TAG, "privacy not accepted — skip reward ads")
-            _lastStatus.value = "未同意隐私"
+            setStatus(activity, "未同意隐私")
             return
         }
         CsjSdkHolder.initAndStart(activity) { ok ->
             activity.runOnUiThread {
                 if (!ok) {
                     Log.w(TAG, "SDK not ready — skip reward ads")
-                    _lastStatus.value = "SDK未就绪"
+                    setStatus(activity, "SDK未就绪")
                     return@runOnUiThread
                 }
+                retryAttempt = 0
+                retryRunnable?.let(mainHandler::removeCallbacks)
+                retryRunnable = null
                 load(activity)
             }
         }
@@ -160,8 +191,9 @@ object RewardVideoController {
                         lastFailAtMs = System.currentTimeMillis()
                         cachedAd = null
                         _ready.value = false
-                        _lastStatus.value = "失败 $code ${message?.take(40).orEmpty()}"
+                        setStatus(activity, "失败 $code ${message?.take(40).orEmpty()}")
                         Log.w(TAG, "reward load fail: $code $message")
+                        scheduleRetry(activity)
                     }
 
                     override fun onRewardVideoAdLoad(ad: TTRewardVideoAd?) {
@@ -172,7 +204,10 @@ object RewardVideoController {
                             if (!_ready.value) {
                                 _ready.value = true
                             }
-                            _lastStatus.value = "已加载"
+                            retryAttempt = 0
+                            retryRunnable?.let(mainHandler::removeCallbacks)
+                            retryRunnable = null
+                            setStatus(activity, "已加载")
                         }
                         loading = false
                     }
@@ -180,7 +215,7 @@ object RewardVideoController {
                     override fun onRewardVideoCached() {
                         loading = false
                         _ready.value = cachedAd != null
-                        if (_ready.value) _lastStatus.value = "已缓存"
+                        if (_ready.value) setStatus(activity, "已缓存")
                         Log.i(TAG, "reward cached ready=${_ready.value}")
                     }
 
@@ -188,7 +223,7 @@ object RewardVideoController {
                         loading = false
                         if (ad != null) cachedAd = ad
                         _ready.value = cachedAd != null
-                        if (_ready.value) _lastStatus.value = "已缓存"
+                        if (_ready.value) setStatus(activity, "已缓存")
                         Log.i(TAG, "reward cached(ad) ready=${_ready.value}")
                     }
                 },

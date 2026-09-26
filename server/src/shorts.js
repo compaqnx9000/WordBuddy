@@ -33,14 +33,14 @@ export function normalizeKeywords(raw) {
     if (seen.has(key)) continue
     seen.add(key)
     cleaned.push(word)
-    if (cleaned.length >= 5) break
+    if (cleaned.length >= 30) break
   }
   return cleaned
 }
 
 export function validateKeywords(list) {
-  if (list.length < 3) return '请填写 3～5 个关键词'
-  if (list.length > 5) return '关键词最多 5 个'
+  if (list.length < 1) return '请至少填写 1 个关键词'
+  if (list.length > 30) return '关键词最多 30 个'
   return null
 }
 

@@ -21,14 +21,15 @@ if (localPropertiesFile.exists()) {
 fun escapeBuildConfig(value: String): String =
     value.replace("\\", "\\\\").replace("\"", "\\\"")
 
-// 穿山甲：在 local.properties 填写 csj.appId / csj.splashCodeId（勿提交密钥到 git）
-val csjAppId = localProperties.getProperty("csj.appId", "").trim()
-val csjSplashCodeId = localProperties.getProperty("csj.splashCodeId", "").trim()
-val csjSplashFallbackCodeId = localProperties.getProperty("csj.splashFallbackCodeId", "").trim()
+// 穿山甲：优先读 local.properties；缺省用已发布生产位（避免漏配打出空广告包）
+// GroMore 应用ID（后台「应用管理」里的那个），不是穿山甲 ADN 的应用ID
+val csjAppId = localProperties.getProperty("csj.appId", "5882819").trim()
+val csjSplashCodeId = localProperties.getProperty("csj.splashCodeId", "104529400").trim()
+val csjSplashFallbackCodeId = localProperties.getProperty("csj.splashFallbackCodeId", "1789356255").trim()
 val csjDrawCodeId = localProperties.getProperty("csj.drawCodeId", "104539577").trim()
 val csjRewardCodeId = localProperties.getProperty("csj.rewardCodeId", "104540414").trim()
-// 微信开放平台移动应用 AppId。AppSecret 只放服务端 .env 的 WECHAT_APP_SECRET。
-val wechatAppId = localProperties.getProperty("wechat.appId", "").trim()
+// 微信开放平台移动应用 AppId（你的词搭子）。AppSecret 只放服务端 .env 的 WECHAT_APP_SECRET。
+val wechatAppId = localProperties.getProperty("wechat.appId", "wxc7735828bd1fb638").trim()
 
 android {
     namespace = "com.hotgis.wordbuddy"
@@ -38,15 +39,16 @@ android {
         applicationId = "com.hotgis.wordbuddy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 115
-        versionName = "1.24"
+        versionCode = 127
+        versionName = "1.36"
         ndk {
             // Pangle AAR only ships armeabi-v7a / arm64-v8a (no x86_64).
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
         // Domain https://wordbuddy.cc is blocked until ICP 备案; use server IP for now.
-        buildConfigField("String", "API_BASE_URL", "\"http://39.96.67.128:8787\"")
-        buildConfigField("String", "API_FALLBACK_URL", "\"http://39.96.67.128:8787\"")
+        // Port 80 via nginx (8787 may be blocked by cloud security group).
+        buildConfigField("String", "API_BASE_URL", "\"http://47.95.111.238\"")
+        buildConfigField("String", "API_FALLBACK_URL", "\"http://47.95.111.238:8787\"")
         buildConfigField("String", "CSJ_APP_ID", "\"${escapeBuildConfig(csjAppId)}\"")
         buildConfigField("String", "CSJ_SPLASH_CODE_ID", "\"${escapeBuildConfig(csjSplashCodeId)}\"")
         buildConfigField(
@@ -77,8 +79,8 @@ android {
     buildTypes {
         debug {
             // Emulator and physical debug builds both use the Aliyun cloud API.
-            buildConfigField("String", "API_BASE_URL", "\"http://39.96.67.128:8787\"")
-            buildConfigField("String", "API_FALLBACK_URL", "\"http://39.96.67.128:8787\"")
+            buildConfigField("String", "API_BASE_URL", "\"http://47.95.111.238\"")
+            buildConfigField("String", "API_FALLBACK_URL", "\"http://47.95.111.238:8787\"")
         }
         release {
             isMinifyEnabled = false

@@ -94,7 +94,6 @@ fun AccountProfileScreen(
     alipayAccount: String?,
     alipayName: String?,
     wechatAccount: String?,
-    shippingSummary: String?,
     shippingName: String?,
     shippingPhone: String?,
     shippingDetail: String?,
@@ -802,7 +801,7 @@ fun AccountProfileScreen(
             AccountProfileGroup {
                 AccountProfileRow(
                     title = "我的地址",
-                    value = shortShippingLabel(shippingName, shippingSummary),
+                    value = shortShippingLabel(shippingDetail),
                     onClick = {
                         editError = null
                         showShipping = true
@@ -821,7 +820,13 @@ fun AccountProfileScreen(
                         !alipayName.isNullOrBlank() -> "${maskAlipay(alipayAccount.orEmpty())} · $alipayName"
                         else -> maskAlipay(alipayAccount.orEmpty())
                     },
-                    onClick = { if (!alipayBinding && !editBusy) bindAlipay() },
+                    // Already bound: only 「解绑」 is actionable; re-bind after unbind.
+                    onClick = if (!alipayBound && !alipayBinding && !editBusy) {
+                        { bindAlipay() }
+                    } else {
+                        null
+                    },
+                    showChevron = !alipayBound,
                     trailingContent = if (alipayBound && !alipayBinding) {
                         {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -866,9 +871,13 @@ fun AccountProfileScreen(
                         wechatBound -> "已绑定"
                         else -> "去绑定"
                     },
-                    onClick = {
-                        if (!wechatBinding && !editBusy) bindWechat()
+                    // Already bound: only 「解绑」 is actionable; re-bind after unbind.
+                    onClick = if (!wechatBound && !wechatBinding && !editBusy) {
+                        { bindWechat() }
+                    } else {
+                        null
                     },
+                    showChevron = !wechatBound,
                     trailingContent = if (wechatBound && !wechatBinding) {
                         {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -983,14 +992,20 @@ private fun AccountProfileDivider() {
 private fun AccountProfileRow(
     title: String,
     value: String? = null,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
     showChevron: Boolean = true,
     trailingContent: (@Composable () -> Unit)? = null,
 ) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(onClick = onClick)
+                } else {
+                    Modifier
+                },
+            )
             .padding(horizontal = 16.sdp(), vertical = 14.sdp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1037,13 +1052,13 @@ internal fun maskAccountPhone(phone: String): String {
     }
 }
 
-/** List-row hint only — never dump the full address here. */
-internal fun shortShippingLabel(shippingName: String?, shippingSummary: String?): String {
-    val name = shippingName?.trim().orEmpty()
+/** List-row hint: show the address line only (name/phone live in the detail dialog). */
+internal fun shortShippingLabel(shippingDetail: String?): String {
+    val detail = shippingDetail?.trim().orEmpty().replace(Regex("\\s+"), " ")
     return when {
-        name.isNotEmpty() -> name
-        !shippingSummary.isNullOrBlank() -> "已填写"
-        else -> "去填写"
+        detail.isEmpty() -> "去填写"
+        detail.length <= 22 -> detail
+        else -> detail.take(20) + "…"
     }
 }
 

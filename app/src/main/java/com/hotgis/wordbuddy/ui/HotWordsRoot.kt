@@ -89,8 +89,10 @@ import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
 import com.hotgis.wordbuddy.ui.settings.AccountDeletionScreen
 import com.hotgis.wordbuddy.ui.settings.AppSettingsScreen
 import com.hotgis.wordbuddy.ui.settings.SwitchAccountScreen
+import com.hotgis.wordbuddy.ads.findActivity
 import com.hotgis.wordbuddy.ui.shorts.FavoriteClipPlayer
 import com.hotgis.wordbuddy.ui.shorts.ShortFavoritesScreen
+import com.hotgis.wordbuddy.ui.shorts.ShortShareHelper
 import com.hotgis.wordbuddy.ui.shorts.ShortsScreen
 import com.hotgis.wordbuddy.ui.podcast.PodcastScreen
 import com.hotgis.wordbuddy.ui.theme.HotWordsTheme
@@ -727,8 +729,13 @@ fun HotWordsRoot(
                                 viewModel.submitLookup()
                                 showShortsLookup = true
                             },
-                            onShare = {
-                                Toast.makeText(context, "分享即将上线", Toast.LENGTH_SHORT).show()
+                            onShare = { clip ->
+                                val host = context.findActivity()
+                                if (host == null) {
+                                    Toast.makeText(context, "无法打开分享", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    ShortShareHelper.share(host, clip)
+                                }
                             },
                             modifier = Modifier
                                 .fillMaxSize()
@@ -768,7 +775,6 @@ fun HotWordsRoot(
                         alipayAccount = session?.alipayAccount,
                         alipayName = session?.alipayName,
                         wechatAccount = session?.wechatAccount,
-                        shippingSummary = session?.shippingSummary,
                         shippingName = session?.shippingName,
                         shippingPhone = session?.shippingPhone,
                         shippingDetail = session?.shippingDetail,
@@ -1098,8 +1104,13 @@ fun HotWordsRoot(
                                 viewModel.submitLookup()
                                 showShortsLookup = true
                             },
-                            onShare = {
-                                Toast.makeText(context, "分享即将上线", Toast.LENGTH_SHORT).show()
+                            onShare = { clip ->
+                                val host = context.findActivity()
+                                if (host == null) {
+                                    Toast.makeText(context, "无法打开分享", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    ShortShareHelper.share(host, clip)
+                                }
                             },
                             onRequireLogin = {
                                 loginHint = "登录后可收藏短视频"

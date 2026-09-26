@@ -39,6 +39,29 @@
       border-radius: 10px; padding: 0 12px; outline: none;
       height: var(--control-h); line-height: var(--control-h);
     }
+    input[type="checkbox"],
+    input[type="radio"] {
+      width: 16px;
+      height: 16px;
+      min-width: 16px;
+      padding: 0;
+      margin: 0 8px 0 0;
+      border-radius: 4px;
+      line-height: 1;
+      vertical-align: middle;
+      accent-color: var(--cyan);
+      cursor: pointer;
+      flex: 0 0 auto;
+    }
+    label:has(> input[type="checkbox"]),
+    label:has(> input[type="radio"]) {
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      cursor: pointer;
+      color: var(--text);
+      margin: 12px 0 6px;
+    }
     textarea {
       height: auto; min-height: 96px; line-height: 1.5; padding: 10px 12px; resize: vertical;
     }
@@ -901,21 +924,34 @@ async function delGift(id) {
   try { await api('/gifts/' + id, { method: 'DELETE' }); go('gifts'); }
   catch (e) { alert(e.message); }
 }
+function shortAuthorFromCategory(catId) {
+  const names = { speaking: '口语', vocab: '单词', listening: '听力' };
+  const name = names[catId] || '口语';
+  return '词搭子' + name;
+}
+function syncShortAuthorFromCategory() {
+  const cat = document.getElementById('sCat');
+  const author = document.getElementById('sAuthor');
+  if (!cat || !author) return;
+  author.value = shortAuthorFromCategory(cat.value);
+}
 function editShort(v) {
   const isNew = !v || !v.id;
-  const item = v || { category:'speaking', author:'词搭子', keywords:[], published:true, sortOrder:0, videoUrl:'' };
+  const category = (v && v.category) || 'speaking';
+  const item = v || { category, author: shortAuthorFromCategory(category), keywords:[], published:true, sortOrder:0, videoUrl:'' };
   const kw = Array.isArray(item.keywords) ? item.keywords.join(', ') : '';
+  const authorDefault = item.author || shortAuthorFromCategory(item.category || category);
   showModal(`<h2>${isNew?'新增短视频':'编辑短视频'}</h2>
     <label>标题</label><input id="sTitle" value="${esc(item.title||'')}" />
-    <label>作者</label><input id="sAuthor" value="${esc(item.author||'词搭子')}" />
+    <label>作者</label><input id="sAuthor" value="${esc(authorDefault)}" />
     <label>说明 / 字幕摘要</label><textarea id="sCap" rows="3">${esc(item.caption||'')}</textarea>
     <label>分类</label>
-    <select id="sCat">
+    <select id="sCat" onchange="syncShortAuthorFromCategory()">
       <option value="speaking" ${item.category==='speaking'?'selected':''}>口语</option>
       <option value="vocab" ${item.category==='vocab'?'selected':''}>单词</option>
       <option value="listening" ${item.category==='listening'?'selected':''}>听力</option>
     </select>
-    <label>关键词（3～5 个，逗号分隔）</label><input id="sKw" value="${esc(kw)}" placeholder="reply, messages, gossip" />
+    <label>关键词（1～30 个，逗号分隔）</label><input id="sKw" value="${esc(kw)}" placeholder="reply, messages, gossip" />
     <label>视频文件</label>
     <input id="sFile" type="file" accept="video/mp4,video/*" />
     <div class="sub" id="sUploadHint">${item.videoUrl ? '当前：'+esc(item.videoUrl) : '请选择 mp4 上传'}</div>
@@ -926,7 +962,8 @@ function editShort(v) {
     <div class="toolbar" style="margin-top:14px">
       <button class="btn" onclick="saveShort(${isNew?'null':item.id})">保存</button>
       <button class="btn ghost" onclick="closeModal()">取消</button>
-    </div>`);
+    </div>`, { closeOnBackdrop: false });
+  if (isNew) syncShortAuthorFromCategory();
 }
 async function uploadShortFile() {
   const file = document.getElementById('sFile')?.files?.[0];
@@ -951,6 +988,10 @@ async function saveShort(id) {
     const file = document.getElementById('sFile')?.files?.[0];
     if (file) videoUrl = await uploadShortFile();
     const keywords = document.getElementById('sKw').value.split(/[,，、\n]/).map(s => s.trim()).filter(Boolean);
+    if (keywords.length < 1 || keywords.length > 30) {
+      alert('请填写 1～30 个关键词');
+      return;
+    }
     const body = {
       title: document.getElementById('sTitle').value.trim(),
       author: document.getElementById('sAuthor').value.trim(),
@@ -980,8 +1021,11 @@ async function setOrderStatus(id, status) {
   try { await api('/gift-orders/' + id, { method: 'PATCH', body: JSON.stringify({ status }) }); go('giftOrders'); }
   catch (e) { alert(e.message); }
 }
-function showModal(html) {
-  document.getElementById('modalRoot').innerHTML = `<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`;
+function showModal(html, opts = {}) {
+  const closeOnBackdrop = opts.closeOnBackdrop !== false;
+  const bgClick = closeOnBackdrop ? 'onclick="if(event.target===this)closeModal()"' : '';
+  document.getElementById('modalRoot').innerHTML =
+    `<div class="modal-bg" ${bgClick}><div class="modal">${html}</div></div>`;
 }
 function closeModal() { document.getElementById('modalRoot').innerHTML = ''; }
 

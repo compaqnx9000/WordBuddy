@@ -116,7 +116,7 @@ class SplashActivity : ComponentActivity() {
                 .setBidNotify(true)
             val fallbackCode = BuildConfig.CSJ_SPLASH_FALLBACK_CODE_ID
             if (fallbackCode.isNotBlank()) {
-                // 冷启动自定义兜底：直接打穿山甲代码位，避免瀑布流配置未拉到时超时无广告
+                // 冷启动自定义兜底：直接打穿山甲 ADN 代码位，避免瀑布流配置未拉到时超时无广告
                 mediationBuilder.setMediationSplashRequestInfo(
                     object : MediationSplashRequestInfo(
                         MediationConstant.ADN_PANGLE,
@@ -127,13 +127,22 @@ class SplashActivity : ComponentActivity() {
                 )
             }
 
-            val adSlot = AdSlot.Builder()
+            val slotBuilder = AdSlot.Builder()
                 .setCodeId(BuildConfig.CSJ_SPLASH_CODE_ID)
                 .setImageAcceptedSize(widthPx, acceptHeightPx)
                 .setExpressViewAcceptedSize(widthDp, heightDp)
                 .setAdLoadType(TTAdLoadType.LOAD)
                 .setMediationAdSlot(mediationBuilder.build())
-                .build()
+            // 便于 logcat 看清瀑布流各 ADN 失败原因（20005 = 全部无填充）
+            runCatching {
+                slotBuilder.javaClass.getMethod(
+                    "setExtraObject",
+                    String::class.java,
+                    Any::class.java,
+                ).invoke(slotBuilder, "show_adn_load_error_detail", true)
+            }
+
+            val adSlot = slotBuilder.build()
 
             Log.i(
                 TAG,
@@ -142,54 +151,7 @@ class SplashActivity : ComponentActivity() {
             )
 
             val adNative: TTAdNative = TTAdSdk.getAdManager().createAdNative(this)
-            adNative.loadSplashAd(
-                adSlot,
-                object : TTAdNative.CSJSplashAdListener {
-                    override fun onSplashLoadSuccess(ad: CSJSplashAd?) {
-                        Log.i(TAG, "splash load success")
-                    }
-
-                    override fun onSplashLoadFail(error: CSJAdError?) {
-                        val msg = "${error?.code} ${error?.msg}"
-                        Log.w(TAG, "splash load fail: $msg")
-                        toastFail("开屏失败:$msg")
-                        goMain()
-                    }
-
-                    override fun onSplashRenderSuccess(ad: CSJSplashAd?) {
-                        if (ad == null || finished) {
-                            goMain()
-                            return
-                        }
-                        Log.i(TAG, "splash render success — showing")
-                        ad.setSplashAdListener(
-                            object : CSJSplashAd.SplashAdListener {
-                                override fun onSplashAdShow(splashAd: CSJSplashAd?) = Unit
-
-                                override fun onSplashAdClick(splashAd: CSJSplashAd?) = Unit
-
-                                override fun onSplashAdClose(
-                                    splashAd: CSJSplashAd?,
-                                    closeType: Int,
-                                ) {
-                                    goMain()
-                                }
-                            },
-                        )
-                        splashContainer.visibility = View.VISIBLE
-                        findViewById<View>(R.id.splash_brand)?.visibility = View.GONE
-                        ad.showSplashView(splashContainer)
-                    }
-
-                    override fun onSplashRenderFail(ad: CSJSplashAd?, error: CSJAdError?) {
-                        val msg = "${error?.code} ${error?.msg}"
-                        Log.w(TAG, "splash render fail: $msg")
-                        toastFail("开屏渲染失败:$msg")
-                        goMain()
-                    }
-                },
-                SPLASH_TIMEOUT_MS,
-            )
+            adNative.loadSplashAd(adSlot, splashListener(), SPLASH_TIMEOUT_MS)
         } catch (t: Throwable) {
             Log.e(TAG, "loadSplash crashed", t)
             toastFail("开屏异常:${t.javaClass.simpleName}")
@@ -197,8 +159,56 @@ class SplashActivity : ComponentActivity() {
         }
     }
 
+    private fun splashListener() = object : TTAdNative.CSJSplashAdListener {
+        override fun onSplashLoadSuccess(ad: CSJSplashAd?) {
+            Log.i(TAG, "splash load success")
+        }
+
+        override fun onSplashLoadFail(error: CSJAdError?) {
+            val msg = "${error?.code} ${error?.msg}"
+            Log.w(TAG, "splash load fail: $msg")
+            AdDiagStore.report(this@SplashActivity, AdDiagStore.SPLASH, "加载失败 $msg")
+            toastFail("开屏失败:$msg")
+            goMain()
+        }
+
+        override fun onSplashRenderSuccess(ad: CSJSplashAd?) {
+            if (ad == null || finished) {
+                goMain()
+                return
+            }
+            Log.i(TAG, "splash render success — showing")
+            AdDiagStore.report(this@SplashActivity, AdDiagStore.SPLASH, "展示中")
+            ad.setSplashAdListener(
+                object : CSJSplashAd.SplashAdListener {
+                    override fun onSplashAdShow(splashAd: CSJSplashAd?) = Unit
+
+                    override fun onSplashAdClick(splashAd: CSJSplashAd?) = Unit
+
+                    override fun onSplashAdClose(
+                        splashAd: CSJSplashAd?,
+                        closeType: Int,
+                    ) {
+                        goMain()
+                    }
+                },
+            )
+            splashContainer.visibility = View.VISIBLE
+            findViewById<View>(R.id.splash_brand)?.visibility = View.GONE
+            ad.showSplashView(splashContainer)
+        }
+
+        override fun onSplashRenderFail(ad: CSJSplashAd?, error: CSJAdError?) {
+            val msg = "${error?.code} ${error?.msg}"
+            Log.w(TAG, "splash render fail: $msg")
+            AdDiagStore.report(this@SplashActivity, AdDiagStore.SPLASH, "渲染失败 $msg")
+            toastFail("开屏渲染失败:$msg")
+            goMain()
+        }
+    }
+
     private fun toastFail(msg: String) {
-        // Temporary: helps diagnose fill issues on device without adb.
+        // Keep visible during fill troubleshooting (see Settings → 广告诊断).
         runCatching {
             Toast.makeText(applicationContext, msg, Toast.LENGTH_LONG).show()
         }

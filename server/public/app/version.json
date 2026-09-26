@@ -1,8 +1,8 @@
 {
-  "versionCode": 115,
-  "versionName": "1.24",
+  "versionCode": 127,
+  "versionName": "1.36",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "支持微信购买积分与微信提现（需配置商户 API 证书后生效）。",
-  "releasedAt": "2026-09-24T05:15:00.000Z"
+  "notes": "组合词查词补全词性（如 n./v.）；后台短视频关键词上限调整为 1～30。",
+  "releasedAt": "2026-09-26T13:03:00.000Z"
 }

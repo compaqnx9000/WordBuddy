@@ -84,7 +84,8 @@ class DictionaryClient {
         val text = parseReturnPhrase(wordObj) ?: fallback
         val uk = wordObj.optString("ukphone").orEmpty().ifBlank { null }
         val us = wordObj.optString("usphone").orEmpty().ifBlank { null }
-        val defs = parseTrs(wordObj.optJSONArray("trs"))
+        val rawDefs = parseTrs(wordObj.optJSONArray("trs"))
+        val defs = enrichMissingPos(rawDefs, root, isPhrase = text.contains(' '))
         if (defs.isEmpty() && uk == null && us == null) return null
         return VocabEntry(
             text = text,
@@ -95,6 +96,49 @@ class DictionaryClient {
             examples = emptyList(),
             synonyms = emptyList(),
         )
+    }
+
+    /**
+     * 组合词在有道 ec 里经常不带 pos，但 ee（WordNet）有。
+     * 用 ee 的词性补全空白 pos，避免释义行只显示中文。
+     */
+    private fun enrichMissingPos(
+        defs: List<Definition>,
+        root: JSONObject,
+        isPhrase: Boolean,
+    ): List<Definition> {
+        if (defs.isEmpty() || defs.none { it.pos.isBlank() }) return defs
+        val eePos = parseEePosList(root)
+        if (eePos.isEmpty()) return defs
+        val unique = eePos.distinctBy { it.lowercase().trimEnd('.') }
+        val fallbackPos = when {
+            unique.size == 1 -> unique[0]
+            // 短语多词性时 WordNet 常把名词义放前面；中文义多为动词，优先 v.
+            isPhrase && unique.any { it.lowercase().startsWith("v") } ->
+                unique.first { it.lowercase().startsWith("v") }
+            else -> unique[0]
+        }
+        return defs.mapIndexed { index, def ->
+            if (def.pos.isNotBlank()) def
+            else {
+                val pos = when {
+                    defs.size == eePos.size -> eePos[index]
+                    else -> fallbackPos
+                }
+                def.copy(pos = pos)
+            }
+        }
+    }
+
+    private fun parseEePosList(root: JSONObject): List<String> {
+        val word = jsonObjOrFirst(jsonObjOrFirst(root, "ee"), "word") ?: return emptyList()
+        val trs = word.optJSONArray("trs") ?: return emptyList()
+        return buildList {
+            for (i in 0 until trs.length()) {
+                val pos = trs.optJSONObject(i)?.optString("pos").orEmpty().trim()
+                if (pos.isNotBlank()) add(pos)
+            }
+        }
     }
 
     private fun collectCorpusExamples(root: JSONObject?): List<ExampleSentence> {

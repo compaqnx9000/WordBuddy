@@ -615,6 +615,7 @@ class WordBuddyApi {
         val keywords = obj.optJSONArray("keywords") ?: obj.optJSONArray("relatedWords") ?: JSONArray()
         val words = buildList {
             for (i in 0 until keywords.length()) {
+                if (size >= 20) break
                 val w = keywords.optString(i).trim()
                 if (w.isNotEmpty()) add(w)
             }

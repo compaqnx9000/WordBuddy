@@ -82,10 +82,17 @@ import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.stellarGlass
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.hotgis.wordbuddy.BuildConfig
+import com.hotgis.wordbuddy.ads.AdDiagStore
+import com.hotgis.wordbuddy.ads.DrawFeedController
+import com.hotgis.wordbuddy.ads.RewardVideoController
+import com.hotgis.wordbuddy.ads.findActivity
 import com.hotgis.wordbuddy.media.MediaDiskCaches
 import androidx.media3.common.util.UnstableApi
 import androidx.annotation.OptIn as AndroidXOptIn
@@ -282,6 +289,8 @@ fun AppSettingsScreen(
                     busy = cacheBusy,
                     onClear = { showClearCacheConfirm = true },
                 )
+
+                AdDiagCard()
 
                 if (loggedIn) {
                     AccountSecurityCard(
@@ -651,6 +660,97 @@ private fun StorageCacheCard(
             subtitle = if (busy) "正在清除…" else "短视频 / 播客本地缓存 · 当前 $cacheLabel",
             onClick = onClear,
         )
+    }
+}
+
+@Composable
+private fun AdDiagCard() {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { AdDiagStore.load(context) }
+    val splash by AdDiagStore.splash.collectAsState()
+    val draw by AdDiagStore.draw.collectAsState()
+    val reward by AdDiagStore.reward.collectAsState()
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .stellarGlass()
+            .padding(16.sdp()),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.sdp()),
+        ) {
+            Icon(
+                Icons.Filled.AutoAwesome,
+                contentDescription = null,
+                tint = Stellar.Cyan,
+                modifier = Modifier.size(22.sdp()),
+            )
+            Text(
+                text = "广告诊断",
+                color = Stellar.OnSurface,
+                fontSize = 20.ssp(),
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.height(18.sdp()))
+        AdDiagRow(title = "开屏", slotId = BuildConfig.CSJ_SPLASH_CODE_ID, status = splash)
+        AdDiagRow(title = "短视频 Draw", slotId = BuildConfig.CSJ_DRAW_CODE_ID, status = draw)
+        AdDiagRow(title = "激励视频", slotId = BuildConfig.CSJ_REWARD_CODE_ID, status = reward)
+        Spacer(Modifier.height(10.sdp()))
+        PreferenceAction(
+            icon = Icons.Filled.Refresh,
+            title = "重试 Draw 广告",
+            subtitle = "短视频翻页广告无填充时点此重试",
+            onClick = {
+                val act = context.findActivity()
+                if (act == null) {
+                    Toast.makeText(context, "页面不可用", Toast.LENGTH_SHORT).show()
+                } else {
+                    DrawFeedController.start(act)
+                    Toast.makeText(context, "已发起 Draw 请求", Toast.LENGTH_SHORT).show()
+                }
+            },
+        )
+        PreferenceAction(
+            icon = Icons.Filled.Refresh,
+            title = "重试激励广告",
+            subtitle = "补签/下载提示无填充时点此重试",
+            onClick = {
+                val act = context.findActivity()
+                if (act == null) {
+                    Toast.makeText(context, "页面不可用", Toast.LENGTH_SHORT).show()
+                } else {
+                    RewardVideoController.preload(act)
+                    Toast.makeText(context, "已发起激励请求", Toast.LENGTH_SHORT).show()
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun AdDiagRow(title: String, slotId: String, status: String) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.sdp()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = Stellar.OnSurface,
+                fontSize = 15.ssp(),
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(2.sdp()))
+            Text(
+                text = "位 $slotId · $status",
+                color = Stellar.OnSurfaceVariant.copy(alpha = 0.85f),
+                fontSize = 13.ssp(),
+            )
+        }
     }
 }
 
