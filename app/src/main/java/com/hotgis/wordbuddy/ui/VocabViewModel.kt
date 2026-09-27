@@ -25,6 +25,8 @@ import com.hotgis.wordbuddy.data.SettingsStore
 import com.hotgis.wordbuddy.data.CheckInStore
 import com.hotgis.wordbuddy.data.CheckInState
 import com.hotgis.wordbuddy.data.CheckInResult
+import com.hotgis.wordbuddy.data.RewardVideoClaim
+import com.hotgis.wordbuddy.data.RewardVideoOffer
 import com.hotgis.wordbuddy.data.InviteStore
 import com.hotgis.wordbuddy.data.VocabEntry
 import com.hotgis.wordbuddy.data.WordBuddyApi
@@ -161,6 +163,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     val accountSwitching: StateFlow<Boolean> = _accountSwitching.asStateFlow()
     private val _checkIn = MutableStateFlow(checkInStore.load())
     val checkIn: StateFlow<CheckInState> = _checkIn.asStateFlow()
+    private val _rewardVideo = MutableStateFlow(RewardVideoOffer())
+    val rewardVideo: StateFlow<RewardVideoOffer> = _rewardVideo.asStateFlow()
     private val _sessionReplacedMessages = MutableSharedFlow<String>(extraBufferCapacity = 1)
     /** Toast / dialog copy when this device was kicked by another login. */
     val sessionReplacedMessages: SharedFlow<String> = _sessionReplacedMessages.asSharedFlow()
@@ -1890,6 +1894,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         val token = _session.value?.token
         if (token.isNullOrBlank()) {
             _checkIn.value = CheckInState()
+            _rewardVideo.value = RewardVideoOffer()
             return
         }
         viewModelScope.launch {
@@ -1905,6 +1910,37 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 .onFailure {
                     _checkIn.value = checkInStore.load()
                 }
+        }
+        refreshRewardVideo()
+    }
+
+    fun refreshRewardVideo() {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            _rewardVideo.value = RewardVideoOffer()
+            return
+        }
+        viewModelScope.launch {
+            runCatching { api.fetchRewardVideo(token) }
+                .onSuccess { _rewardVideo.value = it }
+        }
+    }
+
+    fun claimRewardVideo(onResult: (Result<RewardVideoClaim>) -> Unit) {
+        val token = _session.value?.token
+        if (token.isNullOrBlank()) {
+            onResult(Result.failure(IllegalStateException("请先登录")))
+            return
+        }
+        viewModelScope.launch {
+            val result = runCatching { api.claimRewardVideo(token) }
+            result.onSuccess { claim ->
+                _rewardVideo.value = claim.offer
+                applyCheckInPoints(claim.offer.totalPoints)
+            }.onFailure {
+                refreshRewardVideo()
+            }
+            onResult(result)
         }
     }
 
@@ -2442,6 +2478,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             headsCache.clear()
             letterIndexByNotebook.clear()
             _checkIn.value = CheckInState()
+            _rewardVideo.value = RewardVideoOffer()
             _avatarBitmap.value = null
         }
         sessionStore.save(session)
@@ -2554,6 +2591,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         _accountDeletion.value = null
         _accountDeletionBusy.value = false
         _checkIn.value = CheckInState()
+        _rewardVideo.value = RewardVideoOffer()
         _avatarBitmap.value = null
         _avatarBusy.value = false
         LauncherIcons.apply(getApplication(), 0)

@@ -118,6 +118,7 @@ fun HotWordsRoot(
     var showPointsWithdraw by remember { mutableStateOf(false) }
     var showAccountProfile by remember { mutableStateOf(false) }
     var showShortsLookup by remember { mutableStateOf(false) }
+    var shortsFullscreen by remember { mutableStateOf(false) }
     var showShortFavorites by remember { mutableStateOf(false) }
     var favoritePlaying by remember { mutableStateOf<com.hotgis.wordbuddy.ui.shorts.ShortClip?>(null) }
     var showTools by remember { mutableStateOf(false) }
@@ -138,6 +139,7 @@ fun HotWordsRoot(
     val accountDeletion by viewModel.accountDeletion.collectAsStateWithLifecycle()
     val accountDeletionBusy by viewModel.accountDeletionBusy.collectAsStateWithLifecycle()
     val checkIn by viewModel.checkIn.collectAsStateWithLifecycle()
+    val rewardVideo by viewModel.rewardVideo.collectAsStateWithLifecycle()
     val avatarBitmap by viewModel.avatarBitmap.collectAsStateWithLifecycle()
     val avatarBusy by viewModel.avatarBusy.collectAsStateWithLifecycle()
     val rememberedAccounts by viewModel.rememberedAccounts.collectAsStateWithLifecycle()
@@ -247,6 +249,12 @@ fun HotWordsRoot(
 
     LaunchedEffect(activity) {
         activity?.let(DrawFeedController::start)
+    }
+
+    LaunchedEffect(tab, showShortsLookup, showShortFavorites, showLogin) {
+        if (tab != MainTab.Shorts || showShortsLookup || showShortFavorites || showLogin) {
+            shortsFullscreen = false
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -379,6 +387,10 @@ fun HotWordsRoot(
                 viewModel.prepareReturnToList()
                 overlay = Overlay.None
             }
+            shortsFullscreen -> {
+                pendingExit = false
+                shortsFullscreen = false
+            }
             tab == MainTab.Home -> {
                 if (pendingExit) {
                     onExit()
@@ -387,12 +399,15 @@ fun HotWordsRoot(
                     Toast.makeText(context, "再按一次退出", Toast.LENGTH_SHORT).show()
                 }
             }
-            tab == MainTab.Shorts || tab == MainTab.Podcast || tab == MainTab.Me -> {
-                // Stay on the current tab; ignore system / gesture back.
-            }
             tab == MainTab.Notebook -> {
                 pendingExit = false
                 tab = MainTab.Home
+            }
+            tab == MainTab.Shorts ||
+                tab == MainTab.Podcast ||
+                tab == MainTab.Me -> {
+                pendingExit = false
+                activity?.moveTaskToBack(true)
             }
         }
     }
@@ -615,6 +630,7 @@ fun HotWordsRoot(
                 bottomBar = {
                     if (overlay == Overlay.None &&
                         tab != MainTab.Notebook &&
+                        !shortsFullscreen &&
                         !showAppSettings &&
                         !showAccountDeletion &&
                         !showAccountProfile &&
@@ -636,6 +652,7 @@ fun HotWordsRoot(
                                 showAccountDeletion = false
                                 showAccountProfile = false
                                 showShortsLookup = false
+                                shortsFullscreen = false
                                 favoritePlaying = null
                                 showShortFavorites = false
                                 showPointsMall = false
@@ -1099,9 +1116,12 @@ fun HotWordsRoot(
                                 .hotWordsScreen(padding, consumeStatusBars = false),
                             authToken = session?.token,
                             metaVisibleDefault = ui.settings.shortsMetaVisibleDefault,
+                            fullscreen = shortsFullscreen,
+                            onFullscreenChange = { shortsFullscreen = it },
                             onOpenWord = { word ->
                                 viewModel.setLookupQuery(word)
                                 viewModel.submitLookup()
+                                shortsFullscreen = false
                                 showShortsLookup = true
                             },
                             onShare = { clip ->
@@ -1276,6 +1296,8 @@ fun HotWordsRoot(
                             onRefreshCheckIn = viewModel::refreshCheckIn,
                             onCheckIn = viewModel::performCheckIn,
                             onMakeupCheckIn = viewModel::performMakeupCheckIn,
+                            rewardVideo = rewardVideo,
+                            onClaimRewardVideo = viewModel::claimRewardVideo,
                             onOpenPointsMall = { showPointsMall = true },
                             onOpenBuyPoints = { openBuyPoints() },
                             onOpenShortFavorites = {

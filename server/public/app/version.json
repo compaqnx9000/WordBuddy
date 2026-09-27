@@ -1,8 +1,8 @@
 {
-  "versionCode": 127,
-  "versionName": "1.36",
+  "versionCode": 130,
+  "versionName": "1.39",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "组合词查词补全词性（如 n./v.）；后台短视频关键词上限调整为 1～30。",
-  "releasedAt": "2026-09-26T13:03:00.000Z"
+  "notes": "生词本返回键回到首页；短视频/博客/我仍最小化。含每日看视频领积分与全屏退出优化。",
+  "releasedAt": "2026-09-27T13:16:00.000Z"
 }

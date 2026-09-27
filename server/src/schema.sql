@@ -400,3 +400,24 @@ CREATE INDEX IF NOT EXISTS point_orders_user
 
 CREATE INDEX IF NOT EXISTS point_orders_status
     ON point_orders (status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO app_settings (key, value)
+VALUES ('reward_video_points', '5')
+ON CONFLICT (key) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS reward_video_grants (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    grant_date DATE NOT NULL,
+    points INTEGER NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS reward_video_grants_user_date
+    ON reward_video_grants (user_id, grant_date);

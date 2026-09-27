@@ -20,6 +20,7 @@ import {
 } from './auth.js'
 import { newLoginCode, sendCode, skipVerify } from './sms.js'
 import { getUserCheckIn, performUserCheckIn, performMakeupCheckIn } from './checkin.js'
+import { claimRewardVideo, rewardVideoStatus } from './rewardVideo.js'
 import { resolveIpLocation, extractDeviceInfo } from './device.js'
 import {
   GIFT_CATEGORIES,
@@ -1118,6 +1119,29 @@ function mapUserProfile(row, fallbackUser = {}) {
 router.get('/me/checkin', authRequired, async (req, res) => {
   const checkIn = await getUserCheckIn(req.user.id)
   res.json({ checkIn })
+})
+
+router.get('/me/reward-video', authRequired, async (req, res) => {
+  const rewardVideo = await rewardVideoStatus(req.user.id)
+  res.json({ rewardVideo })
+})
+
+router.post('/me/reward-video/claim', authRequired, async (req, res) => {
+  try {
+    const result = await claimRewardVideo(req.user.id)
+    if (!result.ok) {
+      res.status(400).json({ ok: false, error: result.error, rewardVideo: result.status || null })
+      return
+    }
+    res.json({
+      ok: true,
+      pointsEarned: result.pointsEarned,
+      rewardVideo: result.status,
+    })
+  } catch (error) {
+    console.error('[me/reward-video]', error)
+    res.status(500).json({ error: '积分发放失败，请稍后重试' })
+  }
 })
 
 router.post('/me/checkin', authRequired, async (req, res) => {

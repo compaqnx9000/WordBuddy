@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -15,7 +16,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,6 +35,8 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.outlined.ArrowBackIosNew
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Fullscreen
+import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -58,9 +60,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -101,12 +107,15 @@ fun ShortsScreen(
     modifier: Modifier = Modifier,
     authToken: String? = null,
     metaVisibleDefault: Boolean = true,
+    fullscreen: Boolean = false,
+    onFullscreenChange: (Boolean) -> Unit = {},
     onOpenWord: (String) -> Unit = {},
     onShare: (ShortClip) -> Unit = {},
     onRequireLogin: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
+    val view = LocalView.current
     val api = remember { WordBuddyApi() }
     val scope = rememberCoroutineScope()
     var clips by remember { mutableStateOf<List<ShortClip>>(emptyList()) }
@@ -115,6 +124,29 @@ fun ShortsScreen(
     val pagerState = rememberPagerState(pageCount = { feed.size.coerceAtLeast(1) })
     val readyAdKeys by DrawFeedController.readyKeys.collectAsState()
     val tokenState = rememberUpdatedState(authToken)
+
+    BackHandler(enabled = fullscreen) {
+        onFullscreenChange(false)
+    }
+
+    DisposableEffect(fullscreen, activity, view) {
+        val window = activity?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, view)
+            if (fullscreen) {
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+                controller.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            } else {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        onDispose {
+            val w = activity?.window ?: return@onDispose
+            WindowCompat.getInsetsController(w, view)
+                .show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
 
     fun updateClipFavorite(videoId: String, favorited: Boolean) {
         clips = clips.map { if (it.id == videoId) it.copy(favorited = favorited) else it }
@@ -214,6 +246,8 @@ fun ShortsScreen(
                             clip = item.clip,
                             active = pagerState.settledPage == page,
                             metaVisibleDefault = metaVisibleDefault,
+                            fullscreen = fullscreen,
+                            onToggleFullscreen = { onFullscreenChange(!fullscreen) },
                             onOpenWord = onOpenWord,
                             onShare = { onShare(item.clip) },
                             onToggleFavorite = {
@@ -401,6 +435,8 @@ private fun ShortVideoPage(
     clip: ShortClip,
     active: Boolean,
     metaVisibleDefault: Boolean,
+    fullscreen: Boolean = false,
+    onToggleFullscreen: () -> Unit = {},
     onOpenWord: (String) -> Unit,
     onShare: () -> Unit,
     onToggleFavorite: () -> Unit,
@@ -538,6 +574,11 @@ private fun ShortVideoPage(
                 icon = if (metaVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
                 label = if (metaVisible) "藏文案" else "文案",
                 onClick = { metaVisible = !metaVisible },
+            )
+            ShortAction(
+                icon = if (fullscreen) Icons.Outlined.FullscreenExit else Icons.Outlined.Fullscreen,
+                label = if (fullscreen) "退出" else "全屏",
+                onClick = onToggleFullscreen,
             )
         }
     }

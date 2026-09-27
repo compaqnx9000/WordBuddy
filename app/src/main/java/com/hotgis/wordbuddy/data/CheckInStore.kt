@@ -5,6 +5,19 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
+data class RewardVideoOffer(
+    val pointsPerWatch: Int = 5,
+    val dailyLimit: Int = 20,
+    val usedToday: Int = 0,
+    val remaining: Int = 20,
+    val totalPoints: Int = 0,
+)
+
+data class RewardVideoClaim(
+    val pointsEarned: Int,
+    val offer: RewardVideoOffer,
+)
+
 data class CheckInState(
     val totalPoints: Int = 0,
     /** Consecutive days ending at last check-in; 0 if broken or never. */

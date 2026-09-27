@@ -44,6 +44,7 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.EventAvailable
 import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.PlayCircle
 import java.time.LocalDate
 import java.time.YearMonth
 import android.content.Intent
@@ -87,6 +88,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hotgis.wordbuddy.BuildConfig
 import com.hotgis.wordbuddy.ads.RewardVideoController
+import com.hotgis.wordbuddy.data.RewardVideoOffer
 import com.hotgis.wordbuddy.ads.findActivity
 import com.hotgis.wordbuddy.data.CheckInResult
 import com.hotgis.wordbuddy.data.CheckInState
@@ -126,6 +128,10 @@ fun ProfileScreen(
     onCheckIn: (onResult: (CheckInResult) -> Unit) -> Unit = { it(CheckInResult.AlreadyCheckedIn) },
     onMakeupCheckIn: (date: String, onResult: (CheckInResult) -> Unit) -> Unit = { _, cb ->
         cb(CheckInResult.Failed("未实现"))
+    },
+    rewardVideo: RewardVideoOffer = RewardVideoOffer(),
+    onClaimRewardVideo: ((Result<com.hotgis.wordbuddy.data.RewardVideoClaim>) -> Unit) -> Unit = { cb ->
+        cb(Result.failure(IllegalStateException("未实现")))
     },
     onOpenPointsMall: () -> Unit = {},
     onOpenBuyPoints: () -> Unit = {},
@@ -266,6 +272,84 @@ fun ProfileScreen(
                     }
                 },
             )
+        }
+    }
+
+    fun watchRewardVideo() {
+        if (!loggedIn) {
+            onLogin()
+            return
+        }
+        if (rewardVideo.remaining <= 0) {
+            Toast.makeText(context, "今日奖励视频已达 ${rewardVideo.dailyLimit} 次", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val act = activity
+        if (act == null) {
+            Toast.makeText(context, "无法播放广告，请稍后重试", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (checkInBusy) return
+        checkInBusy = true
+        var rewarded = false
+        fun grant() {
+            onClaimRewardVideo { result ->
+                checkInBusy = false
+                result
+                    .onSuccess { claim ->
+                        Toast.makeText(
+                            context,
+                            "获得 ${claim.pointsEarned} 积分，今日剩余 ${claim.offer.remaining}/${claim.offer.dailyLimit}",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    .onFailure {
+                        Toast.makeText(context, it.message ?: "积分发放失败", Toast.LENGTH_LONG).show()
+                    }
+                act.runOnUiThread { RewardVideoController.preload(act) }
+            }
+        }
+        fun showAd() {
+            RewardVideoController.show(
+                act,
+                object : RewardVideoController.Callbacks {
+                    override fun onShown() = Unit
+                    override fun onRewarded() {
+                        rewarded = true
+                        grant()
+                    }
+                    override fun onClosed() {
+                        if (!rewarded) {
+                            checkInBusy = false
+                            Toast.makeText(context, "需看完广告才能领积分", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    override fun onFailed(reason: String) {
+                        checkInBusy = false
+                        Toast.makeText(context, "广告播放失败：$reason", Toast.LENGTH_LONG).show()
+                    }
+                },
+            )
+        }
+        RewardVideoController.preload(act)
+        act.runOnUiThread {
+            if (RewardVideoController.hasReadyAd()) {
+                showAd()
+                return@runOnUiThread
+            }
+            scope.launch {
+                var waits = 0
+                while (!RewardVideoController.hasReadyAd() && waits < 25) {
+                    kotlinx.coroutines.delay(200)
+                    waits++
+                }
+                if (!RewardVideoController.hasReadyAd()) {
+                    checkInBusy = false
+                    Toast.makeText(context, "广告暂未填充，请稍后再试", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                act.runOnUiThread { showAd() }
+            }
         }
     }
 
@@ -501,6 +585,18 @@ fun ProfileScreen(
                     title = "充值积分",
                     trailing = "测试价 ¥0.10",
                     onClick = onOpenBuyPoints,
+                )
+                ProfileMenuDivider()
+                ProfileMenuRow(
+                    icon = Icons.Outlined.PlayCircle,
+                    iconTint = Stellar.Gold,
+                    title = "看视频领积分",
+                    trailing = if (!loggedIn) {
+                        "登录后每日 ${rewardVideo.dailyLimit} 次"
+                    } else {
+                        "剩余 ${rewardVideo.remaining}/${rewardVideo.dailyLimit} · +${rewardVideo.pointsPerWatch}"
+                    },
+                    onClick = { watchRewardVideo() },
                 )
                 ProfileMenuDivider()
                 ProfileMenuRow(

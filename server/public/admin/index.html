@@ -224,7 +224,7 @@ const titles = {
   logins: ['登录记录', '验证码 / 密码登录，成功与失败'],
   sms: ['短信记录', '验证码发送与是否已核销（不展示明文验证码）'],
   notebooks: ['词书 / 生词本', '系统词书可下架与改词；用户生词本可查看删除'],
-  checkins: ['签到积分', '用户累计积分、连续签到与每日签到明细'],
+  checkins: ['签到积分', '用户累计积分、连续签到、每日签到明细，以及奖励视频每次积分'],
   gifts: ['积分兑礼', '上架/下架礼品、库存与积分价格'],
   giftOrders: ['兑换订单', '用户兑换记录与发货状态'],
   shorts: ['短视频', '视频维护，以及用户在口语/单词/听力的累计停留'],
@@ -236,6 +236,15 @@ const state = { page: 'overview', pageNo: 1, q: '', kind: '', giftPub: '', short
 function token() { return localStorage.getItem('hw_admin_token') || ''; }
 function authHeaders() {
   return { Authorization: 'Bearer ' + token(), 'Content-Type': 'application/json' };
+}
+async function saveRewardVideoPoints() {
+  const raw = document.getElementById('rvPoints')?.value;
+  try {
+    const data = await api('/reward-video', { method: 'PUT', body: JSON.stringify({ pointsPerWatch: Number(raw) }) });
+    alert('已保存：每次 +' + data.pointsPerWatch + ' 积分，下次看完视频立即生效');
+  } catch (e) {
+    alert(e.message || '保存失败');
+  }
 }
 async function api(path, opts = {}) {
   const res = await fetch('/admin/api' + path, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
@@ -442,9 +451,16 @@ async function render() {
         </tr>`).join('')}</tbody></table>
         ${pager(d.total)}`;
     } else if (state.page === 'checkins') {
+      const rv = await api('/reward-video').catch(() => ({ pointsPerWatch: 5, dailyLimit: 20 }));
+      const rvBar = `<div class="toolbar" style="margin-bottom:12px">
+        <label style="margin:0">奖励视频每次积分</label>
+        <input id="rvPoints" type="number" min="1" max="999" value="${Number(rv.pointsPerWatch) || 5}" style="max-width:120px" />
+        <button class="btn" onclick="saveRewardVideoPoints()">保存</button>
+        <span class="sub">每人每天 ${Number(rv.dailyLimit) || 20} 次，保存后下一次看完视频立即按新积分发放</span>
+      </div>`;
       if (state.checkInView === 'logs') {
         const d = await api(`/checkins/logs?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
-        el.innerHTML = `
+        el.innerHTML = rvBar + `
           <div class="toolbar">
             <button class="btn ${state.checkInView==='users'?'':'ghost'}" onclick="go('checkins',{checkInView:'users',page:1})">积分排行</button>
             <button class="btn" onclick="go('checkins',{checkInView:'logs',page:1})">签到明细</button>
@@ -464,7 +480,7 @@ async function render() {
           ${pager(d.total)}`;
       } else {
         const d = await api(`/checkins?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
-        el.innerHTML = `
+        el.innerHTML = rvBar + `
           <div class="stats">
             <div class="stat"><b>${d.stats.checkInToday}</b><span>今日签到（${esc(d.stats.today)}）</span></div>
             <div class="stat"><b>${d.stats.userCount}</b><span>有签到用户</span></div>

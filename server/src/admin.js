@@ -12,6 +12,7 @@ import {
 } from './auth.js'
 import { mapDeviceRow } from './device.js'
 import { todayShanghai } from './checkin.js'
+import { getRewardVideoPoints, setRewardVideoPoints, REWARD_VIDEO_DAILY_LIMIT } from './rewardVideo.js'
 import { GIFT_CATEGORIES, mapGift, mapOrder, normalizeGiftStock } from './gifts.js'
 import {
   SHORT_CATEGORIES,
@@ -814,6 +815,20 @@ adminRouter.get('/audit', adminRequired, async (req, res) => {
     page,
     pageSize,
   })
+})
+
+adminRouter.get('/reward-video', adminRequired, async (_req, res) => {
+  const pointsPerWatch = await getRewardVideoPoints()
+  res.json({ pointsPerWatch, dailyLimit: REWARD_VIDEO_DAILY_LIMIT })
+})
+
+adminRouter.put('/reward-video', adminRequired, async (req, res) => {
+  const saved = await setRewardVideoPoints(req.body?.pointsPerWatch)
+  if (!saved.ok) {
+    res.status(400).json({ error: saved.error })
+    return
+  }
+  res.json(saved)
 })
 
 adminRouter.get('/checkins', adminRequired, async (req, res) => {

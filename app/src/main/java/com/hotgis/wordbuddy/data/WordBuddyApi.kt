@@ -533,6 +533,19 @@ class WordBuddyApi {
         parseCheckIn(root.optJSONObject("checkIn"))
     }
 
+    suspend fun fetchRewardVideo(token: String): RewardVideoOffer = withContext(Dispatchers.IO) {
+        val root = request("GET", "/me/reward-video", auth = token)
+        parseRewardVideo(root.optJSONObject("rewardVideo"))
+    }
+
+    suspend fun claimRewardVideo(token: String): RewardVideoClaim = withContext(Dispatchers.IO) {
+        val root = request("POST", "/me/reward-video/claim", auth = token, body = JSONObject())
+        RewardVideoClaim(
+            pointsEarned = root.optInt("pointsEarned", 0),
+            offer = parseRewardVideo(root.optJSONObject("rewardVideo")),
+        )
+    }
+
     suspend fun performCheckIn(token: String): CheckInResult = withContext(Dispatchers.IO) {
         val root = request("POST", "/me/checkin", auth = token, body = JSONObject())
         val checkIn = parseCheckIn(root.optJSONObject("checkIn"))
@@ -830,6 +843,20 @@ class WordBuddyApi {
             addressDetail = optNullableString(obj, "addressDetail"),
             remark = optNullableString(obj, "remark"),
             createdAt = optNullableString(obj, "createdAt"),
+        )
+    }
+
+    private fun parseRewardVideo(obj: JSONObject?): RewardVideoOffer {
+        if (obj == null) return RewardVideoOffer()
+        val limit = obj.optInt("dailyLimit", 20).coerceAtLeast(1)
+        val used = obj.optInt("usedToday", 0).coerceAtLeast(0)
+        val remaining = obj.optInt("remaining", (limit - used).coerceAtLeast(0)).coerceAtLeast(0)
+        return RewardVideoOffer(
+            pointsPerWatch = obj.optInt("pointsPerWatch", 5).coerceAtLeast(1),
+            dailyLimit = limit,
+            usedToday = used,
+            remaining = remaining,
+            totalPoints = obj.optInt("totalPoints", 0).coerceAtLeast(0),
         )
     }
 
