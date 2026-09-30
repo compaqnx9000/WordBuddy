@@ -34,3 +34,10 @@ tmp_apk/
 tmp_sync/
 tmp_ui/
 scripts/__pycache__/
+ios/build/
+ios/DerivedData/
+ios/.tools/
+ios/**/xcuserdata/
+*.xcuserstate
+h5/node_modules/
+h5/dist/

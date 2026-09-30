@@ -935,7 +935,11 @@ router.patch('/me', authRequired, async (req, res) => {
     alipayName = next || null
   }
 
-  if (alipayAccount && !String(alipayName || '').trim()) {
+  if (
+    (req.body?.alipayAccount != null || req.body?.alipayName != null) &&
+    alipayAccount &&
+    !String(alipayName || '').trim()
+  ) {
     res.status(400).json({ error: '请填写支付宝实名（须与账号一致）' })
     return
   }

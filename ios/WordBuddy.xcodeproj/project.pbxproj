@@ -1,0 +1,609 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		044CA3FF3C1366736238B792 /* CoreText.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DEFED12F935404679EA1B1DD /* CoreText.framework */; };
+		0835FB1EC5A11824F919D471 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A73EBDC52207E37836A9FD6B /* SessionStore.swift */; };
+		085707CDDD6BA7DA873D6F71 /* WordBuddyAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E12F164337B53251105966D /* WordBuddyAPI.swift */; };
+		09A88A981936BC46FDB4B6BA /* PodcastRssFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71FCDDA0873157D79B5EFD2B /* PodcastRssFetcher.swift */; };
+		0B67C0F1CFEE93CDF9ABB619 /* Speech.swift in Sources */ = {isa = PBXBuildFile; fileRef = 959942E780DF22408A69681D /* Speech.swift */; };
+		0EB939CC5B8DB8AA4084C7D3 /* CoreTelephony.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88EBCB1015FC8B650A41B950 /* CoreTelephony.framework */; };
+		11C4306F291A1C02FB402B3D /* CoreMotion.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FB79FF8400276F96F431C6AF /* CoreMotion.framework */; };
+		15693CF956F1D7BC068AA4D9 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8FFF053B6251719BC6A5936B /* QuartzCore.framework */; };
+		20089F71CF24C3601347D0AB /* ShortsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 630EE691E03666A9491DCEE1 /* ShortsView.swift */; };
+		25BC6D58E6934AD4D19E0232 /* WordAids.swift in Sources */ = {isa = PBXBuildFile; fileRef = E11EC3A550BCC73CB397790E /* WordAids.swift */; };
+		309499D1494E2A58027518CF /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA6062C02A0697540BCFDA44 /* WebKit.framework */; };
+		355D15DFB2218F8F213644AB /* DictionaryClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E6AD7D00117D95AB32F4C68 /* DictionaryClient.swift */; };
+		370791D7A148F9091A7F2833 /* PlaceholderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E079760CA09ED21E1A07AFA /* PlaceholderView.swift */; };
+		3A04B2E5E3EEDF456F04F079 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CE319CFA9FD8B4C07EDA5AB /* AppModel.swift */; };
+		3E09C98BD18C9835F8C244A9 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4584ECC3AA89448313CC567A /* Models.swift */; };
+		5610439EB4FE99286149CE55 /* MeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB7C4EA33ADBC558E7C487E9 /* MeView.swift */; };
+		58864DF08D96D1AD4E72A1C3 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D786E38E0CE708071F37C261 /* Security.framework */; };
+		69E4F22395E4CD7FBCF66BB2 /* NotebookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2932AF21B6C22F514F823FE /* NotebookView.swift */; };
+		7038FA7C3337D623CF88FCC5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0F84DC70452CF3D122232FC5 /* Assets.xcassets */; };
+		787C44E2F7E2736269FF755B /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4894898B144F26AC2E38BE3 /* JSONValue.swift */; };
+		7F5C63E3A3BAA5B07ABCFE43 /* RewardsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C032E45ABE4BA5A7BCB649C1 /* RewardsViews.swift */; };
+		7FE07C9D754BF35ACC10D37D /* AccountProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6800D596094E71BADC94877A /* AccountProfileView.swift */; };
+		810062B7F94B9B5DD567CD58 /* PodcastPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D04799141B36E6B6330E564 /* PodcastPlayer.swift */; };
+		8494B8EAA534DF22D131E742 /* PodcastCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D02AC0102D0BEACAD0D1F5D /* PodcastCatalog.swift */; };
+		85B43EBFF39559775BFAE599 /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F7BB64DB4B652FB52D867FA /* libc++.tbd */; };
+		8B8036356AB2566106607919 /* libz.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = EB90A6C31FD715681EB66154 /* libz.tbd */; };
+		929BD8ED85EFB6DD75F003BF /* WordBuddyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A48882BF1348027DA8E33E74 /* WordBuddyApp.swift */; };
+		9557EB43E90170EAD393E6AE /* AlipaySDK.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D48DA56EA1536C37079D1980 /* AlipaySDK.xcframework */; };
+		9AD341A1B4DB60B5D121801E /* AvatarImageCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B81AAE853B55F62AE4EC077 /* AvatarImageCodec.swift */; };
+		9BDE006EC59DB21D1905305F /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1FBBA4CF423BA777A7AFE3DC /* SystemConfiguration.framework */; };
+		9C929AEF3ACAA41057CCA836 /* WechatOpenSDK.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0813DABEC94D4A4E1195BC5D /* WechatOpenSDK.xcframework */; };
+		9FEC99190A445D70F1BB732F /* VocabTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC5E2C7DB73CFE2C92E5846A /* VocabTransfer.swift */; };
+		9FFB1B0A2943764334478704 /* PodcastView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3A594620E5D6887B2814708 /* PodcastView.swift */; };
+		AE4D8BDCA4E8F1173651ECB1 /* SocialAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0E8003D229953FC6A28AFB /* SocialAuth.swift */; };
+		B8F4584BEFB252156263D8C8 /* CardModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B95020C0ED600E46A7833D /* CardModeView.swift */; };
+		C4129B07F6EB79734418D329 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B939136368B2191D648B7C50 /* RootView.swift */; };
+		CAD5B6E7BE322B64B85A3D0A /* AccountDeletionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91E69BF7A0278527218E1E3F /* AccountDeletionView.swift */; };
+		D925ED75610661443054496C /* CFNetwork.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C12EBB9D299CD8D6A697B282 /* CFNetwork.framework */; };
+		E2B78316C88411E36694E839 /* MnemonicImageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 483604A2D2208778EA6A22AB /* MnemonicImageStore.swift */; };
+		EA2874051BD4FADF40362676 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 129E7051127BA3407F7B0CF0 /* Theme.swift */; };
+		EDB82BFF4EB41F7E94630163 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3260E39CAD23C38DEBC9275A /* LoginView.swift */; };
+		F624D291D4D1449A7B9A6DE5 /* AccountStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79B19EF4A62C60761B835346 /* AccountStore.swift */; };
+		F639790250E8EC7E9F15A030 /* LookupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB9BC411CB9174B3EBB25D85 /* LookupView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0813DABEC94D4A4E1195BC5D /* WechatOpenSDK.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = WechatOpenSDK.xcframework; path = Vendor/WechatOpenSDK.xcframework; sourceTree = "<group>"; };
+		0F84DC70452CF3D122232FC5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		129E7051127BA3407F7B0CF0 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		1A0E8003D229953FC6A28AFB /* SocialAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialAuth.swift; sourceTree = "<group>"; };
+		1B81AAE853B55F62AE4EC077 /* AvatarImageCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AvatarImageCodec.swift; sourceTree = "<group>"; };
+		1D04799141B36E6B6330E564 /* PodcastPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PodcastPlayer.swift; sourceTree = "<group>"; };
+		1FBBA4CF423BA777A7AFE3DC /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = System/Library/Frameworks/SystemConfiguration.framework; sourceTree = SDKROOT; };
+		2D02AC0102D0BEACAD0D1F5D /* PodcastCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PodcastCatalog.swift; sourceTree = "<group>"; };
+		2F7BB64DB4B652FB52D867FA /* libc++.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = "libc++.tbd"; path = "usr/lib/libc++.tbd"; sourceTree = SDKROOT; };
+		3260E39CAD23C38DEBC9275A /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		3E12F164337B53251105966D /* WordBuddyAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WordBuddyAPI.swift; sourceTree = "<group>"; };
+		4584ECC3AA89448313CC567A /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		483604A2D2208778EA6A22AB /* MnemonicImageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MnemonicImageStore.swift; sourceTree = "<group>"; };
+		5E0482816EB76DA5021BD766 /* WordBuddy.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WordBuddy.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		630EE691E03666A9491DCEE1 /* ShortsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortsView.swift; sourceTree = "<group>"; };
+		6800D596094E71BADC94877A /* AccountProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountProfileView.swift; sourceTree = "<group>"; };
+		6E6AD7D00117D95AB32F4C68 /* DictionaryClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryClient.swift; sourceTree = "<group>"; };
+		71FCDDA0873157D79B5EFD2B /* PodcastRssFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PodcastRssFetcher.swift; sourceTree = "<group>"; };
+		79B19EF4A62C60761B835346 /* AccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStore.swift; sourceTree = "<group>"; };
+		88EBCB1015FC8B650A41B950 /* CoreTelephony.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreTelephony.framework; path = System/Library/Frameworks/CoreTelephony.framework; sourceTree = SDKROOT; };
+		8FFF053B6251719BC6A5936B /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		91E69BF7A0278527218E1E3F /* AccountDeletionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDeletionView.swift; sourceTree = "<group>"; };
+		959942E780DF22408A69681D /* Speech.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Speech.swift; sourceTree = "<group>"; };
+		9CE319CFA9FD8B4C07EDA5AB /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		9E079760CA09ED21E1A07AFA /* PlaceholderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderView.swift; sourceTree = "<group>"; };
+		A2932AF21B6C22F514F823FE /* NotebookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookView.swift; sourceTree = "<group>"; };
+		A48882BF1348027DA8E33E74 /* WordBuddyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WordBuddyApp.swift; sourceTree = "<group>"; };
+		A73EBDC52207E37836A9FD6B /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		A7B95020C0ED600E46A7833D /* CardModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardModeView.swift; sourceTree = "<group>"; };
+		AA6062C02A0697540BCFDA44 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		AB9BC411CB9174B3EBB25D85 /* LookupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LookupView.swift; sourceTree = "<group>"; };
+		B4894898B144F26AC2E38BE3 /* JSONValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONValue.swift; sourceTree = "<group>"; };
+		B939136368B2191D648B7C50 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		C032E45ABE4BA5A7BCB649C1 /* RewardsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardsViews.swift; sourceTree = "<group>"; };
+		C12EBB9D299CD8D6A697B282 /* CFNetwork.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CFNetwork.framework; path = System/Library/Frameworks/CFNetwork.framework; sourceTree = SDKROOT; };
+		CB7C4EA33ADBC558E7C487E9 /* MeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeView.swift; sourceTree = "<group>"; };
+		D48DA56EA1536C37079D1980 /* AlipaySDK.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = AlipaySDK.xcframework; path = Vendor/AlipaySDK.xcframework; sourceTree = "<group>"; };
+		D786E38E0CE708071F37C261 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		DEFED12F935404679EA1B1DD /* CoreText.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreText.framework; path = System/Library/Frameworks/CoreText.framework; sourceTree = SDKROOT; };
+		E11EC3A550BCC73CB397790E /* WordAids.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WordAids.swift; sourceTree = "<group>"; };
+		E3A594620E5D6887B2814708 /* PodcastView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PodcastView.swift; sourceTree = "<group>"; };
+		EB90A6C31FD715681EB66154 /* libz.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libz.tbd; path = usr/lib/libz.tbd; sourceTree = SDKROOT; };
+		EC5E2C7DB73CFE2C92E5846A /* VocabTransfer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VocabTransfer.swift; sourceTree = "<group>"; };
+		FB79FF8400276F96F431C6AF /* CoreMotion.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A2BA983FD46A0074B3AB96F7 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9C929AEF3ACAA41057CCA836 /* WechatOpenSDK.xcframework in Frameworks */,
+				9557EB43E90170EAD393E6AE /* AlipaySDK.xcframework in Frameworks */,
+				58864DF08D96D1AD4E72A1C3 /* Security.framework in Frameworks */,
+				9BDE006EC59DB21D1905305F /* SystemConfiguration.framework in Frameworks */,
+				0EB939CC5B8DB8AA4084C7D3 /* CoreTelephony.framework in Frameworks */,
+				11C4306F291A1C02FB402B3D /* CoreMotion.framework in Frameworks */,
+				D925ED75610661443054496C /* CFNetwork.framework in Frameworks */,
+				309499D1494E2A58027518CF /* WebKit.framework in Frameworks */,
+				15693CF956F1D7BC068AA4D9 /* QuartzCore.framework in Frameworks */,
+				044CA3FF3C1366736238B792 /* CoreText.framework in Frameworks */,
+				85B43EBFF39559775BFAE599 /* libc++.tbd in Frameworks */,
+				8B8036356AB2566106607919 /* libz.tbd in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0FD19B68C477B72746515178 /* WordBuddy */ = {
+			isa = PBXGroup;
+			children = (
+				33EDD9618D33C4F7E407EACC /* App */,
+				DD6584BAFAFB9BBBCEFFDB58 /* Auth */,
+				5AE6653CD4560BAA5CBEE053 /* Data */,
+				E6BF370BBFD5D0BF98772520 /* Features */,
+				FA9DB50FF2BA0C96BAFDFF1B /* Podcast */,
+				0F84DC70452CF3D122232FC5 /* Assets.xcassets */,
+			);
+			path = WordBuddy;
+			sourceTree = "<group>";
+		};
+		121B8912084FCC57629FFC41 /* Podcast */ = {
+			isa = PBXGroup;
+			children = (
+				E3A594620E5D6887B2814708 /* PodcastView.swift */,
+			);
+			path = Podcast;
+			sourceTree = "<group>";
+		};
+		33EDD9618D33C4F7E407EACC /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B939136368B2191D648B7C50 /* RootView.swift */,
+				959942E780DF22408A69681D /* Speech.swift */,
+				129E7051127BA3407F7B0CF0 /* Theme.swift */,
+				A48882BF1348027DA8E33E74 /* WordBuddyApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		4838F9369BA56C0EBB2384DD /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				3260E39CAD23C38DEBC9275A /* LoginView.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		5AE6653CD4560BAA5CBEE053 /* Data */ = {
+			isa = PBXGroup;
+			children = (
+				79B19EF4A62C60761B835346 /* AccountStore.swift */,
+				9CE319CFA9FD8B4C07EDA5AB /* AppModel.swift */,
+				1B81AAE853B55F62AE4EC077 /* AvatarImageCodec.swift */,
+				6E6AD7D00117D95AB32F4C68 /* DictionaryClient.swift */,
+				B4894898B144F26AC2E38BE3 /* JSONValue.swift */,
+				483604A2D2208778EA6A22AB /* MnemonicImageStore.swift */,
+				4584ECC3AA89448313CC567A /* Models.swift */,
+				A73EBDC52207E37836A9FD6B /* SessionStore.swift */,
+				EC5E2C7DB73CFE2C92E5846A /* VocabTransfer.swift */,
+				3E12F164337B53251105966D /* WordBuddyAPI.swift */,
+			);
+			path = Data;
+			sourceTree = "<group>";
+		};
+		87DED157F889802906E5AA34 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				5E0482816EB76DA5021BD766 /* WordBuddy.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		87ECFC96D75638AAA5A8A580 /* Lookup */ = {
+			isa = PBXGroup;
+			children = (
+				AB9BC411CB9174B3EBB25D85 /* LookupView.swift */,
+				E11EC3A550BCC73CB397790E /* WordAids.swift */,
+			);
+			path = Lookup;
+			sourceTree = "<group>";
+		};
+		ADE93C7E2F6FA12B5DDA4554 /* Notebook */ = {
+			isa = PBXGroup;
+			children = (
+				A7B95020C0ED600E46A7833D /* CardModeView.swift */,
+				A2932AF21B6C22F514F823FE /* NotebookView.swift */,
+			);
+			path = Notebook;
+			sourceTree = "<group>";
+		};
+		B5D85FC6EB08270367301808 /* Me */ = {
+			isa = PBXGroup;
+			children = (
+				91E69BF7A0278527218E1E3F /* AccountDeletionView.swift */,
+				6800D596094E71BADC94877A /* AccountProfileView.swift */,
+				CB7C4EA33ADBC558E7C487E9 /* MeView.swift */,
+				C032E45ABE4BA5A7BCB649C1 /* RewardsViews.swift */,
+			);
+			path = Me;
+			sourceTree = "<group>";
+		};
+		DD6584BAFAFB9BBBCEFFDB58 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				1A0E8003D229953FC6A28AFB /* SocialAuth.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		DF17F8321668D5DA4C9AAD68 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				D48DA56EA1536C37079D1980 /* AlipaySDK.xcframework */,
+				C12EBB9D299CD8D6A697B282 /* CFNetwork.framework */,
+				FB79FF8400276F96F431C6AF /* CoreMotion.framework */,
+				88EBCB1015FC8B650A41B950 /* CoreTelephony.framework */,
+				DEFED12F935404679EA1B1DD /* CoreText.framework */,
+				2F7BB64DB4B652FB52D867FA /* libc++.tbd */,
+				EB90A6C31FD715681EB66154 /* libz.tbd */,
+				8FFF053B6251719BC6A5936B /* QuartzCore.framework */,
+				D786E38E0CE708071F37C261 /* Security.framework */,
+				1FBBA4CF423BA777A7AFE3DC /* SystemConfiguration.framework */,
+				AA6062C02A0697540BCFDA44 /* WebKit.framework */,
+				0813DABEC94D4A4E1195BC5D /* WechatOpenSDK.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		E6BF370BBFD5D0BF98772520 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				4838F9369BA56C0EBB2384DD /* Auth */,
+				87ECFC96D75638AAA5A8A580 /* Lookup */,
+				B5D85FC6EB08270367301808 /* Me */,
+				ADE93C7E2F6FA12B5DDA4554 /* Notebook */,
+				FE48AEA39A14D80A3F5362AE /* Placeholder */,
+				121B8912084FCC57629FFC41 /* Podcast */,
+				FC69A32F6AF8C2D64BD109B9 /* Shorts */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		F12C64539EE72340D32154F8 = {
+			isa = PBXGroup;
+			children = (
+				0FD19B68C477B72746515178 /* WordBuddy */,
+				DF17F8321668D5DA4C9AAD68 /* Frameworks */,
+				87DED157F889802906E5AA34 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		FA9DB50FF2BA0C96BAFDFF1B /* Podcast */ = {
+			isa = PBXGroup;
+			children = (
+				2D02AC0102D0BEACAD0D1F5D /* PodcastCatalog.swift */,
+				1D04799141B36E6B6330E564 /* PodcastPlayer.swift */,
+				71FCDDA0873157D79B5EFD2B /* PodcastRssFetcher.swift */,
+			);
+			path = Podcast;
+			sourceTree = "<group>";
+		};
+		FC69A32F6AF8C2D64BD109B9 /* Shorts */ = {
+			isa = PBXGroup;
+			children = (
+				630EE691E03666A9491DCEE1 /* ShortsView.swift */,
+			);
+			path = Shorts;
+			sourceTree = "<group>";
+		};
+		FE48AEA39A14D80A3F5362AE /* Placeholder */ = {
+			isa = PBXGroup;
+			children = (
+				9E079760CA09ED21E1A07AFA /* PlaceholderView.swift */,
+			);
+			path = Placeholder;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A7E996C7A89A4C6663B969CA /* WordBuddy */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1AF13D4B30F174F4BE321F36 /* Build configuration list for PBXNativeTarget "WordBuddy" */;
+			buildPhases = (
+				1DD3F87AD744E44DB923A66D /* Sources */,
+				7C95023928E8B10E6ED607E2 /* Resources */,
+				A2BA983FD46A0074B3AB96F7 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = WordBuddy;
+			packageProductDependencies = (
+			);
+			productName = WordBuddy;
+			productReference = 5E0482816EB76DA5021BD766 /* WordBuddy.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		355116DF2475B2B16252BE79 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					A7E996C7A89A4C6663B969CA = {
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = 1CD02829EA94291FD4772763 /* Build configuration list for PBXProject "WordBuddy" */;
+			developmentRegion = "zh-Hans";
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = F12C64539EE72340D32154F8;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 87DED157F889802906E5AA34 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A7E996C7A89A4C6663B969CA /* WordBuddy */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		7C95023928E8B10E6ED607E2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7038FA7C3337D623CF88FCC5 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1DD3F87AD744E44DB923A66D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CAD5B6E7BE322B64B85A3D0A /* AccountDeletionView.swift in Sources */,
+				7FE07C9D754BF35ACC10D37D /* AccountProfileView.swift in Sources */,
+				F624D291D4D1449A7B9A6DE5 /* AccountStore.swift in Sources */,
+				3A04B2E5E3EEDF456F04F079 /* AppModel.swift in Sources */,
+				9AD341A1B4DB60B5D121801E /* AvatarImageCodec.swift in Sources */,
+				B8F4584BEFB252156263D8C8 /* CardModeView.swift in Sources */,
+				355D15DFB2218F8F213644AB /* DictionaryClient.swift in Sources */,
+				787C44E2F7E2736269FF755B /* JSONValue.swift in Sources */,
+				EDB82BFF4EB41F7E94630163 /* LoginView.swift in Sources */,
+				F639790250E8EC7E9F15A030 /* LookupView.swift in Sources */,
+				5610439EB4FE99286149CE55 /* MeView.swift in Sources */,
+				E2B78316C88411E36694E839 /* MnemonicImageStore.swift in Sources */,
+				3E09C98BD18C9835F8C244A9 /* Models.swift in Sources */,
+				69E4F22395E4CD7FBCF66BB2 /* NotebookView.swift in Sources */,
+				370791D7A148F9091A7F2833 /* PlaceholderView.swift in Sources */,
+				8494B8EAA534DF22D131E742 /* PodcastCatalog.swift in Sources */,
+				810062B7F94B9B5DD567CD58 /* PodcastPlayer.swift in Sources */,
+				09A88A981936BC46FDB4B6BA /* PodcastRssFetcher.swift in Sources */,
+				9FFB1B0A2943764334478704 /* PodcastView.swift in Sources */,
+				7F5C63E3A3BAA5B07ABCFE43 /* RewardsViews.swift in Sources */,
+				C4129B07F6EB79734418D329 /* RootView.swift in Sources */,
+				0835FB1EC5A11824F919D471 /* SessionStore.swift in Sources */,
+				20089F71CF24C3601347D0AB /* ShortsView.swift in Sources */,
+				AE4D8BDCA4E8F1173651ECB1 /* SocialAuth.swift in Sources */,
+				0B67C0F1CFEE93CDF9ABB619 /* Speech.swift in Sources */,
+				EA2874051BD4FADF40362676 /* Theme.swift in Sources */,
+				9FEC99190A445D70F1BB732F /* VocabTransfer.swift in Sources */,
+				25BC6D58E6934AD4D19E0232 /* WordAids.swift in Sources */,
+				085707CDDD6BA7DA873D6F71 /* WordBuddyAPI.swift in Sources */,
+				929BD8ED85EFB6DD75F003BF /* WordBuddyApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		299257635C375DCDDBC50657 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Vendor\"",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WordBuddy/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				OTHER_LDFLAGS = "$(inherited) -ObjC -lc++ -lz";
+				PRODUCT_BUNDLE_IDENTIFIER = com.hotgis.wordbuddy;
+				PRODUCT_NAME = WordBuddy;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		BB7E3CD6BBCA80DB0904FB92 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Vendor\"",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WordBuddy/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				OTHER_LDFLAGS = "$(inherited) -ObjC -lc++ -lz";
+				PRODUCT_BUNDLE_IDENTIFIER = com.hotgis.wordbuddy;
+				PRODUCT_NAME = WordBuddy;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		C68144AEAA71482ECDED63C5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		DAF22F1CD312AC69B68A2E8E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1AF13D4B30F174F4BE321F36 /* Build configuration list for PBXNativeTarget "WordBuddy" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				299257635C375DCDDBC50657 /* Debug */,
+				BB7E3CD6BBCA80DB0904FB92 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		1CD02829EA94291FD4772763 /* Build configuration list for PBXProject "WordBuddy" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DAF22F1CD312AC69B68A2E8E /* Debug */,
+				C68144AEAA71482ECDED63C5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 355116DF2475B2B16252BE79 /* Project object */;
+}
