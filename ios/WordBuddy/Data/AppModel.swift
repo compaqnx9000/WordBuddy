@@ -217,15 +217,15 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func purchasePoints(packageId: String, points: Int) async {
+    func purchasePoints(packageId: String, points: Int, channel: String) async {
         guard let session else {
             showLogin = true
             return
         }
         do {
-            let balance = try await api.purchasePointsSimulated(token: session.token, packageId: packageId)
+            let balance = try await api.purchasePointsSimulated(token: session.token, packageId: packageId, channel: channel)
             applyPoints(balance)
-            banner = "模拟支付成功，已到账 \(points) 积分"
+            banner = "已到账 \(points) 积分"
         } catch {
             if !noteSessionError(error) {
                 banner = error.localizedDescription

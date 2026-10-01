@@ -435,6 +435,8 @@ struct PointCatalog: Equatable {
     var items: [PointPackage]
     var aiImagePointsCost: Int
     var sandbox: Bool
+    var alipayReady: Bool = true
+    var wechatReady: Bool = false
 }
 
 struct WithdrawChannel: Identifiable, Equatable {

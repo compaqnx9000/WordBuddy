@@ -14,6 +14,7 @@ struct RootView: View {
     @State private var tab: MainTab = .home
 
     @State private var shortsChromeHidden = false
+    @State private var mallCoversTabBar = false
     @State private var showColdSplash = true
 
     private var needsBiometricLock: Bool {
@@ -25,7 +26,9 @@ struct RootView: View {
     }
 
     private var showsMainBar: Bool {
-        !(tab == .shorts && shortsChromeHidden)
+        tab != .notebook
+            && !(tab == .shorts && shortsChromeHidden)
+            && !(tab == .me && mallCoversTabBar)
     }
 
     var body: some View {
@@ -35,7 +38,7 @@ struct RootView: View {
                     .tabItem { Label("首页", systemImage: "house.fill") }
                     .toolbar(.hidden, for: .tabBar)
                     .tag(MainTab.home)
-                NotebookView()
+                NotebookView(onBack: { tab = .home })
                     .tabItem { Label("生词本", systemImage: "book.fill") }
                     .toolbar(.hidden, for: .tabBar)
                     .tag(MainTab.notebook)
@@ -47,7 +50,7 @@ struct RootView: View {
                     .tabItem { Label("播客", systemImage: "headphones") }
                     .toolbar(.hidden, for: .tabBar)
                     .tag(MainTab.podcast)
-                MeView()
+                MeView(mallCoversTabBar: $mallCoversTabBar)
                     .tabItem { Label("我", systemImage: "sparkles") }
                     .toolbar(.hidden, for: .tabBar)
                     .tag(MainTab.me)

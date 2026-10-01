@@ -846,16 +846,18 @@ actor WordBuddyAPI {
         return PointCatalog(
             items: items,
             aiImagePointsCost: JSONValue.int(root, key: "aiImagePointsCost", default: 5),
-            sandbox: JSONValue.bool(root, key: "sandbox", default: true)
+            sandbox: JSONValue.bool(root, key: "sandbox", default: true),
+            alipayReady: JSONValue.bool(root, key: "alipayReady", default: true),
+            wechatReady: JSONValue.bool(root, key: "wechatReady")
         )
     }
 
-    func purchasePointsSimulated(token: String, packageId: String) async throws -> Int {
+    func purchasePointsSimulated(token: String, packageId: String, channel: String) async throws -> Int {
         let created = try await request(
             method: "POST",
             path: "/me/point-orders",
             auth: token,
-            body: ["packageId": packageId, "channel": "alipay"]
+            body: ["packageId": packageId, "channel": channel]
         )
         let order = created["order"] as? [String: Any] ?? [:]
         let orderId = JSONValue.int64(order, key: "id")

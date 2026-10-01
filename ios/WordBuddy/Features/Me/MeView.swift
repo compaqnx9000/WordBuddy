@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 import UserNotifications
 
 struct MeView: View {
+    var mallCoversTabBar: Binding<Bool> = .constant(false)
+
     @EnvironmentObject private var model: AppModel
     @State private var showExport = false
     @State private var showImport = false
@@ -17,7 +19,7 @@ struct MeView: View {
     @State private var showNetworkRegion = false
     @State private var networkRefreshBusy = false
     @State private var makeupDate: String?
-    @State private var path = NavigationPath()
+    @State private var path: [MeRoute] = []
 
     private let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
 
@@ -58,6 +60,9 @@ struct MeView: View {
                 case .withdraw: WithdrawView()
                 }
             }
+        }
+        .onChange(of: path) { _, routes in
+            mallCoversTabBar.wrappedValue = routes.contains(.mall)
         }
         .task(id: model.session?.userId) {
             await model.refreshMe()

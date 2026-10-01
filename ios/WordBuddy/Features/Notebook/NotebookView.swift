@@ -2,6 +2,8 @@ import SwiftUI
 import UIKit
 
 struct NotebookView: View {
+    var onBack: () -> Void = {}
+
     @EnvironmentObject private var model: AppModel
     @State private var filter: WordFilter = .all
     @State private var sortMode: SortMode = .manual
@@ -86,6 +88,9 @@ struct NotebookView: View {
                                 .foregroundStyle(Theme.cyanSoft)
                         }
                     } else {
+                        ToolbarItem(placement: .topBarLeading) {
+                            backButton
+                        }
                         ToolbarItem(placement: .principal) {
                             VStack(spacing: 1) {
                                 Text(headerTitle)
@@ -108,6 +113,9 @@ struct NotebookView: View {
                         }
                     }
                 } else {
+                    ToolbarItem(placement: .topBarLeading) {
+                        backButton
+                    }
                     ToolbarItem(placement: .principal) {
                         Text("生词本")
                             .font(.headline.weight(.bold))
@@ -200,6 +208,14 @@ struct NotebookView: View {
             if model.session != nil, model.notebooks.isEmpty {
                 await model.loadNotebooks()
             }
+        }
+    }
+
+    private var backButton: some View {
+        Button(action: onBack) {
+            Image(systemName: "chevron.left")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(Theme.onSurfaceVariant)
         }
     }
 
