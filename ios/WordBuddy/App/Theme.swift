@@ -409,6 +409,33 @@ extension View {
     }
 }
 
+/// Full-width hairline. Opacity replaces the color's alpha, matching Android `Color.copy(alpha = ...)`.
+struct ThemeHairline: View {
+    var color: Color = Theme.outline
+    var alpha: Double = 0.35
+
+    var body: some View {
+        Rectangle()
+            .fill(color.replacingOpacity(alpha))
+            .frame(maxWidth: .infinity)
+            .frame(height: 1)
+    }
+}
+
+extension Color {
+    func replacingOpacity(_ opacity: Double) -> Color {
+        let ui = UIColor(self)
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard ui.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return self.opacity(opacity)
+        }
+        return Color(.sRGB, red: Double(red), green: Double(green), blue: Double(blue), opacity: opacity)
+    }
+}
+
 struct DefinitionLine: View {
     var definition: Definition
 

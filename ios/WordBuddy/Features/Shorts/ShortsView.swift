@@ -1,13 +1,39 @@
 import AVFoundation
 import SwiftUI
 
+enum ShortFeedItem: Identifiable {
+    case clip(ShortClip)
+    case draw(String)
+
+    var id: String {
+        switch self {
+        case .clip(let clip):
+            return "clip-\(clip.id)"
+        case .draw(let key):
+            return "draw-\(key)"
+        }
+    }
+
+    var clip: ShortClip? {
+        if case .clip(let clip) = self { return clip }
+        return nil
+    }
+
+    var isDraw: Bool {
+        if case .draw = self { return true }
+        return false
+    }
+}
+
 struct ShortsView: View {
     @EnvironmentObject private var model: AppModel
     var isSelected: Bool
     @Binding var chromeHidden: Bool
 
     @State private var clips: [ShortClip] = []
+    @State private var feed: [ShortFeedItem] = []
     @State private var currentId: String?
+    @ObservedObject private var drawPool = DrawAdPool.shared
     @State private var loading = false
     @State private var loadingMore = false
     @State private var errorMessage: String?
@@ -16,23 +42,15 @@ struct ShortsView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            if clips.isEmpty {
+            if feed.isEmpty {
                 emptyState
             } else {
                 ScrollView(.vertical) {
                     LazyVStack(spacing: 0) {
-                        ForEach(clips) { clip in
-                            ShortPage(
-                                clip: clip,
-                                engaged: isSelected && clip.id == currentId,
-                                fullscreen: fullscreen,
-                                onToggleFullscreen: { fullscreen.toggle() },
-                                onOpenWord: { model.openWord($0) },
-                                onToggleFavorite: { toggleFavorite(clip) },
-                                onWatch: { reportWatch(clip: clip, watchMs: $0) }
-                            )
-                            .containerRelativeFrame([.horizontal, .vertical])
-                            .id(clip.id)
+                        ForEach(feed) { item in
+                            feedPage(item)
+                                .containerRelativeFrame([.horizontal, .vertical])
+                                .id(item.id)
                         }
                     }
                     .scrollTargetLayout()
@@ -46,9 +64,14 @@ struct ShortsView: View {
         .statusBarHidden(fullscreen)
         .task {
             if clips.isEmpty { await loadInitial() }
+            if isSelected { drawPool.preload() }
         }
         .onChange(of: currentId) { _, _ in
+            insertUpcomingDraw()
             Task { await loadMoreIfNeeded() }
+        }
+        .onChange(of: drawPool.revision) { _, _ in
+            insertUpcomingDraw()
         }
         .onChange(of: fullscreen) { _, hidden in
             chromeHidden = hidden
@@ -56,6 +79,7 @@ struct ShortsView: View {
         .onChange(of: isSelected) { _, selected in
             if selected {
                 model.podcast.pause()
+                drawPool.preload()
             } else {
                 fullscreen = false
                 chromeHidden = false
@@ -90,9 +114,12 @@ struct ShortsView: View {
         do {
             let items = playable(try await model.api.fetchShortsFeed(token: model.session?.token))
             clips = items
-            if currentId == nil || !items.contains(where: { $0.id == currentId }) {
-                currentId = items.first?.id
+            feed = items.map { .clip($0) }
+            if currentId == nil || !feed.contains(where: { $0.id == currentId }) {
+                currentId = feed.first?.id
             }
+            drawPool.preload()
+            insertUpcomingDraw()
         } catch {
             if !model.noteSessionError(error) {
                 errorMessage = error.localizedDescription
@@ -102,8 +129,8 @@ struct ShortsView: View {
 
     private func loadMoreIfNeeded() async {
         guard !loading, !loadingMore, !clips.isEmpty else { return }
-        guard let currentId, let index = clips.firstIndex(where: { $0.id == currentId }) else { return }
-        guard index >= clips.count - 3 else { return }
+        guard let currentId, let index = feed.firstIndex(where: { $0.id == currentId }) else { return }
+        guard index >= feed.count - 3 else { return }
         loadingMore = true
         defer { loadingMore = false }
         do {
@@ -112,6 +139,8 @@ struct ShortsView: View {
                 try await model.api.fetchShortsFeed(token: model.session?.token, excludeIds: clips.map(\.id))
             ).filter { !known.contains($0.id) }
             clips.append(contentsOf: more)
+            feed.append(contentsOf: more.map { .clip($0) })
+            insertUpcomingDraw()
         } catch {
             _ = model.noteSessionError(error)
         }
@@ -145,6 +174,43 @@ struct ShortsView: View {
     private func setFavorite(_ id: String, favorited: Bool) {
         guard let index = clips.firstIndex(where: { $0.id == id }) else { return }
         clips[index].favorited = favorited
+        if let feedIndex = feed.firstIndex(where: { $0.clip?.id == id }) {
+            feed[feedIndex] = .clip(clips[index])
+        }
+    }
+
+    @ViewBuilder
+    private func feedPage(_ item: ShortFeedItem) -> some View {
+        switch item {
+        case .clip(let clip):
+            ShortPage(
+                clip: clip,
+                engaged: isSelected && item.id == currentId,
+                fullscreen: fullscreen,
+                metaStartsVisible: model.shortsMetaVisibleDefault,
+                onToggleFullscreen: { fullscreen.toggle() },
+                onOpenWord: { model.openWord($0) },
+                onToggleFavorite: { toggleFavorite(clip) },
+                onWatch: { reportWatch(clip: clip, watchMs: $0) }
+            )
+        case .draw(let key):
+            DrawAdPage(adKey: key, active: isSelected && item.id == currentId)
+        }
+    }
+
+    private func insertUpcomingDraw() {
+        guard drawPool.hasReady, !feed.isEmpty else { return }
+        let currentIndex = feed.firstIndex(where: { $0.id == currentId }) ?? 0
+        let adsAhead = feed.dropFirst(currentIndex + 1).filter(\.isDraw).count
+        guard adsAhead < 1, let key = drawPool.takeReady() else { return }
+        let firstAd = !feed.contains(where: \.isDraw)
+        var skip = firstAd ? 2 : Int.random(in: 2...3)
+        var index = currentIndex + 1
+        while skip > 0, index < feed.count {
+            if !feed[index].isDraw { skip -= 1 }
+            index += 1
+        }
+        feed.insert(.draw(key), at: min(index, feed.count))
     }
 
     private func reportWatch(clip: ShortClip, watchMs: Int) {
@@ -171,8 +237,30 @@ private struct ShortPage: View {
     var onWatch: (Int) -> Void
 
     @State private var userPaused = false
-    @State private var metaVisible = true
+    @State private var metaVisible: Bool
     @State private var watchStart: Date?
+
+    init(
+        clip: ShortClip,
+        engaged: Bool,
+        fullscreen: Bool,
+        metaStartsVisible: Bool,
+        onToggleFullscreen: @escaping () -> Void,
+        onOpenWord: @escaping (String) -> Void,
+        onToggleFavorite: @escaping () -> Void,
+        onWatch: @escaping (Int) -> Void
+    ) {
+        self.clip = clip
+        self.engaged = engaged
+        self.fullscreen = fullscreen
+        self.onToggleFullscreen = onToggleFullscreen
+        self.onOpenWord = onOpenWord
+        self.onToggleFavorite = onToggleFavorite
+        self.onWatch = onWatch
+        _userPaused = State(initialValue: false)
+        _metaVisible = State(initialValue: metaStartsVisible)
+        _watchStart = State(initialValue: nil)
+    }
 
     var body: some View {
         ZStack {

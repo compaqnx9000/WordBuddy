@@ -17,6 +17,7 @@ struct CardModeView: View {
     @State private var pinnedWordId: Int64?
     @State private var playing = false
     @State private var playTask: Task<Void, Never>?
+    @State private var phonicsTask: Task<Void, Never>?
     @State private var showSeek = false
     @State private var seeking = false
     @State private var seekValue = 0.0
@@ -98,9 +99,10 @@ struct CardModeView: View {
             self.currentId = ids.first
         }
         .onDisappear { stopPlay() }
-        .sheet(item: $editingEntry) { entry in
-            MeaningEditSheet(entry: entry)
-                .environmentObject(model)
+        .overlay {
+            if let entry = editingEntry {
+                MeaningEditSheet(entry: entry, onClose: { editingEntry = nil })
+            }
         }
         .confirmationDialog("助记配图", isPresented: imageDialogPresented, titleVisibility: .visible) {
             Button("生成助记配图（\(model.aiImagePointsCost) 积分）") {
@@ -172,8 +174,10 @@ struct CardModeView: View {
                             Speech.speak(entry.text, accent: accent)
                         },
                         onPhonics: {
+                            phonicsTask?.cancel()
                             let parts = NaturalPhonics.syllables(entry.text)
-                            Task { await speakSyllables(parts) }
+                            let word = entry.text
+                            phonicsTask = Task { await Speech.speakPhonics(parts: parts, word: word, accent: model.accent) }
                         },
                         onImage: { imageEntry = entry }
                     )
@@ -209,7 +213,7 @@ struct CardModeView: View {
                 }
                 if !notes.isEmpty {
                     if !originals.isEmpty {
-                        divider.padding(.vertical, 14)
+                        ThemeHairline().padding(.vertical, 14)
                         Text("我的补充")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(Theme.onSurfaceVariant)
@@ -222,7 +226,7 @@ struct CardModeView: View {
                     }
                 }
             }
-            divider.padding(.top, 14)
+            ThemeHairline().padding(.top, 14)
             Button {
                 editingEntry = entry
             } label: {
@@ -241,12 +245,6 @@ struct CardModeView: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassPanel()
-    }
-
-    private var divider: some View {
-        Rectangle()
-            .fill(Theme.outline.opacity(0.35))
-            .frame(height: 1)
     }
 
     @ViewBuilder
@@ -656,13 +654,6 @@ struct CardModeView: View {
         }
     }
 
-    private func speakSyllables(_ parts: [String]) async {
-        for part in parts {
-            Speech.speak(part, accent: model.accent)
-            try? await Task.sleep(nanoseconds: 420_000_000)
-        }
-    }
-
     private func generateImage(for entry: VocabEntry) async {
         imageBusyId = entry.id
         defer { imageBusyId = nil }
@@ -755,23 +746,26 @@ private struct CardWordBlock: View {
 
     private var wordLine: some View {
         let size = wordSize
-        let slot = size * 1.2 + 16
-        return ZStack(alignment: .leading) {
+        return ZStack(alignment: .topLeading) {
             Text(entry.text)
                 .font(.system(size: size, weight: .heavy))
                 .foregroundStyle(Theme.cyanSoft)
                 .shadow(color: Theme.cyan.opacity(0.55), radius: 8)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+                .multilineTextAlignment(.leading)
+                .lineLimit(3)
+                .minimumScaleFactor(0.72)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .opacity(phonicsOn ? 0 : 1)
             Text(phonicsAttributed)
                 .font(.system(size: size, weight: .heavy))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+                .multilineTextAlignment(.leading)
+                .lineLimit(3)
+                .minimumScaleFactor(0.72)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .opacity(phonicsOn ? 1 : 0)
         }
         .padding(.horizontal, 10)
-        .frame(height: slot, alignment: Alignment(horizontal: .leading, vertical: .center))
+        .padding(.vertical, 8)
         .overlay {
             VStack(spacing: 0) {
                 dashedGuide
@@ -1428,73 +1422,328 @@ private final class ExampleSwipeSurface: UIView, UIGestureRecognizerDelegate {
 
 struct MeaningEditSheet: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
     var entry: VocabEntry
-    @State private var rows: [Definition]
+    var onClose: () -> Void = {}
+    var onSaved: (VocabEntry) -> Void = { _ in }
+
+    private static let posOptions = [
+        "n.", "v.", "vt.", "vi.", "adj.", "adv.", "prep.", "conj.",
+        "pron.", "num.", "art.", "aux.", "interj.", "abbr.", "phr."
+    ]
+
+    @State private var notes: [Definition]
+    @State private var selectedPos = "n."
+    @State private var noteText = ""
+    @State private var homophoneText = ""
+    @State private var tips: [WordHomophone] = []
     @State private var saving = false
 
-    init(entry: VocabEntry) {
+    init(entry: VocabEntry, onClose: @escaping () -> Void = {}, onSaved: @escaping (VocabEntry) -> Void = { _ in }) {
         self.entry = entry
-        _rows = State(initialValue: entry.definitions.isEmpty
-            ? [Definition(pos: "", meaning: "", isUserAdded: true)]
-            : entry.definitions)
+        self.onClose = onClose
+        self.onSaved = onSaved
+        _notes = State(initialValue: entry.definitions.filter(\.isUserAdded))
+    }
+
+    private var originals: [Definition] {
+        entry.definitions.filter { !$0.isUserAdded }
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 12) {
-                    ForEach(rows.indices, id: \.self) { index in
-                        HStack(spacing: 8) {
-                            TextField("词性", text: $rows[index].pos)
-                                .frame(width: 64)
-                            TextField("释义", text: $rows[index].meaning)
-                            if rows[index].isUserAdded {
-                                Button {
-                                    rows.remove(at: index)
-                                } label: {
-                                    Image(systemName: "minus.circle")
-                                        .foregroundStyle(Theme.pink)
+        ZStack {
+            Color.black.opacity(0.45)
+                .onTapGesture { onClose() }
+            GeometryReader { geo in
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("补充释义")
+                        .font(.system(size: 26, weight: .bold))
+                        .foregroundStyle(Theme.cyanSoft)
+                    Text("词典释义不可修改。补充笔记仅自己可见；谐音助记全网共享，按点赞展示前 3 条。")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.onSurfaceVariant.opacity(0.85))
+                        .padding(.top, 8)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            if !originals.isEmpty {
+                                Text("词典释义")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(Theme.onSurfaceVariant)
+                                VStack(alignment: .leading, spacing: 12) {
+                                    ForEach(Array(originals.enumerated()), id: \.offset) { _, definition in
+                                        DefinitionLine(definition: definition)
+                                    }
                                 }
-                                .buttonStyle(.plain)
+                                .padding(14)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .stroke(Theme.outline.replacingOpacity(0.55), lineWidth: 1)
+                                }
+                                .padding(.top, 8)
+                            }
+                            Text("我的补充")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.pink)
+                                .padding(.top, 18)
+                            Text("词性")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.onSurfaceVariant)
+                                .padding(.top, 8)
+                            MeaningPosWrap(spacing: 8) {
+                                ForEach(Self.posOptions, id: \.self) { pos in
+                                    posChip(pos)
+                                }
+                            }
+                            .padding(.top, 8)
+                            TextField("输入补充释义…", text: $noteText, axis: .vertical)
+                                .lineLimit(3...6)
+                                .font(.system(size: 15))
+                                .foregroundStyle(Theme.onSurface)
+                                .padding(14)
+                                .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
+                                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .stroke(Theme.pink.opacity(0.35), lineWidth: 1)
+                                }
+                                .padding(.top, 12)
+                            HStack {
+                                Spacer()
+                                Button("添加本条", action: commitNote)
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(Theme.cyan)
+                                    .padding(.top, 10)
+                            }
+                            if !notes.isEmpty {
+                                VStack(spacing: 8) {
+                                    ForEach(notes.indices, id: \.self) { index in
+                                        HStack(spacing: 8) {
+                                            Text(notes[index].label)
+                                                .font(.system(size: 14))
+                                                .foregroundStyle(Theme.onSurface)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                            Button {
+                                                notes.remove(at: index)
+                                            } label: {
+                                                Image(systemName: "xmark")
+                                                    .font(.system(size: 12, weight: .semibold))
+                                                    .foregroundStyle(Theme.onSurfaceVariant)
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 10)
+                                        .background(Theme.pink.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    }
+                                }
+                                .padding(.top, 12)
+                            }
+                            Text("谐音助记")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.gold)
+                                .padding(.top, 20)
+                            Text("所有用户可见，点赞最多的前 3 条会显示在释义下方。")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.onSurfaceVariant.opacity(0.8))
+                                .padding(.top, 4)
+                            if !tips.isEmpty {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    ForEach(tips.prefix(3)) { tip in
+                                        HStack(alignment: .center, spacing: 8) {
+                                            Text(tip.body)
+                                                .font(.system(size: 14))
+                                                .foregroundStyle(Theme.onSurface)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                            Button {
+                                                Task { await toggleLike(tip) }
+                                            } label: {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: "hand.thumbsup")
+                                                        .font(.system(size: 12))
+                                                    Text("\(tip.likeCount)")
+                                                        .font(.system(size: 12, weight: .semibold))
+                                                }
+                                                .foregroundStyle(tip.likedByMe ? Theme.gold : Theme.onSurfaceVariant)
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                    }
+                                }
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .stroke(Theme.gold.opacity(0.35), lineWidth: 1)
+                                }
+                                .padding(.top, 8)
+                            }
+                            TextField("输入谐音帮助记忆，如「about ≈ 额抱他」…", text: $homophoneText, axis: .vertical)
+                                .lineLimit(2...5)
+                                .font(.system(size: 15))
+                                .foregroundStyle(Theme.onSurface)
+                                .onChange(of: homophoneText) { _, value in
+                                    if value.count > 120 { homophoneText = String(value.prefix(120)) }
+                                }
+                                .padding(14)
+                                .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
+                                .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .stroke(Theme.gold.opacity(0.4), lineWidth: 1)
+                                }
+                                .padding(.top, 8)
+                            if !entry.text.isEmpty {
+                                Text("针对单词：\(entry.text)")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.65))
+                                    .padding(.top, 6)
                             }
                         }
-                        .padding(12)
-                        .background(Theme.surfaceHigh, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .padding(.top, 16)
+                        .padding(.bottom, 8)
+                        .padding(.trailing, 20)
                     }
-                    Button {
-                        rows.append(Definition(pos: "", meaning: "", isUserAdded: true))
-                    } label: {
-                        Text("添加一条")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Theme.cyan)
+                    .scrollIndicators(.visible, axes: .vertical)
+                    ThemeHairline(alpha: 0.55).padding(.top, 8)
+                    HStack(spacing: 10) {
+                        Spacer()
+                        Button("取消") { onClose() }
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Theme.onSurface)
+                            .frame(minWidth: 88, minHeight: 42)
+                            .overlay {
+                                Capsule().stroke(Theme.outline.replacingOpacity(0.9), lineWidth: 1.5)
+                            }
+                        Button(saving ? "保存中" : "保存") {
+                            Task { await save() }
+                        }
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Theme.onPrimary)
+                        .frame(minWidth: 88, minHeight: 42)
+                        .background(Theme.isLight ? Theme.cyan : Theme.cyanSoft, in: Capsule())
+                        .disabled(saving)
                     }
-                    .buttonStyle(.plain)
+                    .padding(.top, 14)
                 }
-                .padding(20)
+                .padding(22)
+                .frame(maxWidth: .infinity, maxHeight: geo.size.height * 0.86, alignment: .top)
+                .background(Theme.surfaceContainer.replacingOpacity(0.97), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(Theme.cyan.opacity(0.45), lineWidth: 1)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, geo.safeAreaInsets.top + 36)
+                .padding(.bottom, max(geo.safeAreaInsets.bottom, 16))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
-            .stellarScreenBackground()
-            .navigationTitle("编辑释义")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task { await loadTips() }
+    }
+
+    private func posChip(_ pos: String) -> some View {
+        let selected = pos == selectedPos
+        return Button {
+            selectedPos = pos
+        } label: {
+            Text(pos)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(selected ? Theme.onPrimary : Theme.onSurface)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(selected ? Theme.cyan : Theme.surfaceHigh, in: Capsule())
+                .overlay {
+                    Capsule().stroke(selected ? Theme.cyan : Theme.outline.replacingOpacity(0.55), lineWidth: 1)
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(saving ? "保存中" : "保存") {
-                        Task { await save() }
-                    }
-                    .disabled(saving)
-                }
-            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func commitNote() {
+        let meaning = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !meaning.isEmpty else { return }
+        notes.append(Definition(pos: selectedPos, meaning: meaning, isUserAdded: true))
+        noteText = ""
+    }
+
+    private func loadTips() async {
+        tips = (try? await model.api.fetchHomophones(token: model.session?.token, word: entry.text)) ?? []
+    }
+
+    private func toggleLike(_ tip: WordHomophone) async {
+        guard let token = model.session?.token else {
+            model.showLogin = true
+            return
+        }
+        if let updated = try? await model.api.toggleHomophoneLike(token: token, id: tip.id),
+           let index = tips.firstIndex(where: { $0.id == tip.id }) {
+            tips[index] = updated
         }
     }
 
     private func save() async {
+        commitNote()
         saving = true
         defer { saving = false }
-        let ok = await model.updateDefinitions(id: entry.id, definitions: rows)
-        if ok { dismiss() }
+        let merged = originals + notes.map { Definition(pos: $0.pos, meaning: $0.meaning, isUserAdded: true) }
+        if entry.id > 0 {
+            let ok = await model.updateDefinitions(id: entry.id, definitions: merged)
+            guard ok else { return }
+        }
+        let tip = homophoneText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tip.isEmpty {
+            if let token = model.session?.token {
+                _ = try? await model.api.submitHomophone(token: token, word: entry.text, body: tip)
+            } else {
+                model.showLogin = true
+            }
+        }
+        var updated = entry
+        updated.definitions = merged
+        onSaved(updated)
+        onClose()
+    }
+}
+
+private struct MeaningPosWrap: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 0
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+        }
+        return CGSize(width: width, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+        }
     }
 }
 

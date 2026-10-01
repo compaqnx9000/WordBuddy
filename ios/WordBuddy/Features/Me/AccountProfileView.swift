@@ -11,7 +11,6 @@ struct ProfileEditView: View {
 
 struct AccountProfileView: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
 
     @State private var inviteInfo: InviteInfo?
     @State private var busy = false
@@ -32,7 +31,6 @@ struct AccountProfileView: View {
     @State private var showQR = false
     @State private var showUnbindAlipay = false
     @State private var showUnbindWechat = false
-    @State private var showLogout = false
 
     private static let regions = [
         "北京", "天津", "上海", "重庆",
@@ -128,29 +126,6 @@ struct AccountProfileView: View {
                     alipayRow
                     divider()
                     wechatRow
-                }
-
-                profileGroup {
-                    NavigationLink {
-                        SwitchAccountView()
-                    } label: {
-                        rowLabel("切换账号", value: nil, chevron: true)
-                    }
-                    .buttonStyle(.plain)
-                    divider()
-                    NavigationLink {
-                        AccountDeletionView()
-                    } label: {
-                        rowLabel("注销账号", value: nil, chevron: true)
-                    }
-                    .buttonStyle(.plain)
-                    divider()
-                    Button {
-                        showLogout = true
-                    } label: {
-                        rowLabel("退出登录", value: nil, chevron: false)
-                    }
-                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 16)
@@ -286,16 +261,6 @@ struct AccountProfileView: View {
             }
             if showQR {
                 BuddyQRDialog(buddyId: buddyId) { showQR = false }
-            }
-            if showLogout {
-                LogoutConfirmDialog(
-                    onCancel: { showLogout = false },
-                    onConfirm: {
-                        showLogout = false
-                        model.logout()
-                        dismiss()
-                    }
-                )
             }
         }
         .alert("解绑支付宝", isPresented: $showUnbindAlipay) {
@@ -645,7 +610,10 @@ struct AccountProfileView: View {
 
 // MARK: - Dialogs
 
-private struct LogoutConfirmDialog: View {
+struct LogoutConfirmDialog: View {
+    var title: String = "退出登录"
+    var message: String = "退出后将清除本机登录状态与词库缓存，可继续以游客身份使用。再次使用需重新登录。"
+    var confirmTitle: String = "退出"
     var onCancel: () -> Void
     var onConfirm: () -> Void
 
@@ -653,10 +621,10 @@ private struct LogoutConfirmDialog: View {
         ZStack {
             Color.black.opacity(0.45).ignoresSafeArea().onTapGesture(perform: onCancel)
             VStack(alignment: .leading, spacing: 14) {
-                Text("退出登录")
+                Text(title)
                     .font(.title3.weight(.bold))
                     .foregroundStyle(Theme.onSurface)
-                Text("退出后将清除本机登录状态与词库缓存，可继续以游客身份使用。再次使用需重新登录。")
+                Text(message)
                     .font(.subheadline)
                     .foregroundStyle(Theme.onSurfaceVariant)
                     .fixedSize(horizontal: false, vertical: true)
@@ -664,7 +632,7 @@ private struct LogoutConfirmDialog: View {
                     Spacer()
                     Button("取消", action: onCancel)
                         .foregroundStyle(Theme.onSurfaceVariant)
-                    Button("退出", action: onConfirm)
+                    Button(confirmTitle, action: onConfirm)
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(Theme.onPrimary)
                         .padding(.horizontal, 18)
@@ -890,16 +858,6 @@ private struct GenderDialog: View {
                 }
                 if let error, !error.isEmpty {
                     Text(error).font(.footnote).foregroundStyle(Theme.pink)
-                }
-                HStack {
-                    Spacer()
-                    Button("取消", action: onCancel).foregroundStyle(Theme.cyanSoft)
-                    Button("关闭", action: onCancel)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Theme.onPrimary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Theme.cyan, in: Capsule())
                 }
             }
             .padding(20)

@@ -10,9 +10,19 @@ enum MainTab: Hashable {
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var tab: MainTab = .home
 
     @State private var shortsChromeHidden = false
+    @State private var showColdSplash = true
+
+    private var needsBiometricLock: Bool {
+        model.session != nil
+            && model.biometricLogin
+            && !model.biometricUnlocked
+            && !model.showLogin
+            && BiometricAuth.available
+    }
 
     private var showsMainBar: Bool {
         !(tab == .shorts && shortsChromeHidden)
@@ -58,8 +68,34 @@ struct RootView: View {
         .onChange(of: model.pendingLookup) { _, word in
             if word != nil { tab = .home }
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background {
+                model.biometricUnlocked = false
+            }
+            if phase != .active, !model.podcastPlayWhenScreenOff {
+                model.podcast.pause()
+            }
+        }
+        .overlay {
+            if showColdSplash {
+                ColdSplashCover { showColdSplash = false }
+                    .ignoresSafeArea()
+            }
+        }
+        .overlay {
+            if needsBiometricLock {
+                BiometricLockCover {
+                    Task {
+                        if await BiometricAuth.authenticate(reason: "验证后继续使用词搭子") {
+                            model.biometricUnlocked = true
+                        }
+                    }
+                }
+            }
+        }
         .task {
             await model.bootstrap()
+            StudyReminder.sync(enabled: model.dailyReminder)
         }
         .alert("提示", isPresented: bannerPresented) {
             Button("好", role: .cancel) { model.banner = nil }

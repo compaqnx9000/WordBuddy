@@ -1,6 +1,10 @@
+import AVFoundation
+import AVKit
+import LocalAuthentication
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import UserNotifications
 
 struct MeView: View {
     @EnvironmentObject private var model: AppModel
@@ -77,27 +81,25 @@ struct MeView: View {
             }
         }
         .alert("补签", isPresented: makeupPresented) {
-            Button("确认补签") {
+            Button("看广告补签") {
                 if let makeupDate {
-                    Task { await model.makeupCheckIn(date: makeupDate) }
+                    let date = makeupDate
+                    self.makeupDate = nil
+                    Task { await model.makeupAfterAd(date: date) }
                 }
-                makeupDate = nil
             }
             Button("取消", role: .cancel) { makeupDate = nil }
         } message: {
-            Text("iOS 版不看广告，直接补签 \(makeupDate.map { ShanghaiDate.dayValue(of: $0) } ?? 0) 日。")
+            Text("看完激励视频后补签 \(makeupDate.map { ShanghaiDate.dayValue(of: $0) } ?? 0) 日。")
         }
         .sheet(isPresented: $showHelp) {
             infoSheet(
                 title: "帮助与反馈",
-                body: "查词、生词本、短视频、播客和积分功能可在底部五个 Tab 使用。\n\n反馈请联系客服微信或邮箱（与 Android 版相同渠道）。iOS 版暂不接入穿山甲广告。"
+                body: "查词、生词本、短视频、播客和积分功能可在底部五个 Tab 使用。\n\n反馈请联系客服微信或邮箱（与 Android 版相同渠道）。开屏、短视频 Draw 和激励视频使用 iOS 穿山甲广告位。"
             )
         }
-        .sheet(isPresented: $showAbout) {
-            infoSheet(
-                title: "关于词搭子",
-                body: "词搭子 \(appVersion)\n英文查词、生词本、短视频、播客与积分兑礼。\n\niOS 版不接入穿山甲广告；微信/支付宝支付即将支持，积分充值可先走模拟支付。"
-            )
+        .fullScreenCover(isPresented: $showAbout) {
+            AboutWordBuddyView()
         }
         .overlay {
             if showNetworkRegion {
@@ -387,14 +389,19 @@ struct MeView: View {
         .disabled(slot.claimed || slot.isFuture)
     }
 
+    private var rewardVideoSubtitle: String {
+        guard loggedIn else { return "登录后每日可领" }
+        return "剩余 \(model.rewardVideo.remaining)/\(model.rewardVideo.dailyLimit) · +\(model.rewardVideo.pointsPerWatch)"
+    }
+
     private var rewardsMenu: some View {
         menuCard {
             menuRow("creditcard", Theme.pink, "充值积分", "测试价 ¥0.10") {
                 guardRequireLogin { path.append(MeRoute.buyPoints) }
             }
             menuDivider()
-            menuRow("play.circle", Theme.gold, "看视频领积分", "即将支持") {
-                model.banner = "iOS 版暂不接入激励视频广告"
+            menuRow("play.circle", Theme.gold, "看视频领积分", rewardVideoSubtitle) {
+                Task { await model.watchRewardVideo() }
             }
             menuDivider()
             menuRow("gift", Theme.gold, "积分兑礼", "可用 \(model.checkIn.totalPoints) 分") {
@@ -858,43 +865,100 @@ struct NetworkRegionDialog: View {
 
 struct ShortFavoritesView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
     @State private var items: [ShortClip] = []
+    @State private var selected: Set<String> = []
+    @State private var removing: Set<String> = []
     @State private var loading = true
+    @State private var playing: ShortClip?
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 12),
+        GridItem(.flexible(), spacing: 12)
+    ]
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
+            header
             if loading {
+                Spacer()
                 ProgressView().tint(Theme.cyan)
+                Spacer()
             } else if items.isEmpty {
+                Spacer()
                 Text("还没有收藏的短视频")
+                    .font(.system(size: 14))
                     .foregroundStyle(Theme.onSurfaceVariant)
+                Spacer()
             } else {
-                List {
-                    ForEach(items) { clip in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(clip.title.isEmpty ? "英语短视频" : clip.title)
-                                .foregroundStyle(Theme.onSurface)
-                            Text(clip.author)
-                                .font(.caption)
-                                .foregroundStyle(Theme.onSurfaceVariant)
-                        }
-                        .listRowBackground(Theme.surface)
-                        .swipeActions {
-                            Button("取消收藏", role: .destructive) {
-                                Task { await unfavorite(clip) }
-                            }
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 12) {
+                        ForEach(items) { clip in
+                            FavoriteVideoCard(
+                                clip: clip,
+                                selected: selected.contains(clip.id),
+                                busy: removing.contains(clip.id),
+                                onToggleSelect: { toggleSelect(clip.id) },
+                                onUnfavorite: { Task { await unfavorite(ids: [clip.id]) } },
+                                onOpen: { playing = clip }
+                            )
                         }
                     }
+                    .padding(16)
                 }
-                .scrollContentBackground(.hidden)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .stellarScreenBackground()
-        .navigationTitle("短视频收藏")
-        .navigationBarTitleDisplayMode(.inline)
-        .themeNavigationBar()
+        .toolbar(.hidden, for: .navigationBar)
+        .fullScreenCover(item: $playing) { clip in
+            FavoriteClipPlayer(clip: clip) { playing = nil }
+        }
         .task { await load() }
+    }
+
+    private var header: some View {
+        HStack(spacing: 4) {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.onSurface)
+                    .frame(width: 40, height: 40)
+            }
+            .buttonStyle(.plain)
+            Text("短视频收藏")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(Theme.onSurface)
+            Spacer()
+            if !items.isEmpty {
+                let allSelected = selected.count == items.count
+                Button(allSelected ? "取消全选" : "全选") {
+                    selected = allSelected ? [] : Set(items.map(\.id))
+                }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.cyan)
+                .disabled(!removing.isEmpty)
+                if !selected.isEmpty {
+                    Button(removing.isEmpty ? "全部取消" : "取消中") {
+                        Task { await unfavorite(ids: Array(selected)) }
+                    }
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.pink)
+                    .disabled(!removing.isEmpty)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+    }
+
+    private func toggleSelect(_ id: String) {
+        guard removing.isEmpty else { return }
+        if selected.contains(id) {
+            selected.remove(id)
+        } else {
+            selected.insert(id)
+        }
     }
 
     private func load() async {
@@ -903,14 +967,209 @@ struct ShortFavoritesView: View {
             loading = false
             return
         }
-        items = (try? await model.api.fetchShortFavorites(token: token)) ?? []
+        var all: [ShortClip] = []
+        var page = 1
+        while page <= 20 {
+            let batch = (try? await model.api.fetchShortFavorites(token: token, page: page, pageSize: 60)) ?? []
+            all.append(contentsOf: batch)
+            if batch.count < 60 { break }
+            page += 1
+        }
+        items = all
+        selected = selected.intersection(Set(all.map(\.id)))
         loading = false
     }
 
-    private func unfavorite(_ clip: ShortClip) async {
-        guard let token = model.session?.token else { return }
-        _ = try? await model.api.setShortFavorite(token: token, videoId: clip.id, favorited: false)
-        items.removeAll { $0.id == clip.id }
+    private func unfavorite(ids: [String]) async {
+        guard let token = model.session?.token else {
+            model.showLogin = true
+            return
+        }
+        let targets = Array(Set(ids.filter { !$0.isEmpty }))
+        guard !targets.isEmpty, removing.isEmpty else { return }
+        removing = Set(targets)
+        let api = model.api
+        var removed: [String] = []
+        var failed = 0
+        for chunk in stride(from: 0, to: targets.count, by: 4) {
+            let slice = Array(targets[chunk..<min(chunk + 4, targets.count)])
+            await withTaskGroup(of: (String, Bool).self) { group in
+                for id in slice {
+                    group.addTask {
+                        let favorited = try? await api.setShortFavorite(token: token, videoId: id, favorited: false)
+                        return (id, favorited == false)
+                    }
+                }
+                for await (id, ok) in group {
+                    if ok { removed.append(id) } else { failed += 1 }
+                }
+            }
+        }
+        let gone = Set(removed)
+        items.removeAll { gone.contains($0.id) }
+        selected.subtract(gone)
+        removing = []
+        if failed > 0 {
+            model.banner = "有 \(failed) 个取消失败"
+        }
+    }
+}
+
+private struct FavoriteVideoCard: View {
+    var clip: ShortClip
+    var selected: Bool
+    var busy: Bool
+    var onToggleSelect: () -> Void
+    var onUnfavorite: () -> Void
+    var onOpen: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack {
+                FavoriteThumb(clip: clip)
+                VStack {
+                    HStack {
+                        overlayIcon(selected ? "checkmark.circle.fill" : "circle", tint: selected ? Theme.cyan : .white) {
+                            onToggleSelect()
+                        }
+                        Spacer()
+                        overlayIcon("bookmark.slash", tint: .white) {
+                            onUnfavorite()
+                        }
+                    }
+                    Spacer()
+                }
+                .padding(8)
+                if busy {
+                    ProgressView().tint(.white)
+                }
+            }
+            .aspectRatio(9 / 16, contentMode: .fit)
+            .background(Color.black)
+            .clipped()
+            VStack(alignment: .leading, spacing: 2) {
+                Text(clip.title.isEmpty ? "短视频" : clip.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.onSurface)
+                    .lineLimit(1)
+                Text("@\(clip.author.isEmpty ? "词搭子" : clip.author)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.onSurfaceVariant)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+        }
+        .background(Theme.glass, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Theme.glassBorder, lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture(perform: onOpen)
+    }
+
+    private func overlayIcon(_ name: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 32, height: 32)
+                .background(Color.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+    }
+}
+
+private struct FavoriteThumb: View {
+    var clip: ShortClip
+    @State private var frame: UIImage?
+
+    var body: some View {
+        ZStack {
+            if let cover = clip.coverUrl, let url = URL(string: cover) {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        frameOrPlaceholder
+                    }
+                }
+            } else {
+                frameOrPlaceholder
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .task(id: clip.id) { await loadFrame() }
+    }
+
+    @ViewBuilder
+    private var frameOrPlaceholder: some View {
+        if let frame {
+            Image(uiImage: frame)
+                .resizable()
+                .scaledToFill()
+        } else {
+            ZStack {
+                LinearGradient(colors: [Color(white: 0.12), Color(white: 0.04)], startPoint: .top, endPoint: .bottom)
+                Image(systemName: "play.circle")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+        }
+    }
+
+    private func loadFrame() async {
+        guard frame == nil, let url = URL(string: clip.videoUrl) else { return }
+        let image = await Task.detached(priority: .utility) { () -> UIImage? in
+            let asset = AVURLAsset(url: url)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 480, height: 854)
+            let time = CMTime(seconds: 0.2, preferredTimescale: 600)
+            guard let cg = try? generator.copyCGImage(at: time, actualTime: nil) else { return nil }
+            return UIImage(cgImage: cg)
+        }.value
+        if let image { frame = image }
+    }
+}
+
+private struct FavoriteClipPlayer: View {
+    var clip: ShortClip
+    var onClose: () -> Void
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.black.ignoresSafeArea()
+            if let player {
+                VideoPlayer(player: player)
+                    .ignoresSafeArea()
+            }
+            Button(action: onClose) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(Color.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 12)
+            .padding(.leading, 12)
+        }
+        .onAppear {
+            guard player == nil, let url = URL(string: clip.videoUrl) else { return }
+            let next = AVPlayer(url: url)
+            player = next
+            next.play()
+        }
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
     }
 }
 
@@ -962,97 +1221,47 @@ private struct ThemeSwatchView: View {
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
     @State private var showPassword = false
     @State private var oldPassword = ""
     @State private var newPassword = ""
+    @State private var cacheLabel = "计算中…"
+    @State private var cacheBusy = false
+    @State private var showClearCache = false
+    @State private var showLogout = false
+    @State private var deletionPending = false
+
+    private var userNotebooks: [Notebook] {
+        model.notebooks.filter { !$0.isSystem }
+    }
 
     var body: some View {
-        Form {
-            Section {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
                 Text("配置你的沉浸式学习体验。")
+                    .font(.system(size: 16))
                     .foregroundStyle(Theme.onSurfaceVariant.opacity(0.85))
-            }
-            Section {
-                HStack(spacing: 10) {
-                    Image(systemName: "paintpalette.fill")
-                        .foregroundStyle(Theme.pink)
-                    Text("外观主题")
-                        .font(.headline)
-                        .foregroundStyle(Theme.onSurface)
+                    .padding(.top, 8)
+                    .padding(.bottom, 8)
+
+                aestheticsCard
+                preferencesCard
+                storageCard
+                if model.session != nil {
+                    accountCard
+                    accountActions
                 }
-                HStack(spacing: 0) {
-                    Text("当前主题：")
-                        .foregroundStyle(Theme.onSurfaceVariant)
-                    Text(model.accentStyle.label)
-                        .fontWeight(.bold)
-                        .foregroundStyle(model.accentStyle.swatch)
-                }
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 4), spacing: 14) {
-                    ForEach(AccentStyle.allCases) { style in
-                        Button {
-                            model.setAccentStyle(style)
-                        } label: {
-                            ThemeSwatchView(style: style, selected: style == model.accentStyle)
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(style.label)
-                    }
-                }
-                .padding(.vertical, 4)
             }
-            Section("发音") {
-                Picker("口音", selection: Binding(
-                    get: { model.accent },
-                    set: { model.setAccent($0) }
-                )) {
-                    ForEach(Accent.allCases) { accent in
-                        Text(accent.label).tag(accent)
-                    }
-                }
-                Toggle("翻页自动朗读", isOn: Binding(
-                    get: { model.speakOnPageChange },
-                    set: { model.setSpeakOnPageChange($0) }
-                ))
-            }
-            Section("生词本") {
-                Toggle("默认隐藏释义", isOn: Binding(
-                    get: { model.hideDefinitions },
-                    set: { model.setHideDefinitions($0) }
-                ))
-            }
-            Section("AI 配图") {
-                Picker("生图服务", selection: Binding(
-                    get: { model.imageProvider },
-                    set: { model.setImageProvider($0) }
-                )) {
-                    ForEach(ImageProvider.allCases) { provider in
-                        Text(provider.label).tag(provider)
-                    }
-                }
-                Text("每次生成约消耗 \(model.aiImagePointsCost) 积分。")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.onSurfaceVariant)
-            }
-            Section("账号") {
-                Button("修改密码") { showPassword = true }
-                NavigationLink("积分提现") { WithdrawView() }
-            }
-            Section("关于") {
-                LabeledContent("词搭子", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
-                Text("英文查词、生词本、短视频和播客。iOS 版不接入穿山甲广告。")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.onSurfaceVariant)
-            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 28)
         }
-        .scrollContentBackground(.hidden)
-        .listRowBackground(Theme.glass)
         .stellarScreenBackground()
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
         .themeNavigationBar()
         .tint(Theme.cyan)
         .id(model.accentStyle)
+        .task { await refreshSideInfo() }
         .alert("修改密码", isPresented: $showPassword) {
             SecureField("当前密码", text: $oldPassword)
             SecureField("新密码", text: $newPassword)
@@ -1069,6 +1278,364 @@ struct SettingsView: View {
             }
         } message: {
             Text("新密码需要 6 到 32 位")
+        }
+        .overlay {
+            if showClearCache {
+                LogoutConfirmDialog(
+                    title: "清除本地缓存",
+                    message: "将清除短视频与播客的本地媒体缓存（约 \(cacheLabel)）。下次播放会重新从网络加载。不影响账号与词库数据。",
+                    confirmTitle: cacheBusy ? "清除中…" : "清除",
+                    onCancel: { if !cacheBusy { showClearCache = false } },
+                    onConfirm: {
+                        guard !cacheBusy else { return }
+                        Task { await clearCache() }
+                    }
+                )
+            }
+            if showLogout {
+                LogoutConfirmDialog(
+                    onCancel: { showLogout = false },
+                    onConfirm: {
+                        showLogout = false
+                        model.logout()
+                        dismiss()
+                    }
+                )
+            }
+        }
+    }
+
+    private var aestheticsCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            sectionTitle("paintpalette.fill", Theme.pink, "外观主题")
+            HStack(spacing: 8) {
+                Text("当前主题：")
+                    .foregroundStyle(Theme.onSurfaceVariant)
+                Text(model.accentStyle.label)
+                    .fontWeight(.bold)
+                    .foregroundStyle(model.accentStyle.swatch)
+            }
+            .font(.system(size: 15))
+            ChipFlow(spacing: 14) {
+                ForEach(AccentStyle.allCases) { style in
+                    Button {
+                        model.setAccentStyle(style)
+                    } label: {
+                        ThemeSwatchView(style: style, selected: style == model.accentStyle)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(style.label)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassPanel()
+    }
+
+    private var preferencesCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionTitle("slider.horizontal.3", Theme.cyan, "偏好设置")
+                .padding(.bottom, 18)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 18))
+                        .foregroundStyle(Theme.onSurfaceVariant.opacity(0.65))
+                        .frame(width: 22)
+                    Text("文生图接口")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.onSurface)
+                }
+                ChipFlow(spacing: 8) {
+                    ForEach(ImageProvider.allCases) { provider in
+                        choiceChip(provider.label, selected: provider == model.imageProvider) {
+                            model.setImageProvider(provider)
+                        }
+                    }
+                }
+                .padding(.leading, 34)
+            }
+            preferenceDivider()
+            preferenceToggle(
+                icon: "speaker.wave.2",
+                title: "自动朗读",
+                subtitle: "翻到生词时自动播放发音",
+                isOn: Binding(get: { model.speakOnPageChange }, set: { model.setSpeakOnPageChange($0) })
+            )
+            preferenceDivider()
+            preferenceToggle(
+                icon: "bell.fill",
+                title: "每日提醒",
+                subtitle: "提醒你坚持背单词",
+                isOn: Binding(get: { model.dailyReminder }, set: { model.setDailyReminder($0) })
+            )
+            preferenceDivider()
+            preferenceToggle(
+                icon: "headphones",
+                title: "息屏后仍可后台播放",
+                subtitle: "关闭后锁屏即暂停播客/电台，默认关闭",
+                isOn: Binding(get: { model.podcastPlayWhenScreenOff }, set: { model.setPodcastPlayWhenScreenOff($0) })
+            )
+            preferenceDivider()
+            preferenceToggle(
+                icon: "eye",
+                title: "短视频默认显示文案",
+                subtitle: "关闭后播放时默认藏文案，仍可单击点开",
+                isOn: Binding(get: { model.shortsMetaVisibleDefault }, set: { model.setShortsMetaVisibleDefault($0) })
+            )
+            preferenceDivider()
+            preferenceToggle(
+                icon: "sparkles",
+                title: "AI 自动生成配图",
+                subtitle: "收藏生词时自动生成助记图",
+                isOn: Binding(get: { model.aiImageAutoGen }, set: { model.setAiImageAutoGen($0) })
+            )
+            preferenceDivider()
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 12) {
+                    Image(systemName: "book")
+                        .font(.system(size: 18))
+                        .foregroundStyle(Theme.onSurfaceVariant.opacity(0.65))
+                        .frame(width: 22)
+                    Text("默认收藏生词本")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.onSurface)
+                }
+                Text("首页查词点星星时，词条会保存到所选生词本")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.onSurfaceVariant)
+                    .padding(.leading, 34)
+                if userNotebooks.isEmpty {
+                    Text(model.session == nil ? "登录后可选择生词本" : "还没有可用的生词本")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.onSurfaceVariant.opacity(0.7))
+                        .padding(.leading, 34)
+                        .padding(.top, 8)
+                } else {
+                    ChipFlow(spacing: 8) {
+                        ForEach(userNotebooks) { notebook in
+                            choiceChip(notebook.name, selected: notebook.id == model.defaultNotebookId) {
+                                model.setDefaultNotebookId(notebook.id)
+                            }
+                        }
+                    }
+                    .padding(.leading, 34)
+                    .padding(.top, 8)
+                }
+            }
+            .padding(.top, 2)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassPanel()
+    }
+
+    private var storageCard: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            sectionTitle("externaldrive.fill", Theme.cyan, "存储与缓存")
+            Button {
+                showClearCache = true
+            } label: {
+                preferenceAction(
+                    icon: "trash",
+                    title: "清除媒体缓存",
+                    subtitle: cacheBusy ? "正在清除…" : "短视频 / 播客本地缓存 · 当前 \(cacheLabel)",
+                    destructive: false
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(cacheBusy)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassPanel()
+    }
+
+    private var accountCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionTitle("shield.fill", Theme.cyan, "账号与安全")
+                .padding(.bottom, 18)
+            Button {
+                showPassword = true
+            } label: {
+                preferenceAction(
+                    icon: "lock.fill",
+                    title: "修改密码",
+                    subtitle: "用当前密码设置新密码",
+                    destructive: false
+                )
+            }
+            .buttonStyle(.plain)
+            preferenceDivider()
+            preferenceToggle(
+                icon: "touchid",
+                title: "指纹解锁",
+                subtitle: "下次打开应用时验证指纹；密码/验证码登录后不会再要求",
+                isOn: Binding(
+                    get: { model.biometricLogin },
+                    set: { enabled in Task { await setBiometric(enabled) } }
+                )
+            )
+            preferenceDivider()
+            NavigationLink {
+                AccountDeletionView()
+            } label: {
+                preferenceAction(
+                    icon: "person.slash",
+                    title: "注销账号",
+                    subtitle: deletionPending ? "注销冷静期中，可随时撤销" : "阅读须知并验证后进入7天冷静期",
+                    destructive: true
+                )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassPanel()
+    }
+
+    private var accountActions: some View {
+        VStack(spacing: 0) {
+            NavigationLink {
+                SwitchAccountView()
+            } label: {
+                Text("切换账号")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Theme.onSurface)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+            }
+            .buttonStyle(.plain)
+            Rectangle()
+                .fill(Theme.outline.opacity(0.45))
+                .frame(height: 0.5)
+            Button {
+                showLogout = true
+            } label: {
+                Text("退出登录")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Theme.pink)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+            }
+            .buttonStyle(.plain)
+        }
+        .glassPanel()
+    }
+
+    private func sectionTitle(_ icon: String, _ color: Color, _ title: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 20))
+                .foregroundStyle(color)
+            Text(title)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Theme.onSurface)
+        }
+    }
+
+    private func preferenceDivider() -> some View {
+        Rectangle()
+            .fill(Theme.outline.opacity(0.45))
+            .frame(height: 0.5)
+            .padding(.vertical, 12)
+    }
+
+    private func preferenceToggle(icon: String, title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundStyle(Theme.onSurfaceVariant.opacity(0.65))
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.onSurface)
+                Text(subtitle)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .tint(Theme.cyan)
+                .fixedSize()
+        }
+    }
+
+    private func preferenceAction(icon: String, title: String, subtitle: String, destructive: Bool) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundStyle(Theme.onSurfaceVariant.opacity(0.65))
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(destructive ? Theme.pink : Theme.onSurface)
+                Text(subtitle)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.onSurfaceVariant.opacity(0.55))
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+
+    private func choiceChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: selected ? .bold : .medium))
+                .foregroundStyle(selected ? Theme.onPrimary : Theme.onSurfaceVariant)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(selected ? Theme.cyanSoft : Theme.surfaceHigh, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func refreshSideInfo() async {
+        let label = await Task.detached(priority: .utility) {
+            MediaCache.formattedSize()
+        }.value
+        cacheLabel = label
+        guard let token = model.session?.token else { return }
+        deletionPending = (try? await model.api.fetchAccountDeletion(token: token))?.pending == true
+    }
+
+    private func clearCache() async {
+        cacheBusy = true
+        await Task.detached(priority: .userInitiated) {
+            MediaCache.clear()
+        }.value
+        cacheLabel = await Task.detached(priority: .utility) {
+            MediaCache.formattedSize()
+        }.value
+        cacheBusy = false
+        showClearCache = false
+        model.banner = "缓存已清除"
+    }
+
+    private func setBiometric(_ enabled: Bool) async {
+        if !enabled {
+            model.setBiometricLogin(false)
+            return
+        }
+        guard BiometricAuth.available else {
+            model.banner = BiometricAuth.unavailableMessage
+            return
+        }
+        let ok = await BiometricAuth.authenticate(reason: "验证后，下次打开应用将需要面容或指纹解锁")
+        if ok {
+            model.setBiometricLogin(true)
+            model.banner = "已开启指纹解锁"
         }
     }
 }
@@ -1121,5 +1688,168 @@ struct SwitchAccountView: View {
         .navigationTitle("切换账号")
         .navigationBarTitleDisplayMode(.inline)
         .themeNavigationBar()
+    }
+}
+
+private struct ChipFlow: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 0
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+        }
+        return CGSize(width: width, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+        }
+    }
+}
+
+enum MediaCache {
+    static func formattedSize() -> String {
+        format(usedBytes())
+    }
+
+    static func clear() {
+        URLCache.shared.removeAllCachedResponses()
+        guard let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        let children = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        for url in children {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private static func usedBytes() -> Int64 {
+        guard let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return 0 }
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return 0 }
+        var total: Int64 = 0
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            guard values?.isRegularFile == true else { continue }
+            total += Int64(values?.fileSize ?? 0)
+        }
+        return total
+    }
+
+    private static func format(_ bytes: Int64) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        let mb = Double(bytes) / 1_048_576
+        if mb >= 0.1 { return String(format: "%.1f MB", mb) }
+        return String(format: "%.0f KB", Double(bytes) / 1024)
+    }
+}
+
+enum StudyReminder {
+    private static let id = "wordbuddy.daily.reminder"
+
+    static func sync(enabled: Bool, ask: Bool = false) {
+        let center = UNUserNotificationCenter.current()
+        if !enabled {
+            center.removePendingNotificationRequests(withIdentifiers: [id])
+            return
+        }
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                schedule(center)
+            case .notDetermined where ask:
+                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                    if granted { schedule(center) }
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    private static func schedule(_ center: UNUserNotificationCenter) {
+        let content = UNMutableNotificationContent()
+        content.title = "词搭子"
+        content.body = "提醒你坚持背单词"
+        var date = DateComponents()
+        date.hour = 20
+        date.minute = 0
+        let request = UNNotificationRequest(
+            identifier: id,
+            content: content,
+            trigger: UNCalendarNotificationTrigger(dateMatching: date, repeats: true)
+        )
+        center.add(request)
+    }
+}
+
+enum BiometricAuth {
+    static var available: Bool {
+        LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+    }
+
+    static var unavailableMessage: String {
+        let context = LAContext()
+        var error: NSError?
+        if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
+            return "无法启动指纹验证"
+        }
+        return "这台设备没有可用的面容或指纹"
+    }
+
+    static func authenticate(reason: String) async -> Bool {
+        let context = LAContext()
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) else {
+            return false
+        }
+        return (try? await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)) ?? false
+    }
+}
+
+struct BiometricLockCover: View {
+    var onUnlock: () -> Void
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "touchid")
+                .font(.system(size: 48))
+                .foregroundStyle(Theme.cyanSoft)
+            Text("验证身份后继续使用")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(Theme.onSurface)
+            Button("验证", action: onUnlock)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(Theme.onPrimary)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 10)
+                .background(Theme.cyan, in: Capsule())
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .stellarScreenBackground()
+        .onAppear(perform: onUnlock)
     }
 }

@@ -54,9 +54,16 @@ struct LookupView: View {
             .navigationBarHidden(true)
             .onAppear { consumePendingLookup() }
             .onChange(of: model.pendingLookup) { _, _ in consumePendingLookup() }
-            .sheet(item: $editingEntry) { item in
-                MeaningEditSheet(entry: item)
-                    .environmentObject(model)
+            .overlay {
+                if let item = editingEntry {
+                    MeaningEditSheet(entry: item, onClose: { editingEntry = nil }) { updated in
+                        if var current = entry {
+                            current.definitions = updated.definitions
+                            entry = current
+                        }
+                        Task { await loadTips(item.text) }
+                    }
+                }
             }
             .overlay {
                 if let previewWord {
@@ -217,7 +224,7 @@ struct LookupView: View {
                     DefinitionLine(definition: definition)
                 }
                 if !notes.isEmpty {
-                    Divider().overlay(Theme.outline.opacity(0.35)).padding(.vertical, 12)
+                    ThemeHairline().padding(.vertical, 12)
                     Text("我的补充")
                         .font(.system(size: 11, weight: .bold))
                         .tracking(0.8)
@@ -230,7 +237,7 @@ struct LookupView: View {
                 }
             }
             if !tips.isEmpty {
-                Divider().overlay(Theme.gold.opacity(0.35)).padding(.vertical, 12)
+                ThemeHairline(color: Theme.gold).padding(.vertical, 12)
                 Text("谐音助记")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(0.8)
@@ -243,7 +250,7 @@ struct LookupView: View {
                         .padding(.bottom, 6)
                 }
             }
-            Divider().overlay(Theme.outline.opacity(0.35)).padding(.top, 14)
+            ThemeHairline().padding(.top, 14)
             HStack {
                 Spacer()
                 Button {
@@ -428,13 +435,11 @@ struct LookupView: View {
     }
 
     private func openMeaningEditor(_ entry: VocabEntry) {
-        let key = entry.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard let id = model.favoritedByText[key], id > 0 else {
-            errorMessage = "请先加入生词本再编辑释义"
-            return
-        }
         var copy = entry
-        copy.id = id
+        let key = entry.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let id = model.favoritedByText[key], id > 0 {
+            copy.id = id
+        }
         editingEntry = copy
     }
 

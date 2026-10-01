@@ -35,8 +35,11 @@ tmp_sync/
 tmp_ui/
 scripts/__pycache__/
 ios/build/
+ios/build-device/
 ios/DerivedData/
 ios/.tools/
+# GroMore SDK binaries (~500MB). Download Ads-CN 7.8.0.5 into ios/Vendor/Pangle/.
+ios/Vendor/Pangle/
 ios/**/xcuserdata/
 *.xcuserstate
 h5/node_modules/

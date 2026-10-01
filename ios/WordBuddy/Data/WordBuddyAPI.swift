@@ -433,12 +433,17 @@ actor WordBuddyAPI {
         return try await fetchMe(token: token)
     }
 
-    func fetchShortFavorites(token: String) async throws -> [ShortClip] {
-        let root = try await request(method: "GET", path: "/me/short-favorites?page=1&pageSize=40", auth: token, body: nil)
+    func fetchShortFavorites(token: String, page: Int = 1, pageSize: Int = 60) async throws -> [ShortClip] {
+        let root = try await request(
+            method: "GET",
+            path: "/me/short-favorites?page=\(page)&pageSize=\(pageSize)",
+            auth: token,
+            body: nil
+        )
         return JSONValue.array(root, key: "items").compactMap { item in
             guard let object = item as? [String: Any] else { return nil }
             let id = JSONValue.string(object, key: "id") ?? ""
-            let videoUrl = JSONValue.string(object, key: "videoUrl") ?? ""
+            let videoUrl = absoluteMediaURL(JSONValue.string(object, key: "videoUrl")) ?? ""
             guard !id.isEmpty, !videoUrl.isEmpty else { return nil }
             let keywords = (object["keywords"] as? [Any] ?? object["relatedWords"] as? [Any] ?? [])
                 .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -452,7 +457,7 @@ actor WordBuddyAPI {
                 relatedWords: keywords,
                 category: JSONValue.string(object, key: "category") ?? "speaking",
                 categoryName: JSONValue.string(object, key: "categoryName") ?? "口语",
-                coverUrl: JSONValue.string(object, key: "coverUrl"),
+                coverUrl: absoluteMediaURL(JSONValue.string(object, key: "coverUrl")),
                 favorited: JSONValue.bool(object, key: "favorited", default: true)
             )
         }
@@ -530,6 +535,17 @@ actor WordBuddyAPI {
         )
     }
 
+    func fetchRewardVideo(token: String) async throws -> RewardVideoOffer {
+        let root = try await request(method: "GET", path: "/me/reward-video", auth: token, body: nil)
+        return parseRewardVideo(JSONValue.childObject(root, key: "rewardVideo") ?? [:])
+    }
+
+    func claimRewardVideo(token: String) async throws -> (points: Int, offer: RewardVideoOffer) {
+        let root = try await request(method: "POST", path: "/me/reward-video/claim", auth: token, body: [:])
+        let offer = parseRewardVideo(JSONValue.childObject(root, key: "rewardVideo") ?? [:])
+        return (JSONValue.int(root, key: "pointsEarned"), offer)
+    }
+
     func makeupCheckIn(token: String, date: String) async throws -> CheckInOutcome {
         let root = try await request(
             method: "POST",
@@ -586,6 +602,19 @@ actor WordBuddyAPI {
     func cancelAccountDeletion(token: String) async throws -> AccountDeletionStatus {
         let root = try await request(method: "POST", path: "/me/deletion/cancel", auth: token, body: [:])
         return parseDeletion(root)
+    }
+
+    private func parseRewardVideo(_ object: [String: Any]) -> RewardVideoOffer {
+        let limit = max(1, JSONValue.int(object, key: "dailyLimit", default: 20))
+        let used = max(0, JSONValue.int(object, key: "usedToday"))
+        let remaining = max(0, JSONValue.int(object, key: "remaining", default: max(0, limit - used)))
+        return RewardVideoOffer(
+            pointsPerWatch: max(1, JSONValue.int(object, key: "pointsPerWatch", default: 5)),
+            dailyLimit: limit,
+            usedToday: used,
+            remaining: remaining,
+            totalPoints: max(0, JSONValue.int(object, key: "totalPoints"))
+        )
     }
 
     private func parseCheckIn(_ object: [String: Any]) -> CheckInState {

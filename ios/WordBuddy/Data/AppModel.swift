@@ -29,12 +29,21 @@ final class AppModel: ObservableObject {
     @Published var speakOnPageChange = true
     @Published var imageProvider: ImageProvider = .pollinations
     @Published var aiImagePointsCost = 5
+    @Published var dailyReminder = true
+    @Published var aiImageAutoGen = false
+    @Published var podcastPlayWhenScreenOff = false
+    @Published var shortsMetaVisibleDefault = true
+    @Published var biometricLogin = false
+    @Published var biometricUnlocked = false
+    @Published var defaultNotebookId: Int64 = 0
     @Published var mnemonicRevision = 0
     @Published var avatarImage: UIImage?
     @Published var avatarBusy = false
     /// Lowercased word text → id in the user's 生词本 (for catalog swipe favorite).
     @Published private(set) var favoritedByText: [String: Int64] = [:]
     @Published var checkIn = CheckInState()
+    @Published var rewardVideo = RewardVideoOffer()
+    @Published var rewardBusy = false
     @Published var accounts: [RememberedAccount] = []
     @Published var pendingLookup: String?
 
@@ -49,6 +58,12 @@ final class AppModel: ObservableObject {
         hideDefinitions = SettingsStore.hideDefinitions
         speakOnPageChange = SettingsStore.speakOnPageChange
         imageProvider = SettingsStore.imageProvider
+        dailyReminder = SettingsStore.dailyReminder
+        aiImageAutoGen = SettingsStore.aiImageAutoGen
+        podcastPlayWhenScreenOff = SettingsStore.podcastPlayWhenScreenOff
+        shortsMetaVisibleDefault = SettingsStore.shortsMetaVisibleDefault
+        biometricLogin = SettingsStore.biometricLogin
+        defaultNotebookId = SettingsStore.defaultNotebookId
         session = SessionStore.load()
         if let session {
             AccountStore.upsert(session)
@@ -59,6 +74,15 @@ final class AppModel: ObservableObject {
     var activeNotebook: Notebook? {
         guard let activeNotebookId else { return nil }
         return notebooks.first { $0.id == activeNotebookId }
+    }
+
+    var favoriteNotebookId: Int64? {
+        if defaultNotebookId > 0,
+           let notebook = notebooks.first(where: { $0.id == defaultNotebookId }),
+           !notebook.isSystem {
+            return notebook.id
+        }
+        return saveNotebookId
     }
 
     var saveNotebookId: Int64? {
@@ -95,6 +119,7 @@ final class AppModel: ObservableObject {
     func enter(_ session: UserSession) async {
         self.session = session
         SessionStore.save(session)
+        biometricUnlocked = true
         showLogin = false
         banner = nil
         AccountStore.upsert(session)
@@ -105,6 +130,7 @@ final class AppModel: ObservableObject {
 
     func logout() {
         session = nil
+        biometricUnlocked = false
         SessionStore.clear()
         notebooks = []
         activeNotebookId = nil
@@ -116,6 +142,7 @@ final class AppModel: ObservableObject {
         listWindowStart = 0
         pendingScrollWordId = nil
         checkIn = CheckInState()
+        rewardVideo = RewardVideoOffer()
         avatarImage = nil
         avatarBusy = false
         favoritedByText = [:]
@@ -146,6 +173,38 @@ final class AppModel: ObservableObject {
     func setImageProvider(_ provider: ImageProvider) {
         imageProvider = provider
         SettingsStore.imageProvider = provider
+    }
+
+    func setDailyReminder(_ value: Bool) {
+        dailyReminder = value
+        SettingsStore.dailyReminder = value
+        StudyReminder.sync(enabled: value, ask: value)
+    }
+
+    func setAiImageAutoGen(_ value: Bool) {
+        aiImageAutoGen = value
+        SettingsStore.aiImageAutoGen = value
+    }
+
+    func setPodcastPlayWhenScreenOff(_ value: Bool) {
+        podcastPlayWhenScreenOff = value
+        SettingsStore.podcastPlayWhenScreenOff = value
+    }
+
+    func setShortsMetaVisibleDefault(_ value: Bool) {
+        shortsMetaVisibleDefault = value
+        SettingsStore.shortsMetaVisibleDefault = value
+    }
+
+    func setBiometricLogin(_ value: Bool) {
+        biometricLogin = value
+        SettingsStore.biometricLogin = value
+        if value { biometricUnlocked = true }
+    }
+
+    func setDefaultNotebookId(_ value: Int64) {
+        defaultNotebookId = value
+        SettingsStore.defaultNotebookId = value
     }
 
     func applyPoints(_ points: Int) {
@@ -230,6 +289,9 @@ final class AppModel: ObservableObject {
             AccountStore.upsert(latest)
             accounts = AccountStore.list()
             checkIn = try await api.fetchCheckIn(token: latest.token)
+            if let offer = try? await api.fetchRewardVideo(token: latest.token) {
+                rewardVideo = offer
+            }
             if notebooks.isEmpty {
                 await loadNotebooks()
             }
@@ -390,6 +452,60 @@ final class AppModel: ObservableObject {
                 checkIn.streakDays = outcome.streakDays
                 banner = "签到成功，+\(outcome.pointsEarned) 积分"
             }
+        } catch {
+            if !noteSessionError(error) {
+                banner = error.localizedDescription
+            }
+        }
+    }
+
+    func makeupAfterAd(date: String) async {
+        guard !rewardBusy else { return }
+        rewardBusy = true
+        let result = await PangleAds.shared.showReward(userId: session.map { String($0.userId) })
+        switch result {
+        case .rewarded:
+            await makeupCheckIn(date: date)
+        case .skipped:
+            banner = "需看完广告才能补签"
+        case .failed(let message):
+            banner = message
+        }
+        rewardBusy = false
+    }
+
+    func watchRewardVideo() async {
+        guard session != nil else {
+            showLogin = true
+            return
+        }
+        if rewardVideo.remaining <= 0 {
+            banner = "今日奖励视频已达 \(rewardVideo.dailyLimit) 次"
+            return
+        }
+        guard !rewardBusy else { return }
+        rewardBusy = true
+        let result = await PangleAds.shared.showReward(userId: session.map { String($0.userId) })
+        switch result {
+        case .rewarded:
+            await claimRewardVideo()
+        case .skipped:
+            banner = "需看完广告才能领积分"
+        case .failed(let message):
+            banner = message
+        }
+        rewardBusy = false
+    }
+
+    private func claimRewardVideo() async {
+        guard let session else { return }
+        do {
+            let claim = try await api.claimRewardVideo(token: session.token)
+            rewardVideo = claim.offer
+            if claim.offer.totalPoints > 0 {
+                checkIn.totalPoints = claim.offer.totalPoints
+            }
+            banner = "获得 \(claim.points) 积分，今日剩余 \(claim.offer.remaining)/\(claim.offer.dailyLimit)"
         } catch {
             if !noteSessionError(error) {
                 banner = error.localizedDescription
@@ -618,10 +734,10 @@ final class AppModel: ObservableObject {
             do {
                 try await api.deleteWord(token: session!.token, id: existingId)
                 favoritedByText.removeValue(forKey: key)
-                if let notebookId = saveNotebookId, let index = notebooks.firstIndex(where: { $0.id == notebookId }) {
+                if let notebookId = favoriteNotebookId, let index = notebooks.firstIndex(where: { $0.id == notebookId }) {
                     notebooks[index].wordCount = max(0, notebooks[index].wordCount - 1)
                 }
-                if activeNotebookId == saveNotebookId {
+                if activeNotebookId == favoriteNotebookId {
                     words.removeAll { $0.id == existingId }
                     wordTotal = max(0, wordTotal - 1)
                 }
@@ -634,7 +750,7 @@ final class AppModel: ObservableObject {
                 return nil
             }
         }
-        guard let session, let notebookId = saveNotebookId else {
+        guard let session, let notebookId = favoriteNotebookId else {
             banner = "还没有可用的生词本"
             return nil
         }
@@ -648,6 +764,11 @@ final class AppModel: ObservableObject {
                 notebooks[index].wordCount += 1
             }
             banner = "已加入生词本"
+            if aiImageAutoGen {
+                let word = entry.text
+                let hint = entry.definitions.first?.label ?? ""
+                Task { _ = await generateMnemonicImage(word: word, meaningHint: hint) }
+            }
             return true
         } catch {
             if !noteSessionError(error) {
@@ -692,6 +813,19 @@ final class AppModel: ObservableObject {
         return created
     }
 
+    /// First launch stores 0, so no chip is highlighted. Pick 生词本, then any user notebook.
+    private func ensureDefaultNotebook() {
+        let userBooks = notebooks.filter { !$0.isSystem }
+        guard !userBooks.isEmpty else { return }
+        if defaultNotebookId > 0, userBooks.contains(where: { $0.id == defaultNotebookId }) {
+            return
+        }
+        let fallback = userBooks.first { $0.name == Notebook.defaultName }
+            ?? userBooks.first { $0.id == session?.vocabNotebookId }
+            ?? userBooks[0]
+        setDefaultNotebookId(fallback.id)
+    }
+
     func loadNotebooks() async {
         guard let session else { return }
         do {
@@ -706,6 +840,7 @@ final class AppModel: ObservableObject {
                 activeNotebookId = items.first { !$0.isSystem }?.id ?? items.first?.id
             }
             wordsError = nil
+            ensureDefaultNotebook()
             await loadWords()
             await refreshFavoritedIndex()
         } catch {

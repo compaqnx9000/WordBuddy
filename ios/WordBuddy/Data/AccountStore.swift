@@ -89,6 +89,36 @@ enum SettingsStore {
         get { AccentStyle(rawValue: defaults.string(forKey: accentStyleKey) ?? "") ?? .cyberNeon }
         set { defaults.set(newValue.rawValue, forKey: accentStyleKey) }
     }
+
+    static var dailyReminder: Bool {
+        get { defaults.object(forKey: "hotwords_daily_reminder") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "hotwords_daily_reminder") }
+    }
+
+    static var aiImageAutoGen: Bool {
+        get { defaults.object(forKey: "hotwords_ai_image_auto") as? Bool ?? false }
+        set { defaults.set(newValue, forKey: "hotwords_ai_image_auto") }
+    }
+
+    static var podcastPlayWhenScreenOff: Bool {
+        get { defaults.object(forKey: "hotwords_podcast_screen_off") as? Bool ?? false }
+        set { defaults.set(newValue, forKey: "hotwords_podcast_screen_off") }
+    }
+
+    static var shortsMetaVisibleDefault: Bool {
+        get { defaults.object(forKey: "hotwords_shorts_meta_default") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "hotwords_shorts_meta_default") }
+    }
+
+    static var biometricLogin: Bool {
+        get { defaults.object(forKey: "hotwords_biometric_login") as? Bool ?? false }
+        set { defaults.set(newValue, forKey: "hotwords_biometric_login") }
+    }
+
+    static var defaultNotebookId: Int64 {
+        get { Int64(defaults.integer(forKey: "hotwords_default_notebook_id")) }
+        set { defaults.set(Int(newValue), forKey: "hotwords_default_notebook_id") }
+    }
 }
 
 struct RememberedAccount: Identifiable, Equatable {

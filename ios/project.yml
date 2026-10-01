@@ -10,10 +10,10 @@ settings:
     SWIFT_VERSION: "5.0"
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
-    CODE_SIGN_STYLE: Manual
-    CODE_SIGN_IDENTITY: "-"
-    CODE_SIGNING_REQUIRED: NO
-    CODE_SIGNING_ALLOWED: NO
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "Apple Development"
+    CODE_SIGNING_REQUIRED: YES
+    CODE_SIGNING_ALLOWED: YES
     TARGETED_DEVICE_FAMILY: "1"
     SUPPORTS_MACCATALYST: NO
 targets:
@@ -24,6 +24,9 @@ targets:
       - path: WordBuddy
         excludes:
           - Info.plist
+          - Pangle-Bridging-Header.h
+      - path: Vendor/Pangle/CSJAdSDK.bundle
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hotgis.wordbuddy
@@ -34,10 +37,12 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         ENABLE_PREVIEWS: YES
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
-        OTHER_LDFLAGS: "$(inherited) -ObjC -lc++ -lz"
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGNING_REQUIRED: NO
-        CODE_SIGNING_ALLOWED: NO
+        OTHER_LDFLAGS: "$(inherited) -ObjC -lc++ -lz -lsqlite3 -lxml2 -lresolv"
+        SWIFT_OBJC_BRIDGING_HEADER: WordBuddy/Pangle-Bridging-Header.h
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGNING_REQUIRED: YES
+        CODE_SIGNING_ALLOWED: YES
         TARGETED_DEVICE_FAMILY: "1"
     dependencies:
       - framework: Vendor/WechatOpenSDK.xcframework
@@ -46,7 +51,31 @@ targets:
       - framework: Vendor/AlipaySDK.xcframework
         embed: false
         codeSign: false
+      - framework: Vendor/Pangle/BUAdSDK.xcframework
+        embed: false
+        codeSign: false
+      - framework: Vendor/Pangle/CSJMediation.xcframework
+        embed: false
+        codeSign: false
       - sdk: Security.framework
+      - sdk: AdSupport.framework
+      - sdk: AppTrackingTransparency.framework
+      - sdk: StoreKit.framework
+      - sdk: AVFoundation.framework
+      - sdk: CoreMedia.framework
+      - sdk: AudioToolbox.framework
+      - sdk: JavaScriptCore.framework
+      - sdk: Accelerate.framework
+      - sdk: CoreImage.framework
+      - sdk: DeviceCheck.framework
+      - sdk: CoreHaptics.framework
+      - sdk: CoreML.framework
+      - sdk: MediaPlayer.framework
+      - sdk: SpriteKit.framework
+      - sdk: MobileCoreServices.framework
+      - sdk: libsqlite3.tbd
+      - sdk: libxml2.tbd
+      - sdk: libresolv.tbd
       - sdk: SystemConfiguration.framework
       - sdk: CoreTelephony.framework
       - sdk: CoreMotion.framework
