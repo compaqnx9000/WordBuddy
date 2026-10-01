@@ -263,6 +263,8 @@ CREATE TABLE IF NOT EXISTS gifts (
     cover_emoji TEXT NOT NULL DEFAULT '🎁',
     cover_color TEXT NOT NULL DEFAULT '#1B6CA8',
     category TEXT NOT NULL DEFAULT 'recommend',
+    categories TEXT[] NOT NULL DEFAULT ARRAY['recommend']::text[],
+    images TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
     points_cost INTEGER NOT NULL DEFAULT 0,
     cash_fen INTEGER NOT NULL DEFAULT 0,
     original_price_fen INTEGER,

@@ -1,14 +1,158 @@
 import { pool, query } from './db.js'
 
-export const GIFT_CATEGORIES = [
-  { id: 'recommend', name: '推荐' },
-  { id: 'points_only', name: '0元起兑' },
-  { id: 'study', name: '学习好物' },
-  { id: 'vip', name: '会员专享' },
-  { id: 'physical', name: '实物礼品' },
+export const GIFT_CATEGORY_DEFS = [
+  { id: 'recommend', name: '推荐', sortOrder: 0 },
+  { id: 'points_only', name: '0元起兑', sortOrder: 1 },
+  { id: 'pet', name: '宠物', sortOrder: 2 },
+  { id: 'food', name: '方便食品', sortOrder: 3 },
+  { id: 'daily', name: '生活用品', sortOrder: 4 },
 ]
 
+/** @deprecated use getGiftMallCategories / GIFT_CATEGORY_DEFS */
+export const GIFT_CATEGORIES = GIFT_CATEGORY_DEFS.map(({ id, name }) => ({ id, name }))
+
+const MALL_TABS_KEY = 'gift_mall_tabs'
+const VALID_CATEGORY_IDS = new Set(GIFT_CATEGORY_DEFS.map((c) => c.id))
+
+export function normalizeGiftCategories(raw, fallback = ['recommend']) {
+  const list = []
+  const push = (v) => {
+    const id = String(v || '').trim()
+    if (!id || !VALID_CATEGORY_IDS.has(id) || list.includes(id)) return
+    list.push(id)
+  }
+  if (Array.isArray(raw)) {
+    raw.forEach(push)
+  } else if (typeof raw === 'string' && raw.trim()) {
+    // comma / space separated, or single id
+    raw.split(/[,，\s]+/).forEach(push)
+  }
+  if (!list.length) {
+    ;(Array.isArray(fallback) ? fallback : [fallback]).forEach(push)
+  }
+  if (!list.length) list.push('recommend')
+  return list
+}
+
+function categoriesFromRow(row) {
+  if (Array.isArray(row.categories) && row.categories.length) {
+    return normalizeGiftCategories(row.categories, row.category ? [row.category] : ['recommend'])
+  }
+  return normalizeGiftCategories(row.category || 'recommend')
+}
+
+function defaultMallTabs() {
+  return GIFT_CATEGORY_DEFS.map((c) => ({
+    id: c.id,
+    name: c.name,
+    visible: true,
+    sortOrder: c.sortOrder,
+  }))
+}
+
+export async function getGiftMallCategories({ visibleOnly = false } = {}) {
+  const row = (await query('SELECT value FROM app_settings WHERE key = $1', [MALL_TABS_KEY])).rows[0]
+  let saved = []
+  if (row?.value) {
+    try {
+      saved = JSON.parse(row.value)
+    } catch {
+      saved = []
+    }
+  }
+  const byId = new Map()
+  if (Array.isArray(saved)) {
+    for (const item of saved) {
+      const id = String(item?.id || '').trim()
+      if (!VALID_CATEGORY_IDS.has(id)) continue
+      byId.set(id, {
+        id,
+        name: String(item?.name || '').trim() || GIFT_CATEGORY_DEFS.find((c) => c.id === id)?.name || id,
+        visible: item?.visible !== false,
+        sortOrder: Number.isFinite(Number(item?.sortOrder))
+          ? Number(item.sortOrder)
+          : GIFT_CATEGORY_DEFS.find((c) => c.id === id)?.sortOrder ?? 0,
+      })
+    }
+  }
+  const items = GIFT_CATEGORY_DEFS.map((def) => {
+    const hit = byId.get(def.id)
+    return (
+      hit || {
+        id: def.id,
+        name: def.name,
+        visible: true,
+        sortOrder: def.sortOrder,
+      }
+    )
+  }).sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id))
+  return visibleOnly ? items.filter((c) => c.visible) : items
+}
+
+export async function setGiftMallCategories(input) {
+  const current = await getGiftMallCategories()
+  const incoming = Array.isArray(input) ? input : []
+  const byId = new Map(current.map((c) => [c.id, { ...c }]))
+  for (const item of incoming) {
+    const id = String(item?.id || '').trim()
+    if (!byId.has(id)) continue
+    const cur = byId.get(id)
+    if (item?.name != null) {
+      const name = String(item.name).trim()
+      if (name) cur.name = name.slice(0, 20)
+    }
+    if (item?.visible != null) cur.visible = Boolean(item.visible)
+    if (item?.sortOrder != null && Number.isFinite(Number(item.sortOrder))) {
+      cur.sortOrder = Number(item.sortOrder)
+    }
+  }
+  const items = [...byId.values()].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id))
+  if (!items.some((c) => c.visible)) {
+    return { ok: false, error: '至少保留一个可见栏目' }
+  }
+  await query(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [MALL_TABS_KEY, JSON.stringify(items)],
+  )
+  return { ok: true, items }
+}
+
+export async function ensureGiftMallTabsSetting() {
+  await query(
+    `INSERT INTO app_settings (key, value)
+     VALUES ($1, $2)
+     ON CONFLICT (key) DO NOTHING`,
+    [MALL_TABS_KEY, JSON.stringify(defaultMallTabs())],
+  )
+}
+
+export function normalizeGiftImages(raw) {
+  const list = []
+  const push = (v) => {
+    const url = String(v || '').trim()
+    if (!url || list.includes(url)) return
+    if (!(url.startsWith('/uploads/') || url.startsWith('http://') || url.startsWith('https://'))) return
+    list.push(url)
+  }
+  if (Array.isArray(raw)) {
+    raw.forEach(push)
+  } else if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) parsed.forEach(push)
+      else push(raw)
+    } catch {
+      raw.split(/[,，\s]+/).forEach(push)
+    }
+  }
+  return list.slice(0, 12)
+}
+
 export function mapGift(row) {
+  const categories = categoriesFromRow(row)
+  const images = normalizeGiftImages(row.images)
   const pointsCost = Math.max(0, Number(row.points_cost || 0))
   const cashFen = Math.max(0, Number(row.cash_fen || 0))
   const originalPriceFen = row.original_price_fen == null ? null : Math.max(0, Number(row.original_price_fen))
@@ -24,7 +168,10 @@ export function mapGift(row) {
     subtitle: row.subtitle || '',
     coverEmoji: row.cover_emoji || '🎁',
     coverColor: row.cover_color || '#1B6CA8',
-    category: row.category || 'recommend',
+    images,
+    coverImage: images[0] || null,
+    category: categories[0] || 'recommend',
+    categories,
     pointsCost,
     cashFen,
     cashYuan: (cashFen / 100).toFixed(2),
@@ -82,12 +229,14 @@ export function priceLabel(gift) {
 export async function listPublishedGifts({ category, q, page = 1, pageSize = 40 } = {}) {
   const params = []
   const where = ['published = TRUE']
-  if (category && category !== 'recommend') {
-    if (category === 'points_only') {
-      where.push('cash_fen = 0')
+  const cat = String(category || '').trim()
+  if (cat) {
+    params.push(cat)
+    // Tag match; keep points_only also matching pure-points gifts for older data.
+    if (cat === 'points_only') {
+      where.push(`(categories @> ARRAY[$${params.length}]::text[] OR cash_fen = 0)`)
     } else {
-      params.push(category)
-      where.push(`category = $${params.length}`)
+      where.push(`categories @> ARRAY[$${params.length}]::text[]`)
     }
   }
   if (q) {
@@ -257,7 +406,7 @@ export async function ensureGiftSeed() {
       subtitle: '坚持的证明',
       emoji: '🏅',
       color: '#C9A227',
-      category: 'study',
+      category: 'pet',
       points: 7,
       cash: 0,
       original: 990,
@@ -270,7 +419,7 @@ export async function ensureGiftSeed() {
       subtitle: '实体礼品 · 包邮',
       emoji: '🔖',
       color: '#2A9D8F',
-      category: 'physical',
+      category: 'daily',
       points: 50,
       cash: 0,
       original: 1990,
@@ -283,7 +432,7 @@ export async function ensureGiftSeed() {
       subtitle: '积分 + 现金',
       emoji: '📓',
       color: '#E76F51',
-      category: 'physical',
+      category: 'daily',
       points: 100,
       cash: 990,
       original: 2990,
@@ -296,7 +445,7 @@ export async function ensureGiftSeed() {
       subtitle: '虚拟权益',
       emoji: '⏰',
       color: '#457B9D',
-      category: 'vip',
+      category: 'food',
       points: 21,
       cash: 0,
       original: 1500,
@@ -348,7 +497,7 @@ export async function ensureGiftSeed() {
       subtitle: '可爱周边',
       emoji: '✨',
       color: '#9B5DE5',
-      category: 'study',
+      category: 'pet',
       points: 15,
       cash: 0,
       original: 800,
@@ -361,16 +510,17 @@ export async function ensureGiftSeed() {
     const s = seeds[i]
     await query(
       `INSERT INTO gifts
-        (title, subtitle, cover_emoji, cover_color, category, points_cost, cash_fen,
+        (title, subtitle, cover_emoji, cover_color, category, categories, points_cost, cash_fen,
          original_price_fen, points_offset_fen, stock, redeemed_count, sort_order,
          published, need_address, description)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,-1,$10,$11,TRUE,$12,$13)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,-1,$11,$12,TRUE,$13,$14)`,
       [
         s.title,
         s.subtitle,
         s.emoji,
         s.color,
         s.category,
+        normalizeGiftCategories([s.category, ...(s.cash === 0 ? ['points_only'] : [])]),
         s.points,
         s.cash,
         s.original,

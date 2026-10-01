@@ -23,8 +23,8 @@ import { getUserCheckIn, performUserCheckIn, performMakeupCheckIn } from './chec
 import { claimRewardVideo, rewardVideoStatus } from './rewardVideo.js'
 import { resolveIpLocation, extractDeviceInfo } from './device.js'
 import {
-  GIFT_CATEGORIES,
   getGift,
+  getGiftMallCategories,
   listPublishedGifts,
   mapOrder,
   redeemGift,
@@ -1197,8 +1197,16 @@ router.post('/me/checkin/makeup', authRequired, async (req, res) => {
   }
 })
 
-router.get('/gifts/categories', (_req, res) => {
-  res.json({ items: GIFT_CATEGORIES })
+router.get('/gifts/categories', async (_req, res) => {
+  try {
+    const items = await getGiftMallCategories({ visibleOnly: true })
+    res.json({
+      items: items.map(({ id, name }) => ({ id, name })),
+    })
+  } catch (error) {
+    console.error('[gifts/categories]', error)
+    res.status(500).json({ error: '栏目加载失败' })
+  }
 })
 
 router.get('/shorts/categories', (_req, res) => {

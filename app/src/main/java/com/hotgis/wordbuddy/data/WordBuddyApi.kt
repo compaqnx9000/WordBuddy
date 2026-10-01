@@ -808,13 +808,36 @@ class WordBuddyApi {
     }
 
     private fun parseGift(obj: JSONObject): GiftItem {
+        val categoriesArr = obj.optJSONArray("categories")
+        val categories = buildList {
+            if (categoriesArr != null) {
+                for (i in 0 until categoriesArr.length()) {
+                    val id = categoriesArr.optString(i).trim()
+                    if (id.isNotEmpty()) add(id)
+                }
+            }
+        }
+        val imagesArr = obj.optJSONArray("images")
+        val images = buildList {
+            if (imagesArr != null) {
+                for (i in 0 until imagesArr.length()) {
+                    val url = imagesArr.optString(i).trim()
+                    if (url.isNotEmpty()) add(url)
+                }
+            }
+        }
+        val primary = obj.optString("category").ifBlank { categories.firstOrNull() ?: "recommend" }
+        val coverImage = obj.optString("coverImage").trim().ifBlank { images.firstOrNull() }
         return GiftItem(
             id = obj.optLong("id"),
             title = obj.optString("title"),
             subtitle = obj.optString("subtitle"),
             coverEmoji = obj.optString("coverEmoji").ifBlank { "🎁" },
             coverColor = obj.optString("coverColor").ifBlank { "#1B6CA8" },
-            category = obj.optString("category").ifBlank { "recommend" },
+            images = images,
+            coverImage = coverImage,
+            category = primary,
+            categories = categories.ifEmpty { listOf(primary) },
             pointsCost = obj.optInt("pointsCost"),
             cashFen = obj.optInt("cashFen"),
             cashYuan = obj.optString("cashYuan").ifBlank { "0.00" },

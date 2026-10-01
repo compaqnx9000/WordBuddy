@@ -209,6 +209,105 @@ export async function ensureSchema() {
     )
   `)
   await query('CREATE INDEX IF NOT EXISTS gifts_published_sort ON gifts (published, sort_order ASC, id DESC)')
+  await query(`ALTER TABLE gifts ADD COLUMN IF NOT EXISTS categories TEXT[]`)
+  await query(`ALTER TABLE gifts ADD COLUMN IF NOT EXISTS images TEXT[]`)
+  await query(`
+    UPDATE gifts
+    SET images = ARRAY[]::text[]
+    WHERE images IS NULL
+  `)
+  await query(`
+    UPDATE gifts
+    SET categories = ARRAY[COALESCE(NULLIF(TRIM(category), ''), 'recommend')]
+    WHERE categories IS NULL OR cardinality(categories) = 0
+  `)
+  await query(`
+    UPDATE gifts
+    SET categories = (
+      SELECT ARRAY(
+        SELECT DISTINCT x FROM unnest(categories || ARRAY['points_only']) AS x WHERE x <> ''
+      )
+    )
+    WHERE cash_fen = 0 AND NOT ('points_only' = ANY(categories))
+  `)
+  await query(`
+    INSERT INTO app_settings (key, value)
+    VALUES (
+      'gift_mall_tabs',
+      '[{"id":"recommend","name":"推荐","visible":true,"sortOrder":0},{"id":"points_only","name":"0元起兑","visible":true,"sortOrder":1},{"id":"pet","name":"宠物","visible":true,"sortOrder":2},{"id":"food","name":"方便食品","visible":true,"sortOrder":3},{"id":"daily","name":"生活用品","visible":true,"sortOrder":4}]'
+    )
+    ON CONFLICT (key) DO NOTHING
+  `)
+  // Rename legacy mall tab study → pet (id + display name), and remap gift tags.
+  await query(`
+    UPDATE app_settings
+    SET value = replace(
+      replace(value, '"id":"study"', '"id":"pet"'),
+      '"name":"学习好物"',
+      '"name":"宠物"'
+    ),
+    updated_at = now()
+    WHERE key = 'gift_mall_tabs'
+      AND value LIKE '%"id":"study"%'
+  `)
+  await query(`
+    UPDATE gifts
+    SET category = 'pet'
+    WHERE category = 'study'
+  `)
+  await query(`
+    UPDATE gifts
+    SET categories = (
+      SELECT ARRAY(
+        SELECT DISTINCT CASE WHEN x = 'study' THEN 'pet' ELSE x END
+        FROM unnest(categories) AS x
+      )
+    )
+    WHERE 'study' = ANY(categories)
+  `)
+  // Rename vip → food, physical → daily.
+  await query(`
+    UPDATE app_settings
+    SET value = replace(
+      replace(
+        replace(
+          replace(value, '"id":"vip"', '"id":"food"'),
+          '"name":"会员专享"',
+          '"name":"方便食品"'
+        ),
+        '"id":"physical"',
+        '"id":"daily"'
+      ),
+      '"name":"实物礼品"',
+      '"name":"生活用品"'
+    ),
+    updated_at = now()
+    WHERE key = 'gift_mall_tabs'
+      AND (value LIKE '%"id":"vip"%' OR value LIKE '%"id":"physical"%')
+  `)
+  await query(`
+    UPDATE gifts
+    SET category = CASE
+      WHEN category = 'vip' THEN 'food'
+      WHEN category = 'physical' THEN 'daily'
+      ELSE category
+    END
+    WHERE category IN ('vip', 'physical')
+  `)
+  await query(`
+    UPDATE gifts
+    SET categories = (
+      SELECT ARRAY(
+        SELECT DISTINCT CASE
+          WHEN x = 'vip' THEN 'food'
+          WHEN x = 'physical' THEN 'daily'
+          ELSE x
+        END
+        FROM unnest(categories) AS x
+      )
+    )
+    WHERE 'vip' = ANY(categories) OR 'physical' = ANY(categories)
+  `)
   // stock: -1 = unlimited; never allow values below -1 (guards against bad admin input / race leftovers)
   await query(`UPDATE gifts SET stock = -1 WHERE stock < -1`)
   await query(`

@@ -1,6 +1,9 @@
 package com.hotgis.wordbuddy.ui.gifts
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +28,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -54,6 +59,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -70,7 +77,9 @@ import com.hotgis.wordbuddy.ui.lookup.Stellar
 import com.hotgis.wordbuddy.ui.lookup.stellarGlass
 import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private fun parseHexColor(hex: String, fallback: Color = Color(0xFF1B6CA8)): Color {
     val raw = hex.trim().removePrefix("#")
@@ -105,15 +114,18 @@ fun PointsMallScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    fun reload(cat: String) {
+    fun reload(cat: String = category) {
         scope.launch {
             loading = true
             error = null
             runCatching {
-                if (categories.size <= 1) {
-                    categories = api.listGiftCategories().ifEmpty { categories }
+                val tabs = api.listGiftCategories().ifEmpty {
+                    listOf(GiftCategory("recommend", "推荐"))
                 }
-                api.listGifts(cat)
+                categories = tabs
+                val selected = if (tabs.any { it.id == cat }) cat else tabs.first().id
+                category = selected
+                api.listGifts(selected)
             }.onSuccess {
                 gifts = it
             }.onFailure {
@@ -123,7 +135,7 @@ fun PointsMallScreen(
         }
     }
 
-    LaunchedEffect(Unit) { reload(category) }
+    LaunchedEffect(Unit) { reload() }
 
     Column(
         modifier
@@ -154,8 +166,11 @@ fun PointsMallScreen(
                         if (loggedIn) onOpenBuyPoints() else onLogin()
                     },
                     onPointsOnly = {
-                        category = "points_only"
-                        reload("points_only")
+                        val target = categories.firstOrNull { it.id == "points_only" }?.id
+                            ?: categories.firstOrNull()?.id
+                            ?: "points_only"
+                        category = target
+                        reload(target)
                     },
                 )
             }
@@ -349,6 +364,45 @@ private fun CategoryTabs(
 }
 
 @Composable
+private fun RemoteGiftImage(
+    url: String?,
+    fallbackEmoji: String,
+    fallbackColor: Color,
+    emojiSizeSp: androidx.compose.ui.unit.TextUnit,
+    modifier: Modifier = Modifier,
+) {
+    var bitmap by remember(url) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(url) {
+        if (url.isNullOrBlank()) {
+            bitmap = null
+            return@LaunchedEffect
+        }
+        bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                val bytes = WordBuddyApi().fetchAvatarBytes(url)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }.getOrNull()
+        }
+    }
+    Box(
+        modifier = modifier.background(fallbackColor),
+        contentAlignment = Alignment.Center,
+    ) {
+        val bmp = bitmap
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Text(fallbackEmoji, fontSize = emojiSizeSp)
+        }
+    }
+}
+
+@Composable
 private fun GiftCard(gift: GiftItem, onClick: () -> Unit) {
     Column(
         Modifier
@@ -357,15 +411,15 @@ private fun GiftCard(gift: GiftItem, onClick: () -> Unit) {
             .stellarGlass()
             .clickable(onClick = onClick),
     ) {
-        Box(
-            Modifier
+        RemoteGiftImage(
+            url = gift.coverImage ?: gift.bannerImages.firstOrNull(),
+            fallbackEmoji = gift.coverEmoji,
+            fallbackColor = parseHexColor(gift.coverColor),
+            emojiSizeSp = 44.ssp(),
+            modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(1f)
-                .background(parseHexColor(gift.coverColor)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(gift.coverEmoji, fontSize = 44.ssp())
-        }
+                .aspectRatio(1f),
+        )
         Column(Modifier.padding(10.sdp())) {
             Text(
                 text = gift.title,
@@ -482,14 +536,60 @@ fun GiftDetailScreen(
                         .weight(1f)
                         .verticalScroll(rememberScrollState()),
                 ) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1.1f)
-                            .background(parseHexColor(g.coverColor)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(g.coverEmoji, fontSize = 72.ssp())
+                    val bannerImages = g.bannerImages
+                    if (bannerImages.isNotEmpty()) {
+                        val pagerState = rememberPagerState(pageCount = { bannerImages.size })
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1.1f),
+                        ) {
+                            HorizontalPager(
+                                state = pagerState,
+                                modifier = Modifier.fillMaxSize(),
+                            ) { page ->
+                                RemoteGiftImage(
+                                    url = bannerImages[page],
+                                    fallbackEmoji = g.coverEmoji,
+                                    fallbackColor = parseHexColor(g.coverColor),
+                                    emojiSizeSp = 72.ssp(),
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                            if (bannerImages.size > 1) {
+                                Row(
+                                    Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .padding(bottom = 10.sdp()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.sdp()),
+                                ) {
+                                    repeat(bannerImages.size) { index ->
+                                        Box(
+                                            Modifier
+                                                .size(if (pagerState.currentPage == index) 8.sdp() else 6.sdp())
+                                                .clip(CircleShape)
+                                                .background(
+                                                    if (pagerState.currentPage == index) {
+                                                        Color.White
+                                                    } else {
+                                                        Color.White.copy(alpha = 0.45f)
+                                                    },
+                                                ),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        RemoteGiftImage(
+                            url = null,
+                            fallbackEmoji = g.coverEmoji,
+                            fallbackColor = parseHexColor(g.coverColor),
+                            emojiSizeSp = 72.ssp(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(1.1f),
+                        )
                     }
                     Box(
                         Modifier

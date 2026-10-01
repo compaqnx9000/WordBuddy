@@ -6,7 +6,10 @@ data class GiftItem(
     val subtitle: String = "",
     val coverEmoji: String = "🎁",
     val coverColor: String = "#1B6CA8",
+    val images: List<String> = emptyList(),
+    val coverImage: String? = null,
     val category: String = "recommend",
+    val categories: List<String> = emptyList(),
     val pointsCost: Int = 0,
     val cashFen: Int = 0,
     val cashYuan: String = "0.00",
@@ -26,6 +29,9 @@ data class GiftItem(
             redeemedCount >= 1000 -> "已兑${"%.1f".format(redeemedCount / 1000.0)}千"
             else -> "已兑$redeemedCount"
         }
+
+    val bannerImages: List<String>
+        get() = images.ifEmpty { listOfNotNull(coverImage?.takeIf { it.isNotBlank() }) }
 }
 
 data class GiftCategory(

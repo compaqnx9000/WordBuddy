@@ -22,6 +22,7 @@ if (!process.env.JWT_SECRET) {
 const app = express()
 fs.mkdirSync(path.resolve(root, '../uploads/avatars'), { recursive: true })
 fs.mkdirSync(path.resolve(root, '../uploads/videos'), { recursive: true })
+fs.mkdirSync(path.resolve(root, '../uploads/gifts'), { recursive: true })
 fs.mkdirSync(path.resolve(root, '../public/app'), { recursive: true })
 app.use(cors())
 app.use(express.json({ limit: '4mb' }))

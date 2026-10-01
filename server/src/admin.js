@@ -13,7 +13,16 @@ import {
 import { mapDeviceRow } from './device.js'
 import { todayShanghai } from './checkin.js'
 import { getRewardVideoPoints, setRewardVideoPoints, REWARD_VIDEO_DAILY_LIMIT } from './rewardVideo.js'
-import { GIFT_CATEGORIES, mapGift, mapOrder, normalizeGiftStock } from './gifts.js'
+import {
+  GIFT_CATEGORY_DEFS,
+  mapGift,
+  mapOrder,
+  normalizeGiftStock,
+  normalizeGiftCategories,
+  normalizeGiftImages,
+  getGiftMallCategories,
+  setGiftMallCategories,
+} from './gifts.js'
 import {
   SHORT_CATEGORIES,
   listAdminShorts,
@@ -258,6 +267,237 @@ adminRouter.get('/overview', adminRequired, async (_req, res) => {
       checkInUsers: checkInUsers.rows[0].n,
     },
     recentUsers: recentUsers.rows.map(mapUser),
+  })
+})
+
+function addCalendarMonths(year, month, delta) {
+  const total = year * 12 + (month - 1) + delta
+  const y = Math.floor(total / 12)
+  const m = (total % 12) + 1
+  return { year: y, month: m }
+}
+
+function pad2(n) {
+  return String(n).padStart(2, '0')
+}
+
+function resolveCockpitPeriod(grainKey, rawAt) {
+  const today = todayShanghai()
+  const [ty, tm, td] = today.split('-').map(Number)
+  const grain = ['day', 'month', 'year'].includes(grainKey) ? grainKey : 'day'
+  if (grain === 'day') {
+    const at = /^\d{4}-\d{2}-\d{2}$/.test(String(rawAt || '')) ? String(rawAt) : today
+    const [y, m, d] = at.split('-').map(Number)
+    const next = new Date(Date.UTC(y, m - 1, d + 1))
+    const end = `${next.getUTCFullYear()}-${pad2(next.getUTCMonth() + 1)}-${pad2(next.getUTCDate())}`
+    return {
+      grain,
+      at,
+      label: `${y}年${m}月${d}日`,
+      startLocal: `${at} 00:00:00`,
+      endLocal: `${end} 00:00:00`,
+      trunc: 'hour',
+      step: '1 hour',
+      fmt: 'HH24时',
+      bucketLabel: '按小时',
+    }
+  }
+  if (grain === 'month') {
+    const at = /^\d{4}-\d{2}$/.test(String(rawAt || '')) ? String(rawAt) : `${ty}-${pad2(tm)}`
+    const [y, m] = at.split('-').map(Number)
+    const next = addCalendarMonths(y, m, 1)
+    return {
+      grain,
+      at,
+      label: `${y}年${m}月`,
+      startLocal: `${y}-${pad2(m)}-01 00:00:00`,
+      endLocal: `${next.year}-${pad2(next.month)}-01 00:00:00`,
+      trunc: 'day',
+      step: '1 day',
+      fmt: 'DD日',
+      bucketLabel: '按天',
+    }
+  }
+  const year = /^\d{4}$/.test(String(rawAt || '')) ? Number(rawAt) : ty
+  return {
+    grain: 'year',
+    at: String(year),
+    label: `${year}年`,
+    startLocal: `${year}-01-01 00:00:00`,
+    endLocal: `${year + 1}-01-01 00:00:00`,
+    trunc: 'month',
+    step: '1 month',
+    fmt: 'MM月',
+    bucketLabel: '按月',
+  }
+}
+
+adminRouter.get('/cockpit', adminRequired, async (req, res) => {
+  const period = resolveCockpitPeriod(String(req.query.grain || ''), req.query.at)
+  const localTs = (expr) => `timezone('Asia/Shanghai', ${expr})`
+  const inWindow = (expr) =>
+    `${localTs(expr)} >= $1::timestamp AND ${localTs(expr)} < $2::timestamp`
+  const bucket = (expr) => `date_trunc('${period.trunc}', ${expr})`
+  const bounds = [period.startLocal, period.endLocal]
+  const series = await query(
+    `
+    WITH buckets AS (
+      SELECT generate_series($1::timestamp, $2::timestamp - interval '${period.step}', interval '${period.step}') AS bucket
+    ),
+    signups AS (
+      SELECT ${bucket(localTs('created_at'))} AS bucket, count(*)::int AS n
+      FROM users
+      WHERE ${inWindow('created_at')}
+      GROUP BY 1
+    ),
+    deletions AS (
+      SELECT ${bucket(localTs('completed_at'))} AS bucket, count(*)::int AS n
+      FROM account_deletion_logs
+      WHERE ${inWindow('completed_at')}
+      GROUP BY 1
+    ),
+    actives AS (
+      SELECT ${bucket(localTs('created_at'))} AS bucket,
+             count(DISTINCT user_id)::int AS n
+      FROM login_events
+      WHERE success = TRUE AND user_id IS NOT NULL
+        AND ${inWindow('created_at')}
+      GROUP BY 1
+    ),
+    watches AS (
+      SELECT ${bucket(localTs('created_at'))} AS bucket,
+             COALESCE(SUM(watch_ms), 0)::bigint AS ms
+      FROM short_video_watches
+      WHERE ${inWindow('created_at')}
+      GROUP BY 1
+    ),
+    checkins AS (
+      SELECT ${bucket('checkin_date::timestamp')} AS bucket,
+             count(*)::int AS n
+      FROM user_checkin_logs
+      WHERE checkin_date >= $1::date AND checkin_date < $2::date
+      GROUP BY 1
+    ),
+    orders AS (
+      SELECT ${bucket(localTs('created_at'))} AS bucket,
+             count(*)::int AS n,
+             COALESCE(SUM(points_spent), 0)::int AS points
+      FROM gift_orders
+      WHERE ${inWindow('created_at')}
+      GROUP BY 1
+    ),
+    logins AS (
+      SELECT ${bucket(localTs('created_at'))} AS bucket,
+             count(*) FILTER (WHERE success)::int AS ok,
+             count(*) FILTER (WHERE NOT success)::int AS fail
+      FROM login_events
+      WHERE ${inWindow('created_at')}
+      GROUP BY 1
+    )
+    SELECT to_char(b.bucket, '${period.fmt}') AS label,
+           COALESCE(s.n, 0)::int AS signups,
+           COALESCE(d.n, 0)::int AS deletions,
+           COALESCE(a.n, 0)::int AS active_users,
+           COALESCE(w.ms, 0)::bigint AS watch_ms,
+           COALESCE(c.n, 0)::int AS checkins,
+           COALESCE(o.n, 0)::int AS gift_orders,
+           COALESCE(o.points, 0)::int AS gift_points,
+           COALESCE(l.ok, 0)::int AS login_ok,
+           COALESCE(l.fail, 0)::int AS login_fail
+    FROM buckets b
+    LEFT JOIN signups s ON s.bucket = b.bucket
+    LEFT JOIN deletions d ON d.bucket = b.bucket
+    LEFT JOIN actives a ON a.bucket = b.bucket
+    LEFT JOIN watches w ON w.bucket = b.bucket
+    LEFT JOIN checkins c ON c.bucket = b.bucket
+    LEFT JOIN orders o ON o.bucket = b.bucket
+    LEFT JOIN logins l ON l.bucket = b.bucket
+    ORDER BY b.bucket
+    `,
+    bounds,
+  )
+  const [summary, platforms] = await Promise.all([
+    query(
+      `
+      SELECT
+        (SELECT count(*)::int FROM users) AS users,
+        (SELECT count(*)::int FROM users WHERE deletion_due_at IS NOT NULL) AS pending_deletions,
+        (SELECT count(*)::int FROM account_deletion_logs) AS deleted_total,
+        (SELECT count(DISTINCT user_id)::int FROM login_events
+           WHERE success = TRUE AND user_id IS NOT NULL
+             AND created_at >= (date_trunc('day', timezone('Asia/Shanghai', now())) AT TIME ZONE 'Asia/Shanghai')) AS dau,
+        (SELECT count(DISTINCT user_id)::int FROM login_events
+           WHERE success = TRUE AND user_id IS NOT NULL
+             AND created_at >= now() - interval '7 days') AS wau,
+        (SELECT count(DISTINCT user_id)::int FROM login_events
+           WHERE success = TRUE AND user_id IS NOT NULL
+             AND created_at >= now() - interval '30 days') AS mau,
+        (SELECT COALESCE(SUM(total_points), 0)::bigint FROM user_checkins) AS points_outstanding,
+        (SELECT COALESCE(SUM(watch_ms), 0)::bigint FROM short_video_watches) AS watch_ms_all,
+        (SELECT count(*)::int FROM withdrawals WHERE status = 'pending') AS withdrawals_pending,
+        (SELECT COALESCE(SUM(amount_fen), 0)::bigint FROM withdrawals WHERE status = 'pending') AS withdrawals_pending_fen,
+        (SELECT count(DISTINCT user_id)::int FROM login_events
+           WHERE success = TRUE AND user_id IS NOT NULL
+             AND ${inWindow('created_at')}) AS period_active,
+        (SELECT count(DISTINCT user_id)::int FROM short_video_watches
+           WHERE user_id IS NOT NULL
+             AND ${inWindow('created_at')}) AS watch_users_window,
+        (SELECT COALESCE(SUM(watch_ms), 0)::bigint FROM short_video_watches
+           WHERE ${inWindow('created_at')}) AS watch_ms_window
+      `,
+      bounds,
+    ),
+    query(
+      `
+      SELECT COALESCE(NULLIF(lower(device_platform), ''), 'unknown') AS platform,
+             count(DISTINCT user_id)::int AS users
+      FROM login_events
+      WHERE success = TRUE AND user_id IS NOT NULL
+        AND ${inWindow('created_at')}
+      GROUP BY 1
+      ORDER BY users DESC, platform
+      `,
+      bounds,
+    ),
+  ])
+  const row = summary.rows[0] || {}
+  res.json({
+    grain: period.grain,
+    at: period.at,
+    label: period.label,
+    bucketLabel: period.bucketLabel,
+    today: todayShanghai(),
+    points: series.rows.map((item) => ({
+      label: item.label,
+      signups: Number(item.signups || 0),
+      deletions: Number(item.deletions || 0),
+      activeUsers: Number(item.active_users || 0),
+      watchMs: Number(item.watch_ms || 0),
+      checkins: Number(item.checkins || 0),
+      giftOrders: Number(item.gift_orders || 0),
+      giftPoints: Number(item.gift_points || 0),
+      loginOk: Number(item.login_ok || 0),
+      loginFail: Number(item.login_fail || 0),
+    })),
+    summary: {
+      users: Number(row.users || 0),
+      pendingDeletions: Number(row.pending_deletions || 0),
+      deletedTotal: Number(row.deleted_total || 0),
+      dau: Number(row.dau || 0),
+      wau: Number(row.wau || 0),
+      mau: Number(row.mau || 0),
+      periodActive: Number(row.period_active || 0),
+      pointsOutstanding: Number(row.points_outstanding || 0),
+      watchMsAll: Number(row.watch_ms_all || 0),
+      withdrawalsPending: Number(row.withdrawals_pending || 0),
+      withdrawalsPendingFen: Number(row.withdrawals_pending_fen || 0),
+      watchUsersWindow: Number(row.watch_users_window || 0),
+      watchMsWindow: Number(row.watch_ms_window || 0),
+    },
+    platforms: platforms.rows.map((item) => ({
+      platform: item.platform,
+      users: Number(item.users || 0),
+    })),
   })
 })
 
@@ -940,6 +1180,21 @@ adminRouter.get('/checkins/logs', adminRequired, async (req, res) => {
   })
 })
 
+adminRouter.get('/gift-categories', adminRequired, async (_req, res) => {
+  const items = await getGiftMallCategories()
+  res.json({ items, defs: GIFT_CATEGORY_DEFS })
+})
+
+adminRouter.put('/gift-categories', adminRequired, async (req, res) => {
+  const saved = await setGiftMallCategories(req.body?.items)
+  if (!saved.ok) {
+    res.status(400).json({ error: saved.error || '保存失败' })
+    return
+  }
+  await audit(req, 'update_gift_categories', 'gift_category', null, { count: saved.items.length })
+  res.json({ items: saved.items })
+})
+
 adminRouter.get('/gifts', adminRequired, async (req, res) => {
   const { page, pageSize, offset } = pageParams(req)
   const q = String(req.query.q || '').trim()
@@ -964,7 +1219,8 @@ adminRouter.get('/gifts', adminRequired, async (req, res) => {
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   )
-  res.json({ items: result.rows.map(mapGift), total, page, pageSize, categories: GIFT_CATEGORIES })
+  const categories = await getGiftMallCategories()
+  res.json({ items: result.rows.map(mapGift), total, page, pageSize, categories })
 })
 
 adminRouter.post('/gifts', adminRequired, async (req, res) => {
@@ -975,19 +1231,26 @@ adminRouter.post('/gifts', adminRequired, async (req, res) => {
   }
   const pointsCost = Math.max(0, Number(req.body?.pointsCost) || 0)
   const cashFen = Math.max(0, Math.round(Number(req.body?.cashYuan || 0) * 100) || Number(req.body?.cashFen) || 0)
+  const categories = normalizeGiftCategories(
+    req.body?.categories != null ? req.body.categories : req.body?.category,
+  )
+  const category = categories[0]
+  const images = normalizeGiftImages(req.body?.images)
   const row = (
     await query(
       `INSERT INTO gifts
-        (title, subtitle, cover_emoji, cover_color, category, points_cost, cash_fen,
+        (title, subtitle, cover_emoji, cover_color, category, categories, images, points_cost, cash_fen,
          original_price_fen, points_offset_fen, stock, sort_order, published, need_address, description)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        RETURNING *`,
       [
         title,
         String(req.body?.subtitle || '').trim() || null,
         String(req.body?.coverEmoji || '🎁').trim() || '🎁',
         String(req.body?.coverColor || '#1B6CA8').trim() || '#1B6CA8',
-        String(req.body?.category || 'recommend').trim() || 'recommend',
+        category,
+        categories,
+        images,
         pointsCost,
         cashFen,
         req.body?.originalPriceYuan != null
@@ -1004,7 +1267,7 @@ adminRouter.post('/gifts', adminRequired, async (req, res) => {
       ],
     )
   ).rows[0]
-  await audit(req, 'create_gift', 'gift', row.id, { title })
+  await audit(req, 'create_gift', 'gift', row.id, { title, categories, images: images.length })
   res.json({ item: mapGift(row) })
 })
 
@@ -1022,19 +1285,33 @@ adminRouter.patch('/gifts/:id', adminRequired, async (req, res) => {
   if (req.body?.cashYuan != null) cashFen = Math.max(0, Math.round(Number(req.body.cashYuan) * 100))
   else if (req.body?.cashFen != null) cashFen = Math.max(0, Number(req.body.cashFen) || 0)
   const published = req.body?.published != null ? Boolean(req.body.published) : existing.published
+  const categories =
+    req.body?.categories != null || req.body?.category != null
+      ? normalizeGiftCategories(
+          req.body?.categories != null ? req.body.categories : req.body?.category,
+          existing.categories || [existing.category],
+        )
+      : normalizeGiftCategories(existing.categories || existing.category)
+  const category = categories[0]
+  const images =
+    req.body?.images != null
+      ? normalizeGiftImages(req.body.images)
+      : normalizeGiftImages(existing.images)
   const row = (
     await query(
       `UPDATE gifts SET
-         title=$1, subtitle=$2, cover_emoji=$3, cover_color=$4, category=$5,
-         points_cost=$6, cash_fen=$7, original_price_fen=$8, points_offset_fen=$9,
-         stock=$10, sort_order=$11, published=$12, need_address=$13, description=$14
-       WHERE id=$15 RETURNING *`,
+         title=$1, subtitle=$2, cover_emoji=$3, cover_color=$4, category=$5, categories=$6, images=$7,
+         points_cost=$8, cash_fen=$9, original_price_fen=$10, points_offset_fen=$11,
+         stock=$12, sort_order=$13, published=$14, need_address=$15, description=$16
+       WHERE id=$17 RETURNING *`,
       [
         title,
         req.body?.subtitle != null ? String(req.body.subtitle).trim() : existing.subtitle,
         req.body?.coverEmoji != null ? String(req.body.coverEmoji).trim() : existing.cover_emoji,
         req.body?.coverColor != null ? String(req.body.coverColor).trim() : existing.cover_color,
-        req.body?.category != null ? String(req.body.category).trim() : existing.category,
+        category,
+        categories,
+        images,
         pointsCost,
         cashFen,
         req.body?.originalPriceYuan != null
@@ -1056,9 +1333,41 @@ adminRouter.patch('/gifts/:id', adminRequired, async (req, res) => {
       ],
     )
   ).rows[0]
-  await audit(req, 'update_gift', 'gift', id, { title, published })
+  await audit(req, 'update_gift', 'gift', id, { title, published, categories, images: images.length })
   res.json({ item: mapGift(row) })
 })
+
+adminRouter.post(
+  '/gifts/upload',
+  adminRequired,
+  express.raw({ type: () => true, limit: '12mb' }),
+  async (req, res) => {
+    try {
+      const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from([])
+      if (!buf.length) {
+        res.status(400).json({ error: '空文件' })
+        return
+      }
+      if (buf.length > 12 * 1024 * 1024) {
+        res.status(400).json({ error: '图片过大（上限 12MB）' })
+        return
+      }
+      const rawName = String(req.query.filename || req.get('x-filename') || 'gift.jpg')
+      const lower = rawName.toLowerCase()
+      const ext = ['.jpg', '.jpeg', '.png', '.webp', '.gif'].find((e) => lower.endsWith(e)) || '.jpg'
+      const safeBase = rawName.replace(/[^\w.\u4e00-\u9fff-]+/g, '_').replace(/\.[^.]+$/, '').slice(0, 60) || 'gift'
+      const name = `${Date.now()}-${safeBase}${ext}`
+      const dest = path.join(giftsUploadRoot, name)
+      fs.writeFileSync(dest, buf)
+      const url = `/uploads/gifts/${name}`
+      await audit(req, 'upload_gift_image', 'gift', null, { url, bytes: buf.length })
+      res.json({ url, bytes: buf.length })
+    } catch (error) {
+      console.error('[admin/gifts/upload]', error)
+      res.status(500).json({ error: '上传失败' })
+    }
+  },
+)
 
 adminRouter.delete('/gifts/:id', adminRequired, async (req, res) => {
   const id = Number(req.params.id)
@@ -1129,6 +1438,8 @@ adminRouter.patch('/gift-orders/:id', adminRequired, async (req, res) => {
 })
 
 const shortsUploadRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../uploads/videos')
+const giftsUploadRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../uploads/gifts')
+fs.mkdirSync(giftsUploadRoot, { recursive: true })
 fs.mkdirSync(shortsUploadRoot, { recursive: true })
 
 function formatWatchMs(ms) {

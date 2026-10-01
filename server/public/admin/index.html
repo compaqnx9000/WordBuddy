@@ -169,6 +169,19 @@
     .modal td, .modal th { white-space: nowrap; }
     .modal td.wrap { white-space: normal; word-break: break-word; }
     pre { white-space: pre-wrap; word-break: break-all; color: var(--cyan-soft); font-size: 12px; }
+    .cockpit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .chart-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 14px 8px; }
+    .chart-card h3 { margin: 0 0 4px; font-size: 15px; color: var(--cyan-soft); }
+    .chart-card .note { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+    .chart-card svg { width: 100%; height: auto; display: block; }
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin: 4px 0 8px; }
+    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+    .plat-row { display: grid; grid-template-columns: 88px 1fr 48px; gap: 8px; align-items: center; margin: 8px 0; font-size: 13px; }
+    .plat-bar { height: 8px; border-radius: 99px; background: #081810; overflow: hidden; }
+    .plat-bar i { display: block; height: 100%; background: var(--cyan); border-radius: 99px; }
+    @media (max-width: 1100px) {
+      .cockpit-grid { grid-template-columns: 1fr; }
+    }
     @media (max-width: 800px) {
       #app { grid-template-columns: 1fr; }
       aside { flex-direction: row; flex-wrap: wrap; }
@@ -192,7 +205,8 @@
   <div id="app" class="hidden">
     <aside>
       <div class="brand">词搭子 Admin</div>
-      <button class="nav active" data-page="overview" onclick="go('overview')">总览</button>
+      <button class="nav active" data-page="cockpit" onclick="go('cockpit')">驾驶舱</button>
+      <button class="nav" data-page="overview" onclick="go('overview')">总览</button>
       <button class="nav" data-page="users" onclick="go('users')">用户</button>
       <button class="nav" data-page="logins" onclick="go('logins')">登录记录</button>
       <button class="nav" data-page="sms" onclick="go('sms')">短信记录</button>
@@ -208,7 +222,7 @@
     </aside>
     <main>
       <div class="top">
-        <h1 id="title">总览</h1>
+        <h1 id="title">驾驶舱</h1>
         <div id="hint" class="sub"></div>
       </div>
       <div id="content"></div>
@@ -219,19 +233,20 @@
 
 <script>
 const titles = {
+  cockpit: ['驾驶舱', '注册、注销、活跃、观看时长、签到与兑礼'],
   overview: ['总览', '注册用户、登录、词书与短信概况'],
   users: ['用户', '账号资料、头像、搭子号、收货地址、登录与改密'],
   logins: ['登录记录', '验证码 / 密码登录，成功与失败'],
   sms: ['短信记录', '验证码发送与是否已核销（不展示明文验证码）'],
   notebooks: ['词书 / 生词本', '系统词书可下架与改词；用户生词本可查看删除'],
   checkins: ['签到积分', '用户累计积分、连续签到、每日签到明细，以及奖励视频每次积分'],
-  gifts: ['积分兑礼', '上架/下架礼品、库存与积分价格'],
+  gifts: ['积分兑礼', '栏目显示、礼品归属分类、库存与积分价格'],
   giftOrders: ['兑换订单', '用户兑换记录与发货状态'],
   shorts: ['短视频', '视频维护，以及用户在口语/单词/听力的累计停留'],
   audit: ['操作日志', '超级管理员在后台做过的事'],
 };
 
-const state = { page: 'overview', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users' };
+const state = { page: 'cockpit', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users', cockpitGrain: 'day', cockpitAt: '' };
 
 function token() { return localStorage.getItem('hw_admin_token') || ''; }
 function authHeaders() {
@@ -362,11 +377,249 @@ function pager(total) {
   </div>`;
 }
 
+function shanghaiTodayClient() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+function defaultCockpitAt(grain) {
+  const today = shanghaiTodayClient();
+  if (grain === 'month') return today.slice(0, 7);
+  if (grain === 'year') return today.slice(0, 4);
+  return today;
+}
+
+function setCockpitGrain(grain) {
+  state.cockpitGrain = grain;
+  state.cockpitAt = defaultCockpitAt(grain);
+  render();
+}
+
+function setCockpitAt(value) {
+  state.cockpitAt = value;
+  render();
+}
+
+function fmtCount(n) {
+  return Number(n || 0).toLocaleString('zh-CN');
+}
+
+function fmtDuration(ms) {
+  const n = Math.max(0, Number(ms) || 0);
+  const hours = n / 3600000;
+  if (hours >= 1) {
+    const rounded = Math.round(hours * 10) / 10;
+    return (Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)) + '小时';
+  }
+  return Math.floor(n / 60000) + '分钟';
+}
+
+function niceMax(max) {
+  if (max <= 1) return 1;
+  if (max <= 2) return 2;
+  if (max <= 5) return 5;
+  const pow = Math.pow(10, Math.floor(Math.log10(max)));
+  const n = max / pow;
+  const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return nice * pow;
+}
+
+function formatTick(v) {
+  if (v >= 10000) return (v / 10000).toFixed(v >= 100000 ? 0 : 1) + '万';
+  if (Math.abs(v - Math.round(v)) < 0.05) return String(Math.round(v));
+  return v.toFixed(1);
+}
+
+function cockpitFrame(series, maxValue) {
+  const W = 720, H = 236;
+  const pad = { l: 48, r: 12, t: 14, b: 34 };
+  const innerW = W - pad.l - pad.r;
+  const innerH = H - pad.t - pad.b;
+  const nice = niceMax(maxValue);
+  const n = Math.max(1, series.length);
+  let grid = '';
+  for (let t = 0; t <= 4; t++) {
+    const val = nice * (4 - t) / 4;
+    const y = pad.t + (innerH * t) / 4;
+    grid += `<line x1="${pad.l}" y1="${y.toFixed(1)}" x2="${W - pad.r}" y2="${y.toFixed(1)}" stroke="rgba(110,231,183,0.12)" />`;
+    grid += `<text x="${pad.l - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" fill="#8aa89a" font-size="10">${formatTick(val)}</text>`;
+  }
+  const step = n > 18 ? 3 : n > 12 ? 2 : 1;
+  const slot = innerW / n;
+  let labels = '';
+  series.forEach((p, i) => {
+    if (i % step !== 0 && i !== n - 1) return;
+    const x = pad.l + i * slot + slot / 2;
+    labels += `<text x="${x.toFixed(1)}" y="${H - 10}" text-anchor="middle" fill="#8aa89a" font-size="10">${esc(p.label)}</text>`;
+  });
+  return { W, H, pad, innerW, innerH, nice, n, slot, grid, labels };
+}
+
+function cockpitBars(series, keys) {
+  const max = Math.max(1, ...series.flatMap((p) => keys.map((k) => Number(p[k.key]) || 0)));
+  const frame = cockpitFrame(series, max);
+  const gap = Math.min(8, frame.slot * 0.22);
+  const barW = Math.max(1.5, (frame.slot - gap) / keys.length);
+  let bars = '';
+  series.forEach((p, i) => {
+    keys.forEach((k, ki) => {
+      const v = Number(p[k.key]) || 0;
+      const h = (v / frame.nice) * frame.innerH;
+      const x = frame.pad.l + i * frame.slot + gap / 2 + ki * barW;
+      const y = frame.pad.t + frame.innerH - h;
+      bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, barW - 1).toFixed(1)}" height="${Math.max(0, h).toFixed(1)}" rx="2" fill="${k.color}"><title>${esc(p.label)} ${esc(k.label)} ${formatTick(v)}</title></rect>`;
+    });
+  });
+  const legend = keys.map((k) => `<span><i style="background:${k.color}"></i>${esc(k.label)}</span>`).join('');
+  return { svg: `<svg viewBox="0 0 ${frame.W} ${frame.H}" role="img">${frame.grid}${bars}${frame.labels}</svg>`, legend };
+}
+
+function cockpitLine(series, key, color, label) {
+  const max = Math.max(1, ...series.map((p) => Number(p[key]) || 0));
+  const frame = cockpitFrame(series, max);
+  const coords = series.map((p, i) => {
+    const v = Number(p[key]) || 0;
+    const x = frame.pad.l + i * frame.slot + frame.slot / 2;
+    const y = frame.pad.t + frame.innerH - (v / frame.nice) * frame.innerH;
+    return { x, y, v, label: p.label };
+  });
+  const d = coords.map((c, i) => `${i ? 'L' : 'M'}${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ');
+  const area = coords.length
+    ? `${d} L${coords[coords.length - 1].x.toFixed(1)},${(frame.pad.t + frame.innerH).toFixed(1)} L${coords[0].x.toFixed(1)},${(frame.pad.t + frame.innerH).toFixed(1)} Z`
+    : '';
+  const dots = coords.map((c) => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="2.4" fill="${color}"><title>${esc(c.label)} ${esc(label)} ${formatTick(c.v)}</title></circle>`).join('');
+  const legend = `<span><i style="background:${color}"></i>${esc(label)}</span>`;
+  return {
+    svg: `<svg viewBox="0 0 ${frame.W} ${frame.H}" role="img">${frame.grid}<path d="${area}" fill="${color}" opacity="0.16" /><path d="${d}" fill="none" stroke="${color}" stroke-width="2" />${dots}${frame.labels}</svg>`,
+    legend,
+  };
+}
+
+function renderCockpit(d) {
+  const points = d.points || [];
+  const summary = d.summary || {};
+  if (d.at) state.cockpitAt = d.at;
+  if (d.grain) state.cockpitGrain = d.grain;
+  const sum = (key) => points.reduce((acc, p) => acc + (Number(p[key]) || 0), 0);
+  const signups = sum('signups');
+  const deletions = sum('deletions');
+  const checkins = sum('checkins');
+  const orders = sum('giftOrders');
+  const giftPoints = sum('giftPoints');
+  const loginOk = sum('loginOk');
+  const loginFail = sum('loginFail');
+  const watchMs = Number(summary.watchMsWindow || 0);
+  const watchUsers = Number(summary.watchUsersWindow || 0);
+  const avgMs = watchUsers ? Math.round(watchMs / watchUsers) : 0;
+  const hours = points.map((p) => ({ ...p, watchHours: (Number(p.watchMs) || 0) / 3600000 }));
+  const periodWord = state.cockpitGrain === 'day' ? '当日' : state.cockpitGrain === 'month' ? '当月' : '当年';
+  const grains = [
+    ['day', '按天'],
+    ['month', '按月'],
+    ['year', '按年'],
+  ];
+  const at = state.cockpitAt || defaultCockpitAt(state.cockpitGrain);
+  const yearNow = Number((d.today || shanghaiTodayClient()).slice(0, 4));
+  const yearOptions = Array.from({ length: 6 }, (_, i) => String(yearNow - 2 + i));
+  let picker = '';
+  if (state.cockpitGrain === 'day') {
+    picker = `<label class="field-inline">日期 <input type="date" value="${esc(at)}" onchange="setCockpitAt(this.value)" /></label>`;
+  } else if (state.cockpitGrain === 'month') {
+    picker = `<label class="field-inline">月份 <input type="month" value="${esc(at)}" onchange="setCockpitAt(this.value)" /></label>`;
+  } else {
+    picker = `<label class="field-inline">年份 <select onchange="setCockpitAt(this.value)">${yearOptions.map((y) => `<option value="${y}" ${y === String(at) ? 'selected' : ''}>${y}年</option>`).join('')}</select></label>`;
+  }
+  const signupChart = cockpitBars(points, [
+    { key: 'signups', color: '#6ee7b7', label: '新增注册' },
+    { key: 'deletions', color: '#fb7185', label: '完成注销' },
+  ]);
+  const activeChart = cockpitLine(points, 'activeUsers', '#7dd3fc', '活跃用户');
+  const watchChart = cockpitBars(hours, [
+    { key: 'watchHours', color: '#fbbf24', label: '观看小时' },
+  ]);
+  const engageChart = cockpitBars(points, [
+    { key: 'checkins', color: '#a78bfa', label: '签到人次' },
+    { key: 'giftOrders', color: '#fb923c', label: '兑礼订单' },
+  ]);
+  const platName = { android: 'Android', ios: 'iOS', web: 'Web', unknown: '未知' };
+  const platforms = d.platforms || [];
+  const platMax = Math.max(1, ...platforms.map((p) => Number(p.users) || 0));
+  const cards = [
+    ['累计注册', fmtCount(summary.users)],
+    [`${periodWord}新增`, fmtCount(signups)],
+    [`${periodWord}注销`, fmtCount(deletions)],
+    ['净增', fmtCount(signups - deletions)],
+    [`${periodWord}活跃`, fmtCount(summary.periodActive)],
+    ['冷静期中', fmtCount(summary.pendingDeletions)],
+    ['历史注销', fmtCount(summary.deletedTotal)],
+    ['累计观看', fmtDuration(watchMs)],
+    ['观看人数', fmtCount(watchUsers)],
+    ['人均观看', fmtDuration(avgMs)],
+    [`${periodWord}签到`, fmtCount(checkins)],
+    [`${periodWord}兑礼`, fmtCount(orders)],
+    ['兑礼积分', fmtCount(giftPoints)],
+    ['待处理提现', `${fmtCount(summary.withdrawalsPending)}笔`],
+    ['登录成功', fmtCount(loginOk)],
+    ['登录失败', fmtCount(loginFail)],
+  ];
+  return `
+    <div class="toolbar">
+      ${grains.map(([id, label]) => `<button class="btn ${state.cockpitGrain === id ? '' : 'ghost'}" onclick="setCockpitGrain('${id}')">${label}</button>`).join('')}
+      ${picker}
+      <span class="field-inline">${esc(d.label || '')} · 图表${esc(d.bucketLabel || '')}</span>
+    </div>
+    <div class="stats">${cards.map(([label, value]) => `<div class="stat"><b>${value}</b><span>${label}</span></div>`).join('')}</div>
+    <div class="cockpit-grid">
+      <div class="chart-card">
+        <h3>新增注册与注销</h3>
+        <p class="note">注销按账号删除完成时间统计，冷静期中的用户还在「冷静期中」。</p>
+        <div class="legend">${signupChart.legend}</div>
+        ${signupChart.svg}
+      </div>
+      <div class="chart-card">
+        <h3>活跃用户</h3>
+        <p class="note">${esc(d.bucketLabel || '')}内至少成功登录一次的去重用户。</p>
+        <div class="legend">${activeChart.legend}</div>
+        ${activeChart.svg}
+      </div>
+      <div class="chart-card">
+        <h3>使用时长</h3>
+        <p class="note">目前可计量的在线时长是短视频实际观看时长，纵轴为小时。</p>
+        <div class="legend">${watchChart.legend}</div>
+        ${watchChart.svg}
+      </div>
+      <div class="chart-card">
+        <h3>签到与兑礼</h3>
+        <p class="note">签到是人次，兑礼是订单数。本期兑礼消耗 ${fmtCount(giftPoints)} 积分。</p>
+        <div class="legend">${engageChart.legend}</div>
+        ${engageChart.svg}
+      </div>
+      <div class="chart-card">
+        <h3>登录终端</h3>
+        <p class="note">所选时段内成功登录的去重用户，按设备平台。</p>
+        ${platforms.map((p) => `<div class="plat-row"><span>${esc(platName[p.platform] || p.platform)}</span><div class="plat-bar"><i style="width:${((Number(p.users) || 0) / platMax * 100).toFixed(1)}%"></i></div><b>${fmtCount(p.users)}</b></div>`).join('') || '<p class="note">所选时段还没有成功登录。</p>'}
+      </div>
+      <div class="chart-card">
+        <h3>怎么读这些数</h3>
+        <p class="note">先选按天 / 按月 / 按年，再选具体日期、月份或年份。图表分别按小时、按天、按月展开。待处理提现 ${fmtCount((Number(summary.withdrawalsPendingFen) || 0) / 100)} 元还在审核。</p>
+      </div>
+    </div>`;
+}
+
 async function render() {
   const el = document.getElementById('content');
   el.innerHTML = '加载中…';
   try {
-    if (state.page === 'overview') {
+    if (state.page === 'cockpit') {
+      const grain = state.cockpitGrain || 'day';
+      const at = state.cockpitAt || defaultCockpitAt(grain);
+      const d = await api('/cockpit?grain=' + encodeURIComponent(grain) + '&at=' + encodeURIComponent(at));
+      el.innerHTML = renderCockpit(d);
+    } else if (state.page === 'overview') {
       const d = await api('/overview');
       el.innerHTML = `
         <div class="stats">
@@ -507,6 +760,15 @@ async function render() {
       }
     } else if (state.page === 'gifts') {
       const d = await api(`/gifts?page=${state.pageNo}&q=${encodeURIComponent(state.q)}&published=${encodeURIComponent(state.giftPub||'')}`);
+      window.__giftCats = d.categories || [];
+      const catName = (id) => {
+        const hit = (window.__giftCats || []).find(c => c.id === id);
+        return hit ? hit.name : id;
+      };
+      const catLabels = (g) => {
+        const ids = Array.isArray(g.categories) && g.categories.length ? g.categories : [g.category];
+        return ids.map(catName).join('、');
+      };
       el.innerHTML = `
         <div class="toolbar">
           <input style="max-width:200px" placeholder="搜索礼品" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('gifts',{q:this.value,page:1,giftPub:state.giftPub})" />
@@ -516,13 +778,16 @@ async function render() {
             <option value="0" ${state.giftPub==='0'?'selected':''}>已下架</option>
           </select>
           <button class="btn" onclick="go('gifts',{q:document.querySelector('main input').value,page:1,giftPub:state.giftPub})">搜索</button>
+          <button class="btn ghost" onclick="editGiftCategories()">栏目设置</button>
           <button class="btn ghost" onclick="editGift()">新增礼品</button>
         </div>
-        <table><thead><tr><th>封面</th><th>名称</th><th>分类</th><th>价格</th><th>库存</th><th>已兑</th><th>状态</th><th></th></tr></thead>
+        <table><thead><tr><th>封面</th><th>名称</th><th>显示栏目</th><th>价格</th><th>库存</th><th>已兑</th><th>状态</th><th></th></tr></thead>
         <tbody>${d.items.map(g => `<tr>
-          <td><span style="font-size:22px">${esc(g.coverEmoji||'🎁')}</span></td>
+          <td>${g.coverImage
+            ? `<img src="${esc(g.coverImage)}" alt="" style="width:44px;height:44px;object-fit:cover;border-radius:8px;background:#111"/>`
+            : `<span style="font-size:22px">${esc(g.coverEmoji||'🎁')}</span>`}</td>
           <td>${esc(g.title)}<div class="sub">${esc(g.subtitle||'')}</div></td>
-          <td>${esc(g.category)}</td>
+          <td>${esc(catLabels(g))}</td>
           <td><b>${g.pointsCost}</b> 积分${g.cashFen>0?` + ${g.cashYuan}元`:''}</td>
           <td>${g.stock < 0 ? '<span class="tag">不限</span>' : (g.stock === 0 ? '<span class="tag bad">0</span>' : esc(String(g.stock)))}</td>
           <td>${g.redeemedCount}</td>
@@ -885,15 +1150,79 @@ async function saveEditWord(id) {
 function orderStatusLabel(s) {
   return ({ pending_cash:'待付现金', pending_ship:'待发货', shipped:'已发货', completed:'已完成', cancelled:'已取消' }[s] || s);
 }
-function editGift(g) {
+function giftCategoryChecks(selectedIds) {
+  const cats = window.__giftCats && window.__giftCats.length
+    ? window.__giftCats
+    : [
+        { id: 'recommend', name: '推荐' },
+        { id: 'points_only', name: '0元起兑' },
+        { id: 'pet', name: '宠物' },
+        { id: 'food', name: '方便食品' },
+        { id: 'daily', name: '生活用品' },
+      ];
+  const selected = new Set(selectedIds || []);
+  return cats.map(c => `
+    <label style="display:inline-flex;align-items:center;gap:6px;margin:4px 12px 4px 0">
+      <input type="checkbox" class="gCatBox" value="${esc(c.id)}" ${selected.has(c.id)?'checked':''}/> ${esc(c.name)}
+    </label>`).join('');
+}
+async function editGiftCategories() {
+  try {
+    const d = await api('/gift-categories');
+    const items = d.items || [];
+    showModal(`<h2>兑礼栏目设置</h2>
+      <p class="sub">控制 App「积分兑礼」顶部 5 个栏目是否显示；至少保留一个可见。</p>
+      <table><thead><tr><th>栏目</th><th>显示名称</th><th>排序</th><th>显示</th></tr></thead>
+      <tbody>${items.map((c, i) => `<tr>
+        <td><code>${esc(c.id)}</code></td>
+        <td><input id="gcName${i}" value="${esc(c.name||'')}" /></td>
+        <td><input id="gcSort${i}" type="number" style="max-width:80px" value="${c.sortOrder??i}" /></td>
+        <td><input id="gcVis${i}" type="checkbox" ${c.visible!==false?'checked':''}/></td>
+      </tr>`).join('')}</tbody></table>
+      <div class="toolbar" style="margin-top:14px">
+        <button class="btn" onclick="saveGiftCategories(${items.length})">保存</button>
+        <button class="btn ghost" onclick="closeModal()">取消</button>
+      </div>`, { closeOnBackdrop: false });
+    window.__giftCatEdit = items;
+  } catch (e) { alert(e.message); }
+}
+async function saveGiftCategories(n) {
+  try {
+    const base = window.__giftCatEdit || [];
+    const items = [];
+    for (let i = 0; i < n; i++) {
+      items.push({
+        id: base[i].id,
+        name: document.getElementById('gcName' + i).value,
+        sortOrder: Number(document.getElementById('gcSort' + i).value),
+        visible: document.getElementById('gcVis' + i).checked,
+      });
+    }
+    await api('/gift-categories', { method: 'PUT', body: JSON.stringify({ items }) });
+    closeModal(); go('gifts');
+  } catch (e) { alert(e.message); }
+}
+async function editGift(g) {
   const isNew = !g || !g.id;
-  const item = g || { coverEmoji:'🎁', coverColor:'#1B6CA8', category:'recommend', pointsCost:10, cashYuan:'0.00', published:true, needAddress:false, stock:-1, sortOrder:0 };
+  if (!window.__giftCats || !window.__giftCats.length) {
+    try {
+      const d = await api('/gift-categories');
+      window.__giftCats = d.items || [];
+    } catch (_) {}
+  }
+  const item = g || { coverEmoji:'🎁', coverColor:'#1B6CA8', category:'recommend', categories:['recommend'], images:[], pointsCost:10, cashYuan:'0.00', published:true, needAddress:false, stock:-1, sortOrder:0 };
+  const selected = Array.isArray(item.categories) && item.categories.length ? item.categories : [item.category || 'recommend'];
+  window.__giftImages = Array.isArray(item.images) ? item.images.slice() : (item.coverImage ? [item.coverImage] : []);
   showModal(`<h2>${isNew?'新增礼品':'编辑礼品'}</h2>
     <label>名称</label><input id="gTitle" value="${esc(item.title||'')}" />
     <label>副标题</label><input id="gSub" value="${esc(item.subtitle||'')}" />
-    <label>Emoji</label><input id="gEmoji" value="${esc(item.coverEmoji||'🎁')}" />
-    <label>封面色</label><input id="gColor" value="${esc(item.coverColor||'#1B6CA8')}" />
-    <label>分类</label><input id="gCat" value="${esc(item.category||'recommend')}" placeholder="recommend / study / physical / vip / points_only" />
+    <label>礼品图片（可多张；第 1 张为封面，其余为详情 Banner）</label>
+    <div id="gImgList" style="display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 4px"></div>
+    <input id="gImgFile" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/*" multiple style="margin:6px 0" />
+    <div class="sub" id="gImgHint">支持 jpg / png / webp，单张不超过 12MB，最多 12 张</div>
+    <label>封面底色（无图时备用）</label><input id="gColor" value="${esc(item.coverColor||'#1B6CA8')}" />
+    <label>显示在哪些栏目（可多选）</label>
+    <div id="gCats" style="padding:8px 0">${giftCategoryChecks(selected)}</div>
     <label>积分</label><input id="gPts" type="number" value="${item.pointsCost||0}" />
     <label>现金（元）</label><input id="gCash" type="number" step="0.01" value="${item.cashYuan||0}" />
     <label>原价（元，可空）</label><input id="gOrig" type="number" step="0.01" value="${item.originalPriceYuan||''}" />
@@ -906,16 +1235,87 @@ function editGift(g) {
     <div class="toolbar" style="margin-top:14px">
       <button class="btn" onclick="saveGift(${isNew?'null':item.id})">保存</button>
       <button class="btn ghost" onclick="closeModal()">取消</button>
-    </div>`);
+    </div>`, { closeOnBackdrop: false });
+  renderGiftImages();
+  const fileInput = document.getElementById('gImgFile');
+  if (fileInput) fileInput.onchange = () => uploadGiftImages(fileInput);
+}
+function renderGiftImages() {
+  const box = document.getElementById('gImgList');
+  if (!box) return;
+  const imgs = window.__giftImages || [];
+  if (!imgs.length) {
+    box.innerHTML = '<div class="sub">尚未上传图片，将继续用封面底色 + 默认图标展示</div>';
+    return;
+  }
+  box.innerHTML = imgs.map((url, i) => `
+    <div style="width:92px;position:relative;background:#111;border:1px solid #333;border-radius:10px;overflow:hidden">
+      <img src="${esc(url)}" alt="" style="width:92px;height:92px;object-fit:cover;display:block"/>
+      <div class="sub" style="padding:4px 6px;font-size:11px">${i===0?'封面':('图'+(i+1))}</div>
+      <div style="display:flex;gap:2px;padding:0 4px 6px">
+        <button class="btn ghost small" style="padding:2px 6px" onclick="moveGiftImage(${i},-1)" ${i===0?'disabled':''}>←</button>
+        <button class="btn ghost small" style="padding:2px 6px" onclick="moveGiftImage(${i},1)" ${i===imgs.length-1?'disabled':''}>→</button>
+        <button class="btn danger small" style="padding:2px 6px;margin-left:auto" onclick="removeGiftImage(${i})">删</button>
+      </div>
+    </div>`).join('');
+}
+function moveGiftImage(index, delta) {
+  const imgs = window.__giftImages || [];
+  const next = index + delta;
+  if (next < 0 || next >= imgs.length) return;
+  const tmp = imgs[index];
+  imgs[index] = imgs[next];
+  imgs[next] = tmp;
+  renderGiftImages();
+}
+function removeGiftImage(index) {
+  const imgs = window.__giftImages || [];
+  imgs.splice(index, 1);
+  renderGiftImages();
+}
+async function uploadGiftImages(input) {
+  const files = [...(input?.files || [])];
+  if (!files.length) return;
+  const hint = document.getElementById('gImgHint');
+  const imgs = window.__giftImages || (window.__giftImages = []);
+  for (const file of files) {
+    if (imgs.length >= 12) {
+      alert('最多 12 张图片');
+      break;
+    }
+    if (hint) hint.textContent = '上传中：' + file.name + ' …';
+    try {
+      const res = await fetch('/admin/api/gifts/upload?filename=' + encodeURIComponent(file.name), {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + token(),
+          'Content-Type': file.type || 'image/jpeg',
+          'X-Filename': file.name,
+        },
+        body: file,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '上传失败');
+      if (data.url) imgs.push(data.url);
+    } catch (e) {
+      alert((file.name || '图片') + '：' + (e.message || '上传失败'));
+    }
+  }
+  if (input) input.value = '';
+  if (hint) hint.textContent = '支持 jpg / png / webp，单张不超过 12MB，最多 12 张；第 1 张为封面';
+  renderGiftImages();
 }
 async function saveGift(id) {
   try {
+    const categories = [...document.querySelectorAll('.gCatBox:checked')].map(el => el.value);
+    if (!categories.length) { alert('请至少选择一个显示栏目'); return; }
     const body = {
       title: document.getElementById('gTitle').value,
       subtitle: document.getElementById('gSub').value,
-      coverEmoji: document.getElementById('gEmoji').value,
+      coverEmoji: '🎁',
       coverColor: document.getElementById('gColor').value,
-      category: document.getElementById('gCat').value,
+      images: window.__giftImages || [],
+      categories,
       pointsCost: Number(document.getElementById('gPts').value),
       cashYuan: Number(document.getElementById('gCash').value),
       originalPriceYuan: document.getElementById('gOrig').value === '' ? null : Number(document.getElementById('gOrig').value),

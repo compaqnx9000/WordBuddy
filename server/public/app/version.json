@@ -1,8 +1,8 @@
 {
-  "versionCode": 130,
-  "versionName": "1.39",
+  "versionCode": 132,
+  "versionName": "1.41",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "生词本返回键回到首页；短视频/博客/我仍最小化。含每日看视频领积分与全屏退出优化。",
-  "releasedAt": "2026-09-27T13:16:00.000Z"
+  "notes": "积分兑礼支持多图：第一张封面，详情页 Banner 轮播。",
+  "releasedAt": "2026-10-01T12:15:00.000Z"
 }
