@@ -30,7 +30,8 @@ struct MeView: View {
                     heroCard
                     checkInCard
                     rewardsMenu
-                    toolsMenu
+                    // 上架前关闭「工具」。恢复时取消下一行注释。
+                    // toolsMenu
                     systemMenu
                     Text("版本 \(appVersion)")
                         .font(.caption)
@@ -85,22 +86,23 @@ struct MeView: View {
                 model.banner = error.localizedDescription
             }
         }
-        .alert("补签", isPresented: makeupPresented) {
-            Button("看广告补签") {
-                if let makeupDate {
-                    let date = makeupDate
-                    self.makeupDate = nil
-                    Task { await model.makeupAfterAd(date: date) }
-                }
-            }
-            Button("取消", role: .cancel) { makeupDate = nil }
-        } message: {
-            Text("看完激励视频后补签 \(makeupDate.map { ShanghaiDate.dayValue(of: $0) } ?? 0) 日。")
-        }
+        // 上架前关闭「看广告补签」。恢复时取消下面这段注释，并把 CheckInDaySlot.build 里的 canMakeup 改回可补签。
+        // .alert("补签", isPresented: makeupPresented) {
+        //     Button("看广告补签") {
+        //         if let makeupDate {
+        //             let date = makeupDate
+        //             self.makeupDate = nil
+        //             Task { await model.makeupAfterAd(date: date) }
+        //         }
+        //     }
+        //     Button("取消", role: .cancel) { makeupDate = nil }
+        // } message: {
+        //     Text("看完激励视频后补签 \(makeupDate.map { ShanghaiDate.dayValue(of: $0) } ?? 0) 日。")
+        // }
         .sheet(isPresented: $showHelp) {
             infoSheet(
                 title: "帮助与反馈",
-                body: "查词、生词本、短视频、播客和积分功能可在底部五个 Tab 使用。\n\n反馈请联系客服微信或邮箱（与 Android 版相同渠道）。开屏、短视频 Draw 和激励视频使用 iOS 穿山甲广告位。"
+                body: "词搭子用于查词、生词本、卡片背诵、短视频和播客。底部五个 Tab 即可使用这些功能。登录后可以同步生词、签到和积分兑礼。\n\n遇到问题请发邮件至 hi@wordbuddy.cc，或拨打 18500090601。也可在「关于词搭子」中查看《隐私保护指引》。"
             )
         }
         .fullScreenCover(isPresented: $showAbout) {
@@ -149,8 +151,11 @@ struct MeView: View {
                 )
                 DashedCircles()
                     .stroke(Color.white.opacity(0.22), style: StrokeStyle(lineWidth: 1.5, dash: [8, 7]))
+                    .allowsHitTesting(false)
             }
             .frame(height: 88)
+            .clipped()
+            .allowsHitTesting(false)
 
             VStack(spacing: 0) {
                 ZStack(alignment: .bottomTrailing) {
@@ -193,7 +198,7 @@ struct MeView: View {
                     if loggedIn {
                         path.append(MeRoute.profile)
                     } else {
-                        model.showLogin = true
+                        model.openLogin()
                     }
                 }
 
@@ -233,7 +238,7 @@ struct MeView: View {
                         if loggedIn {
                             path.append(MeRoute.profile)
                         } else {
-                            model.showLogin = true
+                            model.openLogin()
                         }
                     }
                     pillButton(icon: "gearshape", title: "设置") {
@@ -330,7 +335,7 @@ struct MeView: View {
         if model.checkIn.streakDays > 0 {
             return "已连签 \(model.checkIn.streakDays) 天 · 左右滑动查看本月 · 累计 \(model.checkIn.totalPoints) 分"
         }
-        return "左右滑动查看本月，漏签可直接补签 · 累计 \(model.checkIn.totalPoints) 分"
+        return "左右滑动查看本月 · 累计 \(model.checkIn.totalPoints) 分"
     }
 
     private var checkInButtonTitle: String {
@@ -353,9 +358,11 @@ struct MeView: View {
                 model.showLogin = true
             } else if slot.isClaimTarget {
                 Task { await model.checkInToday() }
-            } else if slot.canMakeup {
-                makeupDate = slot.date
             }
+            // 上架前不提供补签。恢复时取消下面三行注释。
+            // else if slot.canMakeup {
+            //     makeupDate = slot.date
+            // }
         } label: {
             VStack(spacing: 6) {
                 Text(slot.isToday ? "今天" : "\(slot.day)日")
@@ -394,21 +401,23 @@ struct MeView: View {
         .disabled(slot.claimed || slot.isFuture)
     }
 
-    private var rewardVideoSubtitle: String {
-        guard loggedIn else { return "登录后每日可领" }
-        return "剩余 \(model.rewardVideo.remaining)/\(model.rewardVideo.dailyLimit) · +\(model.rewardVideo.pointsPerWatch)"
-    }
+    // 上架前关闭「看视频领积分」。恢复时取消注释。
+    // private var rewardVideoSubtitle: String {
+    //     guard loggedIn else { return "登录后每日可领" }
+    //     return "剩余 \(model.rewardVideo.remaining)/\(model.rewardVideo.dailyLimit) · +\(model.rewardVideo.pointsPerWatch)"
+    // }
 
     private var rewardsMenu: some View {
         menuCard {
-            menuRow("creditcard", Theme.pink, "充值积分", "测试价 ¥0.10") {
-                guardRequireLogin { path.append(MeRoute.buyPoints) }
-            }
-            menuDivider()
-            menuRow("play.circle", Theme.gold, "看视频领积分", rewardVideoSubtitle) {
-                Task { await model.watchRewardVideo() }
-            }
-            menuDivider()
+            // 上架前关闭「充值积分」。恢复时取消下面两行注释。
+            // menuRow("creditcard", Theme.pink, "充值积分", "测试价 ¥0.10") {
+            //     guardRequireLogin { path.append(MeRoute.buyPoints) }
+            // }
+            // menuDivider()
+            // menuRow("play.circle", Theme.gold, "看视频领积分", rewardVideoSubtitle) {
+            //     Task { await model.watchRewardVideo() }
+            // }
+            // menuDivider()
             menuRow("gift", Theme.gold, "积分兑礼", "可用 \(model.checkIn.totalPoints) 分") {
                 path.append(MeRoute.mall)
             }
@@ -669,7 +678,8 @@ private struct CheckInDaySlot: Identifiable {
             let isFuture = date > today
             let isClaimed = claimed.contains(date) || (isToday && state.checkedInToday)
             let isClaimTarget = isToday && !isClaimed && !state.checkedInToday
-            let canMakeup = !isClaimed && date < today
+            // 上架前关闭补签入口。恢复时改回 `!isClaimed && date < today`。
+            let canMakeup = false && !isClaimed && date < today
             let reward: Int
             if isClaimTarget {
                 reward = todayReward
@@ -1236,10 +1246,6 @@ struct SettingsView: View {
     @State private var showLogout = false
     @State private var deletionPending = false
 
-    private var userNotebooks: [Notebook] {
-        model.notebooks.filter { !$0.isSystem }
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -1396,40 +1402,6 @@ struct SettingsView: View {
                 subtitle: "收藏生词时自动生成助记图",
                 isOn: Binding(get: { model.aiImageAutoGen }, set: { model.setAiImageAutoGen($0) })
             )
-            preferenceDivider()
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 12) {
-                    Image(systemName: "book")
-                        .font(.system(size: 18))
-                        .foregroundStyle(Theme.onSurfaceVariant.opacity(0.65))
-                        .frame(width: 22)
-                    Text("默认收藏生词本")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Theme.onSurface)
-                }
-                Text("首页查词点星星时，词条会保存到所选生词本")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.onSurfaceVariant)
-                    .padding(.leading, 34)
-                if userNotebooks.isEmpty {
-                    Text(model.session == nil ? "登录后可选择生词本" : "还没有可用的生词本")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.onSurfaceVariant.opacity(0.7))
-                        .padding(.leading, 34)
-                        .padding(.top, 8)
-                } else {
-                    ChipFlow(spacing: 8) {
-                        ForEach(userNotebooks) { notebook in
-                            choiceChip(notebook.name, selected: notebook.id == model.defaultNotebookId) {
-                                model.setDefaultNotebookId(notebook.id)
-                            }
-                        }
-                    }
-                    .padding(.leading, 34)
-                    .padding(.top, 8)
-                }
-            }
-            .padding(.top, 2)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1474,9 +1446,9 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             preferenceDivider()
             preferenceToggle(
-                icon: "touchid",
-                title: "指纹解锁",
-                subtitle: "下次打开应用时验证指纹；密码/验证码登录后不会再要求",
+                icon: BiometricAuth.iconName,
+                title: BiometricAuth.title,
+                subtitle: BiometricAuth.subtitle,
                 isOn: Binding(
                     get: { model.biometricLogin },
                     set: { enabled in Task { await setBiometric(enabled) } }
@@ -1637,10 +1609,10 @@ struct SettingsView: View {
             model.banner = BiometricAuth.unavailableMessage
             return
         }
-        let ok = await BiometricAuth.authenticate(reason: "验证后，下次打开应用将需要面容或指纹解锁")
+        let ok = await BiometricAuth.authenticate(reason: "验证后，下次打开应用将需要\(BiometricAuth.methodName)解锁")
         if ok {
             model.setBiometricLogin(true)
-            model.banner = "已开启指纹解锁"
+            model.banner = "已开启\(BiometricAuth.title)"
         }
     }
 }
@@ -1817,13 +1789,27 @@ enum BiometricAuth {
         LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
     }
 
+    /// Face ID on current iPhones. Touch ID remains on iPhone SE.
+    private static var usesTouchID: Bool {
+        let context = LAContext()
+        _ = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+        return context.biometryType == .touchID
+    }
+
+    static var title: String { usesTouchID ? "指纹解锁" : "面容解锁" }
+    static var methodName: String { usesTouchID ? "指纹" : "面容" }
+    static var iconName: String { usesTouchID ? "touchid" : "faceid" }
+    static var subtitle: String {
+        "下次打开应用时验证\(methodName)；密码/验证码登录后不会再要求"
+    }
+
     static var unavailableMessage: String {
         let context = LAContext()
         var error: NSError?
         if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
-            return "无法启动指纹验证"
+            return "无法启动\(methodName)验证"
         }
-        return "这台设备没有可用的面容或指纹"
+        return "这台设备没有可用的\(methodName)"
     }
 
     static func authenticate(reason: String) async -> Bool {
@@ -1840,10 +1826,10 @@ struct BiometricLockCover: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            Image(systemName: "touchid")
+            Image(systemName: BiometricAuth.iconName)
                 .font(.system(size: 48))
                 .foregroundStyle(Theme.cyanSoft)
-            Text("验证身份后继续使用")
+            Text("验证\(BiometricAuth.methodName)后继续使用")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(Theme.onSurface)
             Button("验证", action: onUnlock)

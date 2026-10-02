@@ -492,4 +492,22 @@ export async function ensureSchema() {
   await query(
     'CREATE INDEX IF NOT EXISTS reward_video_grants_user_date ON reward_video_grants (user_id, grant_date)',
   )
+  await query(`
+    UPDATE notebooks n
+    SET name = '默认生词本'
+    WHERE n.kind = 'user'
+      AND n.name IN ('系统生词本', '生词本')
+      AND n.id IN (
+        SELECT DISTINCT ON (owner_user_id) id
+        FROM notebooks
+        WHERE kind = 'user' AND name IN ('系统生词本', '生词本')
+        ORDER BY owner_user_id, id ASC
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM notebooks o
+        WHERE o.kind = 'user'
+          AND o.owner_user_id = n.owner_user_id
+          AND o.name = '默认生词本'
+      )
+  `)
 }

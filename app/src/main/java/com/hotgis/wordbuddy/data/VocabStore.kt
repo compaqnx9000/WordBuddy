@@ -153,7 +153,9 @@ class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db",
 
     fun deleteNotebook(id: Long) {
         val notebook = findNotebook(id) ?: return
-        if (notebook.isSystem || notebook.kind == Notebook.KIND_CATALOG) error("系统词书不能删除")
+        if (notebook.isSystem || notebook.isLocked || notebook.kind == Notebook.KIND_CATALOG) {
+            error("系统词书不能删除")
+        }
         writableDatabase.beginTransaction()
         try {
             writableDatabase.delete(TABLE, "notebook_id = ?", arrayOf(id.toString()))

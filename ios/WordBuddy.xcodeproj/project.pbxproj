@@ -520,8 +520,9 @@
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_ENTITLEMENTS = WordBuddy/WordBuddy.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 9P3T2T859Y;
+				DEVELOPMENT_TEAM = HXN67QW4CL;
 				ENABLE_PREVIEWS = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -543,7 +544,7 @@
 					"-lxml2",
 					"-lresolv",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.hotgis.wordbuddy;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hotgis.wordbuddy.ios;
 				PRODUCT_NAME = WordBuddy;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "WordBuddy/Pangle-Bridging-Header.h";
@@ -559,8 +560,9 @@
 				CODE_SIGNING_ALLOWED = YES;
 				CODE_SIGNING_REQUIRED = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_ENTITLEMENTS = WordBuddy/WordBuddy.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 9P3T2T859Y;
+				DEVELOPMENT_TEAM = HXN67QW4CL;
 				ENABLE_PREVIEWS = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -582,7 +584,7 @@
 					"-lxml2",
 					"-lresolv",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.hotgis.wordbuddy;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hotgis.wordbuddy.ios;
 				PRODUCT_NAME = WordBuddy;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "WordBuddy/Pangle-Bridging-Header.h";

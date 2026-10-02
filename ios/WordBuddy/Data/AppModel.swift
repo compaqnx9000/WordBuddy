@@ -104,6 +104,74 @@ final class AppModel: ObservableObject {
         try await api.sendCode(phone: phone)
     }
 
+    func verifyLoginPassword(_ password: String) async throws {
+        guard let session else { throw APIError(message: "请先登录") }
+        guard password.count >= 6 else { throw APIError(message: "请输入当前密码") }
+        try await api.verifyPassword(token: session.token, password: password)
+    }
+
+    func sendChangePhoneCode(newPhone: String) async throws {
+        let digits = newPhone.filter(\.isNumber)
+        guard Self.isMainlandPhone(digits) else {
+            throw APIError(message: "请输入正确的新手机号")
+        }
+        let current = session?.phone.filter(\.isNumber) ?? ""
+        if digits == current {
+            throw APIError(message: "新手机号不能与当前号码相同")
+        }
+        _ = try await api.sendCode(phone: digits)
+    }
+
+    func changePhone(password: String, newPhone: String, code: String) async throws {
+        guard let session else { throw APIError(message: "请先登录") }
+        let digits = newPhone.filter(\.isNumber)
+        let sms = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard password.count >= 6 else { throw APIError(message: "请输入当前密码") }
+        guard Self.isMainlandPhone(digits) else { throw APIError(message: "请输入正确的新手机号") }
+        guard sms.range(of: "^\\d{6}$", options: .regularExpression) != nil else {
+            throw APIError(message: "请输入6位验证码")
+        }
+        do {
+            var latest = try await api.changePhone(
+                token: session.token,
+                password: password,
+                newPhone: digits,
+                code: sms
+            )
+            if latest.token.isEmpty { latest.token = session.token }
+            if latest.phone.isEmpty { latest.phone = digits }
+            if latest.userId == 0 { latest.userId = session.userId }
+            if latest.vocabNotebookId == 0 { latest.vocabNotebookId = session.vocabNotebookId }
+            if latest.avatarUrl == nil { latest.avatarUrl = session.avatarUrl }
+            if latest.nickname == nil { latest.nickname = session.nickname }
+            if latest.buddyId == nil { latest.buddyId = session.buddyId }
+            if latest.signature == nil { latest.signature = session.signature }
+            if latest.gender == nil { latest.gender = session.gender }
+            if latest.region == nil { latest.region = session.region }
+            if latest.email == nil { latest.email = session.email }
+            if latest.shippingName == nil { latest.shippingName = session.shippingName }
+            if latest.shippingPhone == nil { latest.shippingPhone = session.shippingPhone }
+            if latest.shippingDetail == nil { latest.shippingDetail = session.shippingDetail }
+            if latest.alipayAccount == nil { latest.alipayAccount = session.alipayAccount }
+            if latest.alipayName == nil { latest.alipayName = session.alipayName }
+            if latest.wechatAccount == nil { latest.wechatAccount = session.wechatAccount }
+            if latest.networkRegion == nil { latest.networkRegion = session.networkRegion }
+            if latest.networkRegionDetail == nil { latest.networkRegionDetail = session.networkRegionDetail }
+            self.session = latest
+            SessionStore.save(latest)
+            AccountStore.upsert(latest)
+            accounts = AccountStore.list()
+            banner = "手机号已更新"
+        } catch {
+            if noteSessionError(error) { throw error }
+            throw error
+        }
+    }
+
+    private static func isMainlandPhone(_ digits: String) -> Bool {
+        digits.range(of: "^1[3-9]\\d{9}$", options: .regularExpression) != nil
+    }
+
     func login(phone: String, code: String) async throws -> AuthResult {
         try await api.login(phone: phone, code: code)
     }
@@ -114,6 +182,45 @@ final class AppModel: ObservableObject {
 
     func register(phone: String, code: String, password: String, inviteCode: String?) async throws -> AuthResult {
         try await api.register(phone: phone, code: code, password: password, inviteCode: inviteCode)
+    }
+
+    /// Opens WeChat, then binds that OpenID to the signed-in account. Same path as Android.
+    func bindWechat() async {
+        guard let session else {
+            showLogin = true
+            return
+        }
+        do {
+            let code = try await SocialAuth.shared.signInWechat()
+            var latest = try await api.bindWechat(token: session.token, authCode: code)
+            if latest.vocabNotebookId == 0 {
+                latest.vocabNotebookId = session.vocabNotebookId
+            }
+            if latest.phone.isEmpty {
+                latest.phone = session.phone
+            }
+            self.session = latest
+            SessionStore.save(latest)
+            AccountStore.upsert(latest)
+            accounts = AccountStore.list()
+            banner = "微信已绑定"
+        } catch {
+            if !noteSessionError(error) {
+                banner = error.localizedDescription
+            }
+        }
+    }
+
+    func openLogin() {
+        if showLogin {
+            showLogin = false
+            Task { @MainActor in
+                await Task.yield()
+                showLogin = true
+            }
+        } else {
+            showLogin = true
+        }
     }
 
     func enter(_ session: UserSession) async {
@@ -750,20 +857,39 @@ final class AppModel: ObservableObject {
                 return nil
             }
         }
-        guard let session, let notebookId = favoriteNotebookId else {
+        guard let notebookId = favoriteNotebookId else {
             banner = "还没有可用的生词本"
             return nil
         }
+        return await favoriteCatalogWord(entry, to: notebookId)
+    }
+
+    /// Add a catalog word into a user notebook. Returns true on success.
+    @discardableResult
+    func favoriteCatalogWord(_ entry: VocabEntry, to notebookId: Int64) async -> Bool? {
+        guard let session else {
+            showLogin = true
+            return nil
+        }
+        guard let notebook = notebooks.first(where: { $0.id == notebookId && !$0.isSystem }) else {
+            banner = "还没有可用的生词本"
+            return nil
+        }
+        let key = entry.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !key.isEmpty else { return nil }
         do {
             var toSave = entry
             toSave.id = 0
             toSave.notebookId = notebookId
             let created = try await api.createWord(token: session.token, notebookId: notebookId, entry: toSave)
-            favoritedByText[key] = created.id
+            if notebookId == favoriteNotebookId {
+                favoritedByText[key] = created.id
+            }
             if let index = notebooks.firstIndex(where: { $0.id == notebookId }) {
                 notebooks[index].wordCount += 1
             }
-            banner = "已加入生词本"
+            headsCache[notebookId] = nil
+            banner = "已收藏到「\(notebook.name)」"
             if aiImageAutoGen {
                 let word = entry.text
                 let hint = entry.definitions.first?.label ?? ""
@@ -813,25 +939,29 @@ final class AppModel: ObservableObject {
         return created
     }
 
-    /// First launch stores 0, so no chip is highlighted. Pick 生词本, then any user notebook.
+    /// First launch stores 0, so no chip is highlighted. After a book is deleted, pick a remaining personal book.
     private func ensureDefaultNotebook() {
         let userBooks = notebooks.filter { !$0.isSystem }
         guard !userBooks.isEmpty else { return }
         if defaultNotebookId > 0, userBooks.contains(where: { $0.id == defaultNotebookId }) {
             return
         }
-        let fallback = userBooks.first { $0.name == Notebook.defaultName }
-            ?? userBooks.first { $0.id == session?.vocabNotebookId }
+        let fallback = userBooks.first { $0.id == session?.vocabNotebookId && (session?.vocabNotebookId ?? 0) > 0 }
             ?? userBooks[0]
         setDefaultNotebookId(fallback.id)
+        assignVocabNotebook(fallback.id)
     }
 
     func loadNotebooks() async {
-        guard let session else { return }
         do {
-            let items = try await api.listNotebooks(token: session.token)
+            let items: [Notebook]
+            if let session {
+                items = try await api.listNotebooks(token: session.token)
+            } else {
+                items = try await api.listCatalogs()
+            }
             notebooks = items
-            let preferred = session.vocabNotebookId
+            let preferred = session?.vocabNotebookId ?? 0
             if let current = activeNotebookId, items.contains(where: { $0.id == current }) {
                 // keep current selection
             } else if preferred > 0, items.contains(where: { $0.id == preferred }) {
@@ -842,7 +972,11 @@ final class AppModel: ObservableObject {
             wordsError = nil
             ensureDefaultNotebook()
             await loadWords()
-            await refreshFavoritedIndex()
+            if session != nil {
+                await refreshFavoritedIndex()
+            } else {
+                favoritedByText = [:]
+            }
         } catch {
             handle(error, fallback: "词本加载失败")
         }
@@ -877,18 +1011,39 @@ final class AppModel: ObservableObject {
     }
 
     func deleteNotebook(_ id: Int64) async {
-        guard let session, let notebook = notebooks.first(where: { $0.id == id }), !notebook.isSystem else { return }
+        guard let session, let notebook = notebooks.first(where: { $0.id == id }), !notebook.isLocked else {
+            if notebooks.first(where: { $0.id == id })?.isLocked == true {
+                banner = "系统词书不能删除"
+            }
+            return
+        }
         do {
             try await api.deleteNotebook(token: session.token, id: id)
             if activeNotebookId == id {
                 activeNotebookId = nil
             }
+            if defaultNotebookId == id {
+                setDefaultNotebookId(0)
+            }
+            if session.vocabNotebookId == id {
+                assignVocabNotebook(0)
+            }
+            headsCache[id] = nil
             await loadNotebooks()
         } catch {
             if !noteSessionError(error) {
                 banner = error.localizedDescription
             }
         }
+    }
+
+    private func assignVocabNotebook(_ id: Int64) {
+        guard var session, session.vocabNotebookId != id else { return }
+        session.vocabNotebookId = id
+        self.session = session
+        SessionStore.save(session)
+        AccountStore.upsert(session)
+        accounts = AccountStore.list()
     }
 
     func moveWords(ids: Set<Int64>, to targetId: Int64) async {
@@ -961,9 +1116,9 @@ final class AppModel: ObservableObject {
     /// Ordered heads for the whole notebook. Cached until the notebook changes.
     func loadWordHeads(notebookId: Int64) async -> [WordHead] {
         if let cached = headsCache[notebookId], !cached.isEmpty { return cached }
-        guard let token = session?.token else { return [] }
+        guard canReadNotebook(notebookId) else { return [] }
         do {
-            let heads = try await api.listHeads(token: token, notebookId: notebookId)
+            let heads = try await api.listHeads(token: session?.token, notebookId: notebookId)
             if !heads.isEmpty { headsCache[notebookId] = heads }
             return heads
         } catch {
@@ -973,10 +1128,10 @@ final class AppModel: ObservableObject {
 
     /// One full word at a natural index, without replacing the list window.
     func fetchNotebookWord(notebookId: Int64, naturalIndex: Int) async -> VocabEntry? {
-        guard let token = session?.token else { return nil }
+        guard canReadNotebook(notebookId) else { return nil }
         do {
             let page = try await api.listWords(
-                token: token,
+                token: session?.token,
                 notebookId: notebookId,
                 cursor: nil,
                 limit: 1,
@@ -990,10 +1145,10 @@ final class AppModel: ObservableObject {
 
     /// Jump the loaded window so `words[0]` is the notebook entry at `index`.
     func jumpToAbsoluteIndex(_ index: Int) async {
-        guard let session, let notebookId = activeNotebookId else { return }
+        guard let notebookId = activeNotebookId, canReadNotebook(notebookId) else { return }
         let target = max(0, index)
         if target >= listWindowStart, target < listWindowStart + words.count { return }
-        await loadSeekWindow(notebookId: notebookId, token: session.token, fromIndex: target)
+        await loadSeekWindow(notebookId: notebookId, token: session?.token, fromIndex: target)
     }
 
     func deleteWord(_ id: Int64) async {
@@ -1029,7 +1184,7 @@ final class AppModel: ObservableObject {
     }
 
     func loadWords() async {
-        guard let session, let notebookId = activeNotebookId else {
+        guard let notebookId = activeNotebookId, canReadNotebook(notebookId) else {
             words = []
             wordTotal = 0
             nextCursor = nil
@@ -1040,7 +1195,7 @@ final class AppModel: ObservableObject {
         wordsError = nil
         defer { wordsLoading = false }
         do {
-            let page = try await api.listWords(token: session.token, notebookId: notebookId, cursor: nil)
+            let page = try await api.listWords(token: session?.token, notebookId: notebookId, cursor: nil)
             words = page.items
             wordTotal = page.total
             nextCursor = page.nextCursor
@@ -1055,11 +1210,11 @@ final class AppModel: ObservableObject {
     }
 
     func loadMoreWords() async {
-        guard let session, let notebookId = activeNotebookId, let cursor = nextCursor, !wordsLoading else { return }
+        guard let notebookId = activeNotebookId, canReadNotebook(notebookId), let cursor = nextCursor, !wordsLoading else { return }
         wordsLoading = true
         defer { wordsLoading = false }
         do {
-            let page = try await api.listWords(token: session.token, notebookId: notebookId, cursor: cursor)
+            let page = try await api.listWords(token: session?.token, notebookId: notebookId, cursor: cursor)
             let existing = Set(words.map(\.id))
             words.append(contentsOf: page.items.filter { !existing.contains($0.id) })
             wordTotal = page.total
@@ -1070,12 +1225,12 @@ final class AppModel: ObservableObject {
     }
 
     func refreshLetterIndex() async {
-        guard let session, let notebookId = activeNotebookId else {
+        guard let notebookId = activeNotebookId, canReadNotebook(notebookId) else {
             alphabetLetterIndex = [:]
             return
         }
         do {
-            alphabetLetterIndex = try await api.letterIndex(token: session.token, notebookId: notebookId)
+            alphabetLetterIndex = try await api.letterIndex(token: session?.token, notebookId: notebookId)
         } catch {
             if Self.isCancellation(error) || Task.isCancelled { return }
             if noteSessionError(error) { return }
@@ -1085,7 +1240,7 @@ final class AppModel: ObservableObject {
 
     /// Fast alphabet seek — jump via `fromIndex` when the letter is outside the loaded window.
     func seekAlphabetLetter(_ letter: Character) async {
-        guard let session, let notebookId = activeNotebookId else { return }
+        guard let notebookId = activeNotebookId, canReadNotebook(notebookId) else { return }
         if alphabetLetterIndex.isEmpty {
             await refreshLetterIndex()
         }
@@ -1099,7 +1254,7 @@ final class AppModel: ObservableObject {
         guard !Task.isCancelled else { return }
 
         // Always jump with fromIndex — never page-walk thousands of rows (that froze the UI).
-        await loadSeekWindow(notebookId: notebookId, token: session.token, fromIndex: max(0, target))
+        await loadSeekWindow(notebookId: notebookId, token: session?.token, fromIndex: max(0, target))
         guard !Task.isCancelled, activeNotebookId == notebookId else { return }
         if let local = localIndex(for: upper) {
             pendingScrollWordId = words[local].id
@@ -1108,7 +1263,13 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func loadSeekWindow(notebookId: Int64, token: String, fromIndex: Int) async {
+    /// System word books can be read without a session. Personal books cannot.
+    private func canReadNotebook(_ notebookId: Int64) -> Bool {
+        if session != nil { return true }
+        return notebooks.first { $0.id == notebookId }?.isSystem == true
+    }
+
+    private func loadSeekWindow(notebookId: Int64, token: String?, fromIndex: Int) async {
         windowSeekGeneration += 1
         let generation = windowSeekGeneration
         do {

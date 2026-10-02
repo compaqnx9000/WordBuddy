@@ -960,35 +960,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     false
                 } else {
-                    val toSave = entry.copy(
-                        id = 0L,
-                        notebookId = notebookId,
-                        imageBlob = null,
-                        addedAtMillis = System.currentTimeMillis(),
-                    )
-                    val saved = runCatching {
-                        api.createWord(token(), notebookId, toSave)
-                    }.getOrElse { networkError ->
-                        // API 不可用时仍写入本机生词本，避免列表左滑收藏“看起来成功、实际没有”。
-                        android.util.Log.w(
-                            "VocabViewModel",
-                            "createWord failed, saving locally: ${networkError.message}",
-                        )
-                        val localId = repo.insert(toSave)
-                        repo.getById(localId) ?: toSave.copy(id = localId)
-                    }
-                    repo.cacheEntry(saved)
-                    // Drop stale heads so the next open of this user notebook reloads from SQLite/cloud.
-                    headsCache.remove(notebookId)
-                    headsReady.remove(notebookId)
-                    _ui.update { state ->
-                        val lookup = state.lookupResult
-                        if (lookup != null && lookup.entry.text.equals(entry.text, ignoreCase = true)) {
-                            state.copy(lookupResult = LookupResult(saved, true))
-                        } else {
-                            state
-                        }
-                    }
+                    saveRelatedWordToNotebookSync(entry, notebookId)
                     true
                 }
             }
@@ -1005,6 +977,62 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Favorite [entry] into a specific user notebook. */
+    fun saveRelatedWordToNotebook(
+        entry: VocabEntry,
+        notebookId: Long,
+        onResult: ((ok: Boolean, message: String) -> Unit)? = null,
+    ) {
+        viewModelScope.launch {
+            val result = runCatching {
+                val book = notebooks.value.firstOrNull { it.id == notebookId && !it.isSystem }
+                    ?: error("生词本不存在")
+                saveRelatedWordToNotebookSync(entry, book.id)
+                book.name
+            }
+            result
+                .onSuccess { name ->
+                    _favoriteRevision.value = _favoriteRevision.value + 1
+                    onResult?.invoke(true, "已收藏到「$name」")
+                }
+                .onFailure { error ->
+                    android.util.Log.e("VocabViewModel", "saveRelatedWordToNotebook failed", error)
+                    onResult?.invoke(false, error.message ?: "收藏失败")
+                }
+        }
+    }
+
+    private suspend fun saveRelatedWordToNotebookSync(entry: VocabEntry, notebookId: Long): VocabEntry {
+        val toSave = entry.copy(
+            id = 0L,
+            notebookId = notebookId,
+            imageBlob = null,
+            addedAtMillis = System.currentTimeMillis(),
+        )
+        val saved = runCatching {
+            api.createWord(token(), notebookId, toSave)
+        }.getOrElse { networkError ->
+            android.util.Log.w(
+                "VocabViewModel",
+                "createWord failed, saving locally: ${networkError.message}",
+            )
+            val localId = repo.insert(toSave)
+            repo.getById(localId) ?: toSave.copy(id = localId)
+        }
+        repo.cacheEntry(saved)
+        headsCache.remove(notebookId)
+        headsReady.remove(notebookId)
+        _ui.update { state ->
+            val lookup = state.lookupResult
+            if (lookup != null && lookup.entry.text.equals(entry.text, ignoreCase = true)) {
+                state.copy(lookupResult = LookupResult(saved, true))
+            } else {
+                state
+            }
+        }
+        return saved
+    }
+
     /** Prefer 设置→默认收藏生词本, then named 生词本, then session vocab id. */
     private fun resolveVocabNotebookId(): Long? {
         val settingsId = _ui.value.settings.defaultNotebookId.takeIf { it > 0L }
@@ -1013,7 +1041,13 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             if (book != null) return book.id
         }
         notebooks.value
-            .firstOrNull { !it.isSystem && it.name == "生词本" }
+            .firstOrNull {
+                !it.isSystem && (
+                    it.name == Notebook.SYSTEM_VOCAB_NAME ||
+                        it.name == Notebook.LEGACY_VOCAB_NAME ||
+                        it.name == Notebook.OLD_VOCAB_NAME
+                    )
+            }
             ?.id
             ?.takeIf { it > 0L }
             ?.let { return it }
@@ -1701,7 +1735,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteNotebook(id: Long, onError: (String) -> Unit = {}) {
         val target = notebooks.value.firstOrNull { it.id == id }
-        if (target == null || target.isSystem) {
+        if (target == null || target.isLocked) {
             onError("系统词书不能删除")
             return
         }
@@ -1713,7 +1747,9 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 val remaining = repo.notebooks.value
                 val session = _session.value
                 if (session != null && session.vocabNotebookId == id) {
-                    val nextVocabId = remaining.firstOrNull { !it.isSystem && it.name == "生词本" }?.id
+                    val nextVocabId = remaining.firstOrNull { !it.isSystem && it.name == Notebook.SYSTEM_VOCAB_NAME }?.id
+                        ?: remaining.firstOrNull { !it.isSystem && it.name == Notebook.LEGACY_VOCAB_NAME }?.id
+                        ?: remaining.firstOrNull { !it.isSystem && it.name == Notebook.OLD_VOCAB_NAME }?.id
                         ?: remaining.firstOrNull { !it.isSystem }?.id
                         ?: 0L
                     val updated = session.copy(vocabNotebookId = nextVocabId)
@@ -2439,15 +2475,13 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val password = state.password.trim()
-        if (password.isNotEmpty()) {
-            if (password.length !in 6..32) {
-                _login.update { it.copy(error = "密码需要 6 到 32 位") }
-                return
-            }
-            if (password != state.passwordConfirm) {
-                _login.update { it.copy(error = "两次输入的密码不一致") }
-                return
-            }
+        if (password.length !in 6..32) {
+            _login.update { it.copy(error = "请设置登录密码（6 到 32 位）") }
+            return
+        }
+        if (password != state.passwordConfirm) {
+            _login.update { it.copy(error = "两次输入的密码不一致") }
+            return
         }
         viewModelScope.launch {
             _login.update { it.copy(loggingIn = true, error = null) }
@@ -2456,7 +2490,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     token = token,
                     phone = phone,
                     code = state.code,
-                    password = password.ifBlank { null },
+                    password = password,
                 )
             }.onSuccess { result ->
                 val session = result.session ?: error("绑定失败")

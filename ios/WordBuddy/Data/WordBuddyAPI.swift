@@ -61,6 +61,33 @@ actor WordBuddyAPI {
         return JSONValue.string(root, key: "debugCode")
     }
 
+    func verifyPassword(token: String, password: String) async throws {
+        _ = try await request(
+            method: "POST",
+            path: "/auth/verify-password",
+            auth: token,
+            body: ["password": password]
+        )
+    }
+
+    func changePhone(token: String, password: String, newPhone: String, code: String) async throws -> UserSession {
+        let root = try await request(
+            method: "POST",
+            path: "/auth/change-phone",
+            auth: token,
+            body: [
+                "password": password,
+                "newPhone": newPhone,
+                "code": code,
+            ]
+        )
+        let nextToken = JSONValue.string(root, key: "token").flatMap { $0.isEmpty ? nil : $0 } ?? token
+        guard let user = root["user"] as? [String: Any] else {
+            throw APIError(message: "修改失败")
+        }
+        return parseUserSession(token: nextToken, root: root, user: user)
+    }
+
     func login(phone: String, code: String) async throws -> AuthResult {
         try parseAuth(await request(
             method: "POST",
@@ -104,6 +131,19 @@ actor WordBuddyAPI {
             auth: nil,
             body: ["code": code]
         ))
+    }
+
+    func bindWechat(token: String, authCode: String) async throws -> UserSession {
+        let root = try await request(
+            method: "POST",
+            path: "/me/wechat/bind",
+            auth: token,
+            body: ["authCode": authCode]
+        )
+        guard let user = root["user"] as? [String: Any] else {
+            throw APIError(message: "绑定失败")
+        }
+        return parseUserSession(token: token, root: root, user: user)
     }
 
     func fetchAlipayLoginAuthInfo() async throws -> String {
@@ -171,8 +211,16 @@ actor WordBuddyAPI {
         }
     }
 
+    /// Published system word books (中考 / 高考 / 四级 / 六级). No login required.
+    func listCatalogs() async throws -> [Notebook] {
+        let root = try await request(method: "GET", path: "/catalogs", auth: nil, body: nil)
+        return JSONValue.array(root, key: "items").compactMap { item in
+            (item as? [String: Any]).map(parseNotebook)
+        }
+    }
+
     func listWords(
-        token: String,
+        token: String?,
         notebookId: Int64,
         cursor: String?,
         limit: Int = 100,
@@ -199,7 +247,7 @@ actor WordBuddyAPI {
     }
 
     /// Absolute 0-based index of the first word for each initial letter (A–Z / #).
-    func letterIndex(token: String, notebookId: Int64) async throws -> [Character: Int] {
+    func letterIndex(token: String?, notebookId: Int64) async throws -> [Character: Int] {
         let root = try await request(method: "GET", path: "/notebooks/\(notebookId)/letter-index", auth: token, body: nil)
         guard let index = root["index"] as? [String: Any] else { return [:] }
         var map: [Character: Int] = [:]
@@ -219,7 +267,7 @@ actor WordBuddyAPI {
     }
 
     /// Every word in notebook order (id, text, IPA). Definitions are not included.
-    func listHeads(token: String, notebookId: Int64) async throws -> [WordHead] {
+    func listHeads(token: String?, notebookId: Int64) async throws -> [WordHead] {
         let root = try await request(method: "GET", path: "/notebooks/\(notebookId)/heads", auth: token, body: nil)
         return JSONValue.array(root, key: "items").compactMap { item in
             guard let object = item as? [String: Any] else { return nil }
@@ -668,7 +716,8 @@ actor WordBuddyAPI {
             createdAtMillis: JSONValue.int64(object, key: "createdAtMillis"),
             kind: JSONValue.string(object, key: "kind") ?? Notebook.kindUser,
             slug: JSONValue.string(object, key: "slug"),
-            wordCount: JSONValue.int(object, key: "wordCount")
+            wordCount: JSONValue.int(object, key: "wordCount"),
+            isLockedFlag: object["isLocked"] == nil ? nil : JSONValue.bool(object, key: "isLocked")
         )
     }
 
@@ -1009,12 +1058,20 @@ actor WordBuddyAPI {
     }
 
     private func parseGift(_ object: [String: Any]) -> GiftItem {
-        GiftItem(
+        let images = JSONValue.array(object, key: "images").compactMap { value -> String? in
+            guard let text = value as? String else { return nil }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        let coverImage = JSONValue.string(object, key: "coverImage") ?? images.first
+        return GiftItem(
             id: JSONValue.int64(object, key: "id"),
             title: JSONValue.string(object, key: "title") ?? "礼品",
             subtitle: JSONValue.string(object, key: "subtitle") ?? "",
             coverEmoji: JSONValue.string(object, key: "coverEmoji") ?? "🎁",
             coverColor: JSONValue.string(object, key: "coverColor") ?? "#1B6CA8",
+            images: images,
+            coverImage: coverImage,
             pointsCost: JSONValue.int(object, key: "pointsCost"),
             cashFen: JSONValue.int(object, key: "cashFen"),
             cashYuan: JSONValue.string(object, key: "cashYuan") ?? "0.00",

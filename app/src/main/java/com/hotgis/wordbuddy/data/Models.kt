@@ -110,13 +110,21 @@ data class Notebook(
     val kind: String = KIND_USER,
     val slug: String? = null,
     val wordCount: Int = 0,
+    val isLockedFlag: Boolean? = null,
 ) {
     val isSystem: Boolean
         get() = kind == KIND_CATALOG
 
+    /** Catalog books stay locked. The personal「默认生词本」can be deleted like any other book. */
+    val isLocked: Boolean
+        get() = isSystem
+
     companion object {
         const val DEFAULT_ID = 0L
-        const val DEFAULT_NAME = "生词本"
+        const val DEFAULT_NAME = "默认生词本"
+        const val SYSTEM_VOCAB_NAME = "默认生词本"
+        const val LEGACY_VOCAB_NAME = "系统生词本"
+        const val OLD_VOCAB_NAME = "生词本"
         const val KIND_USER = "user"
         const val KIND_CATALOG = "catalog"
         const val CET4_SLUG = "cet4"

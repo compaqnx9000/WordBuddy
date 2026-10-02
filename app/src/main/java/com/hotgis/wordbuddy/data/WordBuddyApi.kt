@@ -1415,6 +1415,7 @@ class WordBuddyApi {
             kind = obj.optString("kind", "user"),
             slug = optNullableString(obj, "slug"),
             wordCount = obj.optInt("wordCount"),
+            isLockedFlag = if (obj.has("isLocked")) obj.optBoolean("isLocked") else null,
         )
     }
 

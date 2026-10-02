@@ -106,25 +106,61 @@ export async function optionalAuth(req, _res, next) {
   next()
 }
 
+export const SYSTEM_VOCAB_NAME = '默认生词本'
+export const LEGACY_VOCAB_NAMES = ['系统生词本', '生词本']
+export const LEGACY_VOCAB_NAME = LEGACY_VOCAB_NAMES[0]
+
 export async function ensureUserNotebook(userId) {
-  // Always prefer the notebook literally named 生词本 — never the newest user book
-  // (createNotebook inserts with min(sort_order)-1, which would otherwise steal this role).
   const named = await query(
     `SELECT id FROM notebooks
-     WHERE kind = 'user' AND owner_user_id = $1 AND name = '生词本'
+     WHERE kind = 'user' AND owner_user_id = $1 AND name = $2
      ORDER BY id ASC
      LIMIT 1`,
-    [userId],
+    [userId, SYSTEM_VOCAB_NAME],
   )
   if (named.rowCount > 0) return named.rows[0].id
 
-  const created = await query(
-    `INSERT INTO notebooks (kind, owner_user_id, name, sort_order)
-     VALUES ('user', $1, '生词本', 0)
-     RETURNING id`,
+  const legacy = await query(
+    `SELECT id FROM notebooks
+     WHERE kind = 'user' AND owner_user_id = $1 AND name = ANY($2::text[])
+     ORDER BY id ASC
+     LIMIT 1`,
+    [userId, LEGACY_VOCAB_NAMES],
+  )
+  if (legacy.rowCount > 0) {
+    await query('UPDATE notebooks SET name = $1 WHERE id = $2', [
+      SYSTEM_VOCAB_NAME,
+      legacy.rows[0].id,
+    ])
+    return legacy.rows[0].id
+  }
+
+  const any = await query(
+    `SELECT id FROM notebooks
+     WHERE kind = 'user' AND owner_user_id = $1
+     ORDER BY sort_order ASC, id ASC
+     LIMIT 1`,
     [userId],
   )
+  if (any.rowCount > 0) return any.rows[0].id
+  return null
+}
+
+/** New accounts only. A deleted「默认生词本」is not recreated while the user still has other books, and list refresh does not insert one. */
+export async function createDefaultNotebookIfEmpty(userId) {
+  const existing = await ensureUserNotebook(userId)
+  if (existing) return existing
+  const created = await query(
+    `INSERT INTO notebooks (kind, owner_user_id, name, sort_order)
+     VALUES ('user', $1, $2, 0)
+     RETURNING id`,
+    [userId, SYSTEM_VOCAB_NAME],
+  )
   return created.rows[0].id
+}
+
+export function isLockedUserNotebook(notebook) {
+  return notebook?.kind === 'catalog'
 }
 
 export function normalizePhone(raw) {

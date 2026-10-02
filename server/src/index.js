@@ -58,6 +58,29 @@ app.use(
     },
   }),
 )
+// WeChat iOS login checks this file over HTTPS at wordbuddy.cc.
+const appleAppSiteAssociation = {
+  applinks: {
+    apps: [],
+    details: [
+      'HXN67QW4CL.com.hotgis.wordbuddy.ios',
+      'Y9FT29T4RU.com.hotgis.wordbuddy.ios',
+      'HXN67QW4CL.com.hotgis.wordbuddy',
+      'Y9FT29T4RU.com.hotgis.wordbuddy',
+    ].map((appID) => ({
+      appID,
+      paths: ['/wordbuddy/*', '/wordbuddy/', '*'],
+    })),
+  },
+}
+function sendAppleAppSiteAssociation(_req, res) {
+  res.set('Content-Type', 'application/json')
+  res.set('Cache-Control', 'no-cache')
+  res.json(appleAppSiteAssociation)
+}
+app.get('/.well-known/apple-app-site-association', sendAppleAppSiteAssociation)
+app.get('/apple-app-site-association', sendAppleAppSiteAssociation)
+
 app.use('/admin/api', adminRouter)
 app.use('/admin', express.static(path.resolve(root, '../public/admin')))
 app.get('/admin', (_req, res) => {

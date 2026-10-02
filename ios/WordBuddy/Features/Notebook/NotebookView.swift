@@ -11,6 +11,7 @@ struct NotebookView: View {
     @State private var showCreate = false
     @State private var newName = ""
     @State private var pendingDelete: Notebook?
+    @State private var chipLongPressed = false
     @State private var showCards = false
     @State private var cardStart = 0
     @State private var showMore = false
@@ -19,6 +20,8 @@ struct NotebookView: View {
     @State private var selectedIds: Set<Int64> = []
     @State private var showDeleteSelected = false
     @State private var showMove = false
+    @State private var showFavoriteTo = false
+    @State private var pendingFavorite: VocabEntry?
     @State private var scrollTarget: Int64?
     @State private var openSwipeId: Int64?
     /// Last word the user spoke, revealed, or swiped in the list.
@@ -62,64 +65,47 @@ struct NotebookView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if model.session == nil {
-                    signedOut
-                } else {
-                    wordList
-                }
-            }
+            wordList
             .stellarScreenBackground()
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
-                if model.session != nil {
-                    if selectionMode {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button("取消") {
-                                selectionMode = false
-                                selectedIds = []
-                            }
-                            .foregroundStyle(Theme.onSurfaceVariant)
+                if selectionMode && model.session != nil {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("取消") {
+                            selectionMode = false
+                            selectedIds = []
                         }
-                        ToolbarItem(placement: .principal) {
-                            Text("已选 \(selectedIds.count)")
-                                .font(.headline.weight(.bold))
-                                .foregroundStyle(Theme.cyanSoft)
-                        }
-                    } else {
-                        ToolbarItem(placement: .topBarLeading) {
-                            backButton
-                        }
-                        ToolbarItem(placement: .principal) {
-                            VStack(spacing: 1) {
-                                Text(headerTitle)
-                                    .font(.headline.weight(.bold))
-                                    .foregroundStyle(Theme.cyanSoft)
-                                    .lineLimit(1)
-                                Text("列表模式")
-                                    .font(.caption2)
-                                    .foregroundStyle(Theme.onSurfaceVariant)
-                            }
-                        }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                showMore = true
-                            } label: {
-                                Text("···")
-                                    .font(.title3.weight(.bold))
-                                    .foregroundStyle(Theme.cyan)
-                            }
-                        }
+                        .foregroundStyle(Theme.onSurfaceVariant)
+                    }
+                    ToolbarItem(placement: .principal) {
+                        Text("已选 \(selectedIds.count)")
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(Theme.cyanSoft)
                     }
                 } else {
                     ToolbarItem(placement: .topBarLeading) {
                         backButton
                     }
                     ToolbarItem(placement: .principal) {
-                        Text("生词本")
-                            .font(.headline.weight(.bold))
-                            .foregroundStyle(Theme.cyanSoft)
+                        VStack(spacing: 1) {
+                            Text(headerTitle)
+                                .font(.headline.weight(.bold))
+                                .foregroundStyle(Theme.cyanSoft)
+                                .lineLimit(1)
+                            Text("列表模式")
+                                .font(.caption2)
+                                .foregroundStyle(Theme.onSurfaceVariant)
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showMore = true
+                        } label: {
+                            Text("···")
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(Theme.cyan)
+                        }
                     }
                 }
             }
@@ -140,20 +126,22 @@ struct NotebookView: View {
         } message: {
             Text("「\(headerTitle)」共 \(model.wordTotal > 0 ? model.wordTotal : visibleWords.count) 个单词")
         }
-        .confirmationDialog(
-            "删除「\(pendingDelete?.name ?? "")」？词本里的单词也会删除。",
-            isPresented: deletePresented,
-            titleVisibility: .visible
-        ) {
+        .alert("删除生词本", isPresented: deletePresented) {
+            Button("取消", role: .cancel) { pendingDelete = nil }
             Button("删除", role: .destructive) {
                 guard let id = pendingDelete?.id else { return }
                 pendingDelete = nil
                 Task { await model.deleteNotebook(id) }
             }
-            Button("取消", role: .cancel) { pendingDelete = nil }
+        } message: {
+            Text(deleteNotebookMessage)
         }
         .confirmationDialog("更多", isPresented: $showMore, titleVisibility: .hidden) {
             Button("编辑") {
+                guard model.session != nil else {
+                    model.showLogin = true
+                    return
+                }
                 let canEdit = model.activeNotebook?.isSystem != true && !visibleWords.isEmpty
                 if canEdit {
                     selectionMode = true
@@ -185,18 +173,39 @@ struct NotebookView: View {
             }
             Button("取消", role: .cancel) {}
         }
-        .confirmationDialog("移动到生词本", isPresented: $showMove, titleVisibility: .visible) {
-            ForEach(moveTargets) { notebook in
-                Button(notebook.name) {
-                    let ids = selectedIds
-                    selectedIds = []
-                    selectionMode = false
-                    Task { await model.moveWords(ids: ids, to: notebook.id) }
-                }
+        .overlay {
+            if showMove {
+                NotebookTargetPickerDialog(
+                    title: "移动到生词本",
+                    subtitle: moveTargets.isEmpty ? "没有其他生词本" : "已选择 \(selectedIds.count) 个词条",
+                    notebooks: moveTargets,
+                    onSelect: { notebook in
+                        let ids = selectedIds
+                        selectedIds = []
+                        selectionMode = false
+                        showMove = false
+                        Task { await model.moveWords(ids: ids, to: notebook.id) }
+                    },
+                    onDismiss: { showMove = false }
+                )
+            } else if showFavoriteTo {
+                NotebookTargetPickerDialog(
+                    title: "收藏到生词本",
+                    subtitle: favoriteTargets.isEmpty ? "还没有生词本" : "已选择 1 个词条",
+                    notebooks: favoriteTargets,
+                    onSelect: { notebook in
+                        let entry = pendingFavorite
+                        pendingFavorite = nil
+                        showFavoriteTo = false
+                        guard let entry else { return }
+                        Task { _ = await model.favoriteCatalogWord(entry, to: notebook.id) }
+                    },
+                    onDismiss: {
+                        showFavoriteTo = false
+                        pendingFavorite = nil
+                    }
+                )
             }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text(moveTargets.isEmpty ? "没有其他生词本" : "已选择 \(selectedIds.count) 个词条")
         }
         .fullScreenCover(isPresented: $showCards) {
             CardModeView(entries: visibleWords, startIndex: cardStart) {
@@ -205,9 +214,7 @@ struct NotebookView: View {
             .environmentObject(model)
         }
         .task(id: model.session?.userId) {
-            if model.session != nil, model.notebooks.isEmpty {
-                await model.loadNotebooks()
-            }
+            await model.loadNotebooks()
         }
     }
 
@@ -223,18 +230,15 @@ struct NotebookView: View {
         Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })
     }
 
-    private var signedOut: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "book.closed")
-                .font(.system(size: 42))
-                .foregroundStyle(Theme.cyan)
-            Text("登录后查看生词本")
-                .foregroundStyle(Theme.onSurface)
-            Button("登录") { model.showLogin = true }
-                .buttonStyle(PrimaryButtonStyle())
-                .padding(.horizontal, 64)
+    private var deleteNotebookMessage: String {
+        guard let notebook = pendingDelete else { return "" }
+        let count = notebook.id == model.activeNotebookId
+            ? max(notebook.wordCount, model.wordTotal)
+            : notebook.wordCount
+        if count > 0 {
+            return "确定删除「\(notebook.name)」吗？其中的 \(count) 个词条将一并删除，此操作不可撤销。"
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        return "确定删除「\(notebook.name)」吗？此操作不可撤销。"
     }
 
     private var wordList: some View {
@@ -249,6 +253,10 @@ struct NotebookView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 Button {
+                    guard model.session != nil else {
+                        model.showLogin = true
+                        return
+                    }
                     newName = ""
                     showCreate = true
                 } label: {
@@ -277,6 +285,7 @@ struct NotebookView: View {
 
     private func notebookChip(_ notebook: Notebook) -> some View {
         let selected = model.activeNotebookId == notebook.id
+        let canDelete = !notebook.isLocked
         let style = selected
             ? CatalogChipStyle(background: Theme.cyan, foreground: Theme.onPrimary, dashed: nil)
             : (Self.catalogChipStyle(notebook) ?? CatalogChipStyle(
@@ -285,13 +294,17 @@ struct NotebookView: View {
                 dashed: nil
             ))
         return Button {
+            if chipLongPressed {
+                chipLongPressed = false
+                return
+            }
             Task { await model.selectNotebook(notebook.id) }
         } label: {
             HStack(spacing: 4) {
                 Text(notebook.name)
                     .font(.subheadline.weight(selected ? .bold : .medium))
                     .lineLimit(1)
-                if notebook.isSystem {
+                if notebook.isLocked {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 10, weight: .semibold))
                 }
@@ -315,13 +328,17 @@ struct NotebookView: View {
         }
         .buttonStyle(.plain)
         .frame(height: Self.chipHeight)
-        .contextMenu {
-            if !notebook.isSystem {
-                Button("删除词本", role: .destructive) {
-                    pendingDelete = notebook
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+                guard canDelete else { return }
+                chipLongPressed = true
+                guard model.session != nil else {
+                    model.showLogin = true
+                    return
                 }
+                pendingDelete = notebook
             }
-        }
+        )
     }
 
     @ViewBuilder
@@ -385,22 +402,67 @@ struct NotebookView: View {
                                         SwipeRevealRow(
                                             revealed: openSwipeId == word.id,
                                             enabled: true,
-                                            actionWidth: catalog ? 88 : 76,
-                                            actionColor: catalog ? Theme.gold.opacity(0.88) : Theme.pink.opacity(0.92),
-                                            actionIcon: catalog ? (favorited ? "star.fill" : "star") : nil,
-                                            actionLabel: catalog ? (favorited ? "取消" : "收藏") : "删除",
+                                            actions: catalog
+                                                ? [
+                                                    SwipeActionItem(
+                                                        id: "favorite",
+                                                        label: "收藏到…",
+                                                        icon: "star",
+                                                        color: Theme.gold.opacity(0.88),
+                                                        width: 96
+                                                    ) {
+                                                        noteTouch(word.id)
+                                                        openSwipeId = nil
+                                                        guard model.session != nil else {
+                                                            model.showLogin = true
+                                                            return
+                                                        }
+                                                        guard !favoriteTargets.isEmpty else {
+                                                            model.banner = "还没有生词本"
+                                                            return
+                                                        }
+                                                        pendingFavorite = word
+                                                        showFavoriteTo = true
+                                                    },
+                                                ]
+                                                : [
+                                                    SwipeActionItem(
+                                                        id: "move",
+                                                        label: "移动到",
+                                                        color: Theme.cyan.opacity(0.95),
+                                                        width: 76
+                                                    ) {
+                                                        noteTouch(word.id)
+                                                        openSwipeId = nil
+                                                        guard model.session != nil else {
+                                                            model.showLogin = true
+                                                            return
+                                                        }
+                                                        guard !moveTargets.isEmpty else {
+                                                            model.banner = "没有其他生词本"
+                                                            return
+                                                        }
+                                                        selectedIds = [word.id]
+                                                        showMove = true
+                                                    },
+                                                    SwipeActionItem(
+                                                        id: "delete",
+                                                        label: "删除",
+                                                        color: Theme.pink.opacity(0.92),
+                                                        width: 76
+                                                    ) {
+                                                        noteTouch(word.id)
+                                                        openSwipeId = nil
+                                                        guard model.session != nil else {
+                                                            model.showLogin = true
+                                                            return
+                                                        }
+                                                        Task { await model.deleteWord(word.id) }
+                                                    },
+                                                ],
                                             onRevealChange: { open in
                                                 noteTouch(word.id)
                                                 openSwipeId = open ? word.id : (openSwipeId == word.id ? nil : openSwipeId)
-                                            },
-                                            onAction: {
-                                                noteTouch(word.id)
-                                                openSwipeId = nil
-                                                if catalog {
-                                                    Task { _ = await model.toggleCatalogFavorite(word) }
-                                                } else {
-                                                    Task { await model.deleteWord(word.id) }
-                                                }
                                             }
                                         ) {
                                             wordRow(word, wordColumnWidth: wordColumn)
@@ -420,13 +482,49 @@ struct NotebookView: View {
                                             }
                                         }
                                         if catalog {
-                                            Button(favorited ? "取消收藏" : "收藏到生词本") {
+                                            Button("收藏到…") {
                                                 noteTouch(word.id)
-                                                Task { _ = await model.toggleCatalogFavorite(word) }
+                                                guard model.session != nil else {
+                                                    model.showLogin = true
+                                                    return
+                                                }
+                                                guard !favoriteTargets.isEmpty else {
+                                                    model.banner = "还没有生词本"
+                                                    return
+                                                }
+                                                pendingFavorite = word
+                                                showFavoriteTo = true
+                                            }
+                                            if favorited {
+                                                Button("取消收藏", role: .destructive) {
+                                                    noteTouch(word.id)
+                                                    guard model.session != nil else {
+                                                        model.showLogin = true
+                                                        return
+                                                    }
+                                                    Task { _ = await model.toggleCatalogFavorite(word) }
+                                                }
                                             }
                                         } else {
+                                            Button("移动到…") {
+                                                noteTouch(word.id)
+                                                guard model.session != nil else {
+                                                    model.showLogin = true
+                                                    return
+                                                }
+                                                guard !moveTargets.isEmpty else {
+                                                    model.banner = "没有其他生词本"
+                                                    return
+                                                }
+                                                selectedIds = [word.id]
+                                                showMove = true
+                                            }
                                             Button("删除", role: .destructive) {
                                                 noteTouch(word.id)
+                                                guard model.session != nil else {
+                                                    model.showLogin = true
+                                                    return
+                                                }
                                                 Task { await model.deleteWord(word.id) }
                                             }
                                         }
@@ -516,11 +614,11 @@ struct NotebookView: View {
 
     @ViewBuilder
     private func meaningArea(_ word: VocabEntry, shown: Bool, selectionMode: Bool) -> some View {
-        let body = ZStack(alignment: .topLeading) {
+        let body = ZStack(alignment: .leading) {
             if shown {
                 meaningText(word)
                     .lineLimit(3)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             } else {
                 DefinitionMask()
             }
@@ -678,6 +776,10 @@ struct NotebookView: View {
 
     private var moveTargets: [Notebook] {
         model.notebooks.filter { !$0.isSystem && $0.id != model.activeNotebookId }
+    }
+
+    private var favoriteTargets: [Notebook] {
+        model.notebooks.filter { !$0.isSystem }
     }
 
     private func selectionPill(
@@ -851,38 +953,119 @@ struct NotebookView: View {
     }
 }
 
+private struct NotebookTargetPickerDialog: View {
+    var title: String
+    var subtitle: String
+    var notebooks: [Notebook]
+    var onSelect: (Notebook) -> Void
+    var onDismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+                .onTapGesture(perform: onDismiss)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(Theme.onSurface)
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.onSurfaceVariant)
+                    .padding(.top, 8)
+
+                if !notebooks.isEmpty {
+                    VStack(spacing: 8) {
+                        ForEach(notebooks) { notebook in
+                            Button {
+                                onSelect(notebook)
+                            } label: {
+                                Text(notebook.name)
+                                    .font(.body.weight(.bold))
+                                    .foregroundStyle(Theme.cyanSoft)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 14)
+                                    .background(Theme.surfaceHigh, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 14)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("取消", action: onDismiss)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Theme.onSurfaceVariant)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                }
+                .padding(.top, 18)
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 20)
+            .frame(maxWidth: 340)
+            .background(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(Theme.surfaceContainer.opacity(0.98))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .stroke(Theme.cyan.opacity(0.45), lineWidth: 1)
+                    )
+                    .shadow(color: Theme.cyan.opacity(0.28), radius: 24, y: 8)
+            )
+            .padding(.horizontal, 28)
+        }
+    }
+}
+
+private struct SwipeActionItem: Identifiable {
+    var id: String
+    var label: String
+    var icon: String? = nil
+    var color: Color
+    var width: CGFloat = 76
+    var action: () -> Void
+}
+
 private struct SwipeRevealRow<Content: View>: View {
     var revealed: Bool
     var enabled: Bool
-    var actionWidth: CGFloat
-    var actionColor: Color
-    var actionIcon: String? = nil
-    var actionLabel: String
+    var actions: [SwipeActionItem]
     var onRevealChange: (Bool) -> Void
-    var onAction: () -> Void
     @ViewBuilder var content: () -> Content
 
     @State private var offset: CGFloat = 0
     @State private var dragStart: CGFloat = 0
     @State private var dragging = false
 
+    private var actionWidth: CGFloat {
+        max(actions.reduce(0) { $0 + $1.width }, 1)
+    }
+
     var body: some View {
         ZStack(alignment: .trailing) {
-            Button(action: onAction) {
-                VStack(spacing: 2) {
-                    if let actionIcon {
-                        Image(systemName: actionIcon)
-                            .font(.system(size: 18, weight: .semibold))
+            HStack(spacing: 0) {
+                ForEach(actions) { item in
+                    Button(action: item.action) {
+                        VStack(spacing: 2) {
+                            if let icon = item.icon {
+                                Image(systemName: icon)
+                                    .font(.system(size: 18, weight: .semibold))
+                            }
+                            Text(item.label)
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .foregroundStyle(.white)
+                        .frame(width: item.width)
+                        .frame(maxHeight: .infinity)
+                        .background(item.color)
                     }
-                    Text(actionLabel)
-                        .font(.subheadline.weight(.medium))
+                    .buttonStyle(.plain)
                 }
-                .foregroundStyle(.white)
-                .frame(width: actionWidth)
-                .frame(maxHeight: .infinity)
-                .background(actionColor)
             }
-            .buttonStyle(.plain)
             .opacity(offset < -0.5 ? 1 : 0)
             .allowsHitTesting(offset < -actionWidth * 0.6)
 
@@ -917,6 +1100,9 @@ private struct SwipeRevealRow<Content: View>: View {
             withAnimation(.easeOut(duration: 0.18)) {
                 offset = open ? -actionWidth : 0
             }
+        }
+        .onChange(of: actionWidth) { _, _ in
+            offset = revealed ? -actionWidth : 0
         }
         .onAppear {
             offset = revealed ? -actionWidth : 0
@@ -1020,9 +1206,20 @@ private final class AlphabetRailView: UIView {
 
     required init?(coder: NSCoder) { nil }
 
+    /// Letters sit in the trailing strip. The rest of the view only draws the bubble and must not steal taps on definitions.
+    private let railWidth: CGFloat = 24
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        point.x >= bounds.width - railWidth - 4
+    }
+
+    override func hitTest(_ location: CGPoint, with event: UIEvent?) -> UIView? {
+        guard point(inside: location, with: event) else { return nil }
+        return self
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
-        let railWidth: CGFloat = 24
         let count = CGFloat(labels.count)
         let row = bounds.height / max(count, 1)
         for (index, label) in labels.enumerated() {
@@ -1079,7 +1276,7 @@ private final class AlphabetRailView: UIView {
         let row = bounds.height / CGFloat(max(letters.count, 1))
         let midY = CGFloat(index) * row + row / 2
         let y = min(max(0, midY - size / 2), max(0, bounds.height - size))
-        bubble.frame = CGRect(x: bounds.width - 24 - 8 - size, y: y, width: size, height: size)
+        bubble.frame = CGRect(x: bounds.width - railWidth - 8 - size, y: y, width: size, height: size)
     }
 
     private func finish() {

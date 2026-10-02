@@ -26,11 +26,13 @@ struct AccountProfileView: View {
     @State private var showRegion = false
     @State private var showSignature = false
     @State private var showEmail = false
+    @State private var showPhone = false
     @State private var showShipping = false
     @State private var showInvite = false
     @State private var showQR = false
     @State private var showUnbindAlipay = false
     @State private var showUnbindWechat = false
+    @State private var wechatBinding = false
 
     private static let regions = [
         "北京", "天津", "上海", "重庆",
@@ -74,7 +76,8 @@ struct AccountProfileView: View {
                     }
                     divider()
                     row("手机号", value: session?.maskedPhone ?? "") {
-                        model.banner = "修改手机号即将支持"
+                        dialogError = nil
+                        showPhone = true
                     }
                     divider()
                     row("邮箱", value: blank(session?.email, placeholder: "去填写")) {
@@ -122,11 +125,12 @@ struct AccountProfileView: View {
                     }
                 }
 
-                profileGroup {
-                    alipayRow
-                    divider()
-                    wechatRow
-                }
+                // 上架前关闭微信、支付宝绑定。恢复时取消下面这一段注释。
+                // profileGroup {
+                //     alipayRow
+                //     divider()
+                //     wechatRow
+                // }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -218,6 +222,12 @@ struct AccountProfileView: View {
                     }
                 )
             }
+            if showPhone {
+                ChangePhoneDialog(
+                    currentPhoneMasked: session?.maskedPhone ?? "",
+                    onDismiss: { showPhone = false }
+                )
+            }
             if showEmail {
                 ProfileFormDialog(
                     title: "修改邮箱",
@@ -277,7 +287,7 @@ struct AccountProfileView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("解绑后不能用该微信提现。需要时可重新绑定。")
+            Text("解绑后不能用该微信提现，也不能用此微信直接登录当前账号。需要时可重新绑定。")
         }
     }
 
@@ -389,7 +399,9 @@ struct AccountProfileView: View {
         return HStack {
             Text("微信账号").foregroundStyle(Theme.onSurfaceVariant)
             Spacer()
-            if bound {
+            if wechatBinding {
+                Text("正在打开微信…").foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
+            } else if bound {
                 Text("已绑定").foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
                 Button("解绑") { showUnbindWechat = true }
                     .font(.body.weight(.semibold))
@@ -398,7 +410,7 @@ struct AccountProfileView: View {
                     .padding(.leading, 10)
             } else {
                 Button {
-                    model.banner = "微信绑定即将支持"
+                    Task { await bindWechatAccount() }
                 } label: {
                     HStack(spacing: 6) {
                         Text("去绑定").foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
@@ -408,6 +420,7 @@ struct AccountProfileView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .disabled(busy)
             }
         }
         .padding(.horizontal, 16)
@@ -603,6 +616,13 @@ struct AccountProfileView: View {
         _ = await model.patchProfile(alipayAccount: "", alipayName: "", successMessage: "已解绑支付宝")
     }
 
+    private func bindWechatAccount() async {
+        guard !wechatBinding else { return }
+        wechatBinding = true
+        defer { wechatBinding = false }
+        await model.bindWechat()
+    }
+
     private func unbindWechat() async {
         _ = await model.patchProfile(wechatAccount: "", successMessage: "已解绑微信")
     }
@@ -744,6 +764,198 @@ private struct CameraImagePicker: UIViewControllerRepresentable {
         ) {
             let image = (info[.editedImage] ?? info[.originalImage]) as? UIImage
             onFinish(image)
+        }
+    }
+}
+
+private struct ChangePhoneDialog: View {
+    @EnvironmentObject private var model: AppModel
+
+    var currentPhoneMasked: String
+    var onDismiss: () -> Void
+
+    @State private var step = 1
+    @State private var password = ""
+    @State private var newPhone = ""
+    @State private var code = ""
+    @State private var passwordVisible = false
+    @State private var busy = false
+    @State private var sendingCode = false
+    @State private var countdown = 0
+    @State private var errorText: String?
+
+    private var blocking: Bool { busy || sendingCode }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea().onTapGesture {
+                if !blocking { onDismiss() }
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                Text("修改手机号")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(Theme.cyanSoft)
+                Text(step == 1
+                     ? "当前号码 \(currentPhoneMasked)\n请先输入登录密码以确认身份"
+                     : "密码已验证。请输入新手机号并完成短信验证")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.onSurfaceVariant)
+                    .fixedSize(horizontal: false, vertical: true)
+                if step == 1 {
+                    passwordField
+                } else {
+                    phoneField
+                    HStack(spacing: 8) {
+                        codeField
+                        Button(sendTitle) { Task { await sendCode() } }
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(canSend ? Theme.cyanSoft : Theme.onSurfaceVariant)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 12)
+                            .background(Theme.surfaceHigh, in: Capsule())
+                            .overlay(Capsule().stroke(Theme.cyan.opacity(0.35), lineWidth: 1))
+                            .disabled(!canSend)
+                    }
+                }
+                if let errorText, !errorText.isEmpty {
+                    Text(errorText).font(.footnote).foregroundStyle(Theme.pink)
+                }
+                HStack {
+                    Spacer()
+                    Button("取消", action: onDismiss)
+                        .foregroundStyle(Theme.cyanSoft)
+                        .disabled(blocking)
+                    Button(busy ? "…" : (step == 1 ? "下一步" : "完成修改")) {
+                        Task { await advance() }
+                    }
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Theme.onPrimary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Theme.cyan, in: Capsule())
+                    .disabled(blocking)
+                }
+            }
+            .padding(20)
+            .background(Theme.surfaceContainer.opacity(0.98), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(Theme.cyan.opacity(0.4), lineWidth: 1)
+            )
+            .padding(.horizontal, 28)
+            .shadow(color: Theme.cyan.opacity(0.25), radius: 20)
+        }
+        .task(id: countdown) {
+            guard countdown > 0 else { return }
+            try? await Task.sleep(for: .seconds(1))
+            if countdown > 0 { countdown -= 1 }
+        }
+    }
+
+    private var canSend: Bool {
+        countdown <= 0 && !sendingCode && !busy && newPhone.count == 11
+    }
+
+    private var sendTitle: String {
+        if countdown > 0 { return "\(countdown)s" }
+        if sendingCode { return "发送中" }
+        return "获取验证码"
+    }
+
+    private var passwordField: some View {
+        HStack(spacing: 8) {
+            Group {
+                if passwordVisible {
+                    TextField("当前登录密码", text: $password)
+                } else {
+                    SecureField("当前登录密码", text: $password)
+                }
+            }
+            .textContentType(.password)
+            .foregroundStyle(Theme.onSurface)
+            .onChange(of: password) { _, _ in errorText = nil }
+            Button {
+                passwordVisible.toggle()
+            } label: {
+                Image(systemName: passwordVisible ? "eye.slash" : "eye")
+                    .foregroundStyle(Theme.onSurfaceVariant)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .background(Theme.surfaceHigh.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Theme.cyan.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    private var phoneField: some View {
+        TextField("新手机号", text: $newPhone)
+            .keyboardType(.phonePad)
+            .foregroundStyle(Theme.onSurface)
+            .padding(12)
+            .background(Theme.surfaceHigh.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Theme.cyan.opacity(0.35), lineWidth: 1)
+            )
+            .onChange(of: newPhone) { _, value in
+                newPhone = String(value.filter(\.isNumber).prefix(11))
+                errorText = nil
+            }
+    }
+
+    private var codeField: some View {
+        TextField("短信验证码", text: $code)
+            .keyboardType(.numberPad)
+            .foregroundStyle(Theme.onSurface)
+            .padding(12)
+            .background(Theme.surfaceHigh.opacity(0.75), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Theme.cyan.opacity(0.35), lineWidth: 1)
+            )
+            .onChange(of: code) { _, value in
+                code = String(value.filter(\.isNumber).prefix(6))
+                errorText = nil
+            }
+    }
+
+    private func advance() async {
+        if step == 1 {
+            busy = true
+            errorText = nil
+            defer { busy = false }
+            do {
+                try await model.verifyLoginPassword(password)
+                step = 2
+            } catch {
+                errorText = error.localizedDescription
+            }
+        } else {
+            busy = true
+            errorText = nil
+            defer { busy = false }
+            do {
+                try await model.changePhone(password: password, newPhone: newPhone, code: code)
+                onDismiss()
+            } catch {
+                errorText = error.localizedDescription
+            }
+        }
+    }
+
+    private func sendCode() async {
+        guard canSend else { return }
+        sendingCode = true
+        errorText = nil
+        defer { sendingCode = false }
+        do {
+            try await model.sendChangePhoneCode(newPhone: newPhone)
+            countdown = 60
+        } catch {
+            errorText = error.localizedDescription
         }
     }
 }

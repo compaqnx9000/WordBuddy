@@ -1,5 +1,39 @@
 import SwiftUI
 
+/// Loads the admin-uploaded gift photo. Falls back to the emoji on the cover color.
+private struct GiftCoverImage: View {
+    var urlString: String?
+    var emoji: String
+    var colorHex: String
+    var emojiSize: CGFloat
+
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        ZStack {
+            Color(hexString: colorHex)
+            if let urlString, let url = model.api.absoluteURL(for: urlString) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    default:
+                        Text(emoji).font(.system(size: emojiSize))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Text(emoji).font(.system(size: emojiSize))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+    }
+}
+
 /// Same canvas as Android `sdp`: 1 design point at a 440pt-wide window.
 private enum MallMetrics {
     static var scale: CGFloat {
@@ -124,22 +158,12 @@ struct PointsMallView: View {
             }
             .padding(.top, MallMetrics.sdp(10))
             HStack {
-                gatedLink("购买积分", systemImage: "cart") { BuyPointsView() }
+                mallStat(value: loggedIn ? "\(model.checkIn.streakDays)天" : "—", caption: "连续签到")
                 Spacer()
-                Button {
-                    category = "points_only"
-                    Task { await loadGifts() }
-                } label: {
-                    quickLabel("bag", "0元起兑")
-                }
-                .buttonStyle(.plain)
-                Spacer()
-                gatedLink("积分提现", systemImage: "gift") { WithdrawView() }
-                Spacer()
-                Button { dismiss() } label: {
-                    quickLabel("calendar", "每日签到")
-                }
-                .buttonStyle(.plain)
+                mallStat(
+                    value: loggedIn ? (model.checkIn.checkedInToday ? "已签到" : "未签到") : "—",
+                    caption: "今日"
+                )
             }
             .padding(.top, MallMetrics.sdp(14))
         }
@@ -212,34 +236,13 @@ struct PointsMallView: View {
         }
     }
 
-    private func gatedLink<Destination: View>(_ title: String, systemImage: String, destination: @escaping () -> Destination) -> some View {
-        Group {
-            if loggedIn {
-                NavigationLink {
-                    destination()
-                } label: {
-                    quickLabel(systemImage, title)
-                }
-                .buttonStyle(.plain)
-            } else {
-                Button {
-                    model.showLogin = true
-                } label: {
-                    quickLabel(systemImage, title)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private func quickLabel(_ systemImage: String, _ title: String) -> some View {
+    private func mallStat(value: String, caption: String) -> some View {
         VStack(spacing: MallMetrics.sdp(4)) {
-            Image(systemName: systemImage)
-                .font(.system(size: MallMetrics.sdp(18), weight: .regular))
-                .foregroundStyle(Theme.gold)
-                .frame(width: MallMetrics.sdp(40), height: MallMetrics.sdp(40))
-                .background(Theme.surfaceHigh, in: Circle())
-            Text(title)
+            Text(value)
+                .font(.system(size: MallMetrics.sdp(16), weight: .bold))
+                .foregroundStyle(Theme.cyanSoft)
+                .frame(height: MallMetrics.sdp(40))
+            Text(caption)
                 .font(.system(size: MallMetrics.sdp(11)))
                 .foregroundStyle(Theme.onSurfaceVariant)
         }
@@ -249,13 +252,14 @@ struct PointsMallView: View {
 
     private func giftCard(_ gift: GiftItem) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Color(hexString: gift.coverColor)
-                .frame(maxWidth: .infinity)
-                .frame(height: MallMetrics.coverSide)
-                .overlay {
-                    Text(gift.coverEmoji)
-                        .font(.system(size: MallMetrics.sdp(44)))
-                }
+            GiftCoverImage(
+                urlString: gift.coverImage ?? gift.bannerImages.first,
+                emoji: gift.coverEmoji,
+                colorHex: gift.coverColor,
+                emojiSize: MallMetrics.sdp(44)
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: MallMetrics.coverSide)
             VStack(alignment: .leading, spacing: MallMetrics.sdp(4)) {
                 Text(gift.title)
                     .font(.system(size: MallMetrics.sdp(13), weight: .medium))
@@ -292,7 +296,8 @@ struct PointsMallView: View {
         errorText = nil
         defer { loading = false }
         do {
-            gifts = try await model.api.listGifts(category: category)
+            // 上架前不展示含现金的礼品。在线支付未开通，审核员会看到未完成的支付说明。
+            gifts = try await model.api.listGifts(category: category).filter { $0.cashFen == 0 }
         } catch {
             errorText = error.localizedDescription
         }
@@ -310,7 +315,8 @@ struct GiftDetailView: View {
     @State private var phone = ""
     @State private var detail = ""
     @State private var confirm = false
-    @State private var showAddress = false
+    @State private var missingAddress = false
+    @State private var openProfile = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -335,10 +341,15 @@ struct GiftDetailView: View {
         } message: {
             Text("将花费 \(gift?.priceLabel ?? "")\n当前积分 \(model.checkIn.totalPoints)")
         }
-        .overlay {
-            if showAddress {
-                addressDialog
-            }
+        .alert("请先填写收货地址", isPresented: $missingAddress) {
+            Button("去填写") { openProfile = true }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("兑换需要收货地址。请先到个人资料中填写收件人、电话和地址，再回来兑换。")
+        }
+        .navigationDestination(isPresented: $openProfile) {
+            ProfileEditView()
+                .toolbar(.visible, for: .navigationBar)
         }
     }
 
@@ -368,17 +379,48 @@ struct GiftDetailView: View {
         return Theme.background.opacity(0.80)
     }
 
+    private func giftBanner(_ gift: GiftItem) -> some View {
+        let height = UIScreen.main.bounds.width / 1.1
+        let banners = gift.bannerImages
+        return Group {
+            if banners.isEmpty {
+                GiftCoverImage(
+                    urlString: nil,
+                    emoji: gift.coverEmoji,
+                    colorHex: gift.coverColor,
+                    emojiSize: MallMetrics.sdp(72)
+                )
+            } else if banners.count == 1 {
+                GiftCoverImage(
+                    urlString: banners[0],
+                    emoji: gift.coverEmoji,
+                    colorHex: gift.coverColor,
+                    emojiSize: MallMetrics.sdp(72)
+                )
+            } else {
+                TabView {
+                    ForEach(Array(banners.enumerated()), id: \.offset) { _, url in
+                        GiftCoverImage(
+                            urlString: url,
+                            emoji: gift.coverEmoji,
+                            colorHex: gift.coverColor,
+                            emojiSize: MallMetrics.sdp(72)
+                        )
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .automatic))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        .clipped()
+    }
+
     private func content(_ gift: GiftItem) -> some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Color(hexString: gift.coverColor)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: UIScreen.main.bounds.width / 1.1)
-                        .overlay {
-                            Text(gift.coverEmoji)
-                                .font(.system(size: MallMetrics.sdp(72)))
-                        }
+                    giftBanner(gift)
                     VStack(alignment: .leading, spacing: 0) {
                         Text(gift.priceLabel)
                             .font(.system(size: MallMetrics.sdp(22), weight: .bold))
@@ -424,12 +466,13 @@ struct GiftDetailView: View {
                             .font(.system(size: MallMetrics.sdp(13)))
                             .foregroundStyle(Theme.cyan)
                             .padding(.top, MallMetrics.sdp(12))
-                        if gift.cashFen > 0 {
-                            Text("含现金部分：积分先扣，现金需客服确认（暂未开通在线支付）")
-                                .font(.system(size: MallMetrics.sdp(12)))
-                                .foregroundStyle(Theme.gold)
-                                .padding(.top, MallMetrics.sdp(6))
-                        }
+                        // 上架前不展示现金补差说明。恢复在线支付后再打开。
+                        // if gift.cashFen > 0 {
+                        //     Text("含现金部分：积分先扣，现金需客服确认（暂未开通在线支付）")
+                        //         .font(.system(size: MallMetrics.sdp(12)))
+                        //         .foregroundStyle(Theme.gold)
+                        //         .padding(.top, MallMetrics.sdp(6))
+                        // }
                     }
                     .padding(MallMetrics.sdp(16))
                 }
@@ -454,72 +497,31 @@ struct GiftDetailView: View {
         }
     }
 
-    private var addressDialog: some View {
-        ZStack {
-            Color.black.opacity(0.45).ignoresSafeArea()
-                .onTapGesture { showAddress = false }
-            VStack(alignment: .leading, spacing: MallMetrics.sdp(8)) {
-                Text("收货地址")
-                    .font(.system(size: MallMetrics.sdp(20), weight: .bold))
-                    .foregroundStyle(Theme.cyanSoft)
-                addressField("收件人", "请填写收件人姓名", text: $name)
-                addressField("电话", "请填写联系电话", text: $phone)
-                addressField("地址", "省市区 + 详细地址", text: $detail)
-                HStack {
-                    Spacer()
-                    Button("取消") { showAddress = false }
-                        .foregroundStyle(Theme.onSurfaceVariant)
-                        .padding(MallMetrics.sdp(10))
-                    Button("下一步") {
-                        showAddress = false
-                        confirm = true
-                    }
-                    .font(.system(size: MallMetrics.sdp(14), weight: .bold))
-                    .foregroundStyle(Theme.onPrimary)
-                    .padding(.horizontal, MallMetrics.sdp(16))
-                    .padding(.vertical, MallMetrics.sdp(10))
-                    .background(Theme.cyan, in: Capsule())
-                }
-            }
-            .padding(MallMetrics.sdp(20))
-            .background(Theme.surfaceContainer, in: RoundedRectangle(cornerRadius: MallMetrics.sdp(24), style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: MallMetrics.sdp(24), style: .continuous)
-                    .stroke(Theme.cyan.opacity(0.4), lineWidth: 1)
-            )
-            .padding(.horizontal, MallMetrics.sdp(24))
-        }
-    }
-
-    private func addressField(_ label: String, _ placeholder: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: MallMetrics.sdp(6)) {
-            Text(label)
-                .font(.system(size: MallMetrics.sdp(13), weight: .medium))
-                .foregroundStyle(Theme.onSurfaceVariant)
-            TextField(placeholder, text: text)
-                .font(.system(size: MallMetrics.sdp(14)))
-                .foregroundStyle(Theme.onSurface)
-                .padding(MallMetrics.sdp(12))
-                .background(Theme.surfaceHigh, in: RoundedRectangle(cornerRadius: MallMetrics.sdp(12), style: .continuous))
-        }
-    }
-
     private func beginRedeem(_ gift: GiftItem) {
-        guard model.session != nil else {
+        guard let session = model.session else {
             model.showLogin = true
             return
         }
-        if gift.needAddress {
-            showAddress = true
-        } else {
-            confirm = true
+        if gift.cashFen > 0 {
+            model.banner = "该礼品暂未开放兑换"
+            return
         }
+        if gift.needAddress {
+            let savedName = session.shippingName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let savedPhone = session.shippingPhone?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let savedDetail = session.shippingDetail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !savedName.isEmpty, !savedPhone.isEmpty, !savedDetail.isEmpty else {
+                missingAddress = true
+                return
+            }
+            name = savedName
+            phone = savedPhone
+            detail = savedDetail
+        }
+        confirm = true
     }
 
     private func load() async {
-        if name.isEmpty { name = model.session?.shippingName ?? "" }
-        if phone.isEmpty { phone = model.session?.shippingPhone ?? "" }
-        if detail.isEmpty { detail = model.session?.shippingDetail ?? "" }
         loading = true
         defer { loading = false }
         gift = try? await model.api.fetchGift(id: giftId)
@@ -909,7 +911,8 @@ struct WithdrawView: View {
                 Text("提现方式")
                     .font(.headline)
                     .foregroundStyle(Theme.onSurface)
-                ForEach(config?.channels ?? []) { item in
+                // 上架前关闭「提现到微信」，只保留其它提现方式。恢复时改回 config?.channels。
+                ForEach(payoutChannels) { item in
                     Button {
                         channel = item.id
                     } label: {
@@ -978,8 +981,13 @@ struct WithdrawView: View {
         .task { await load() }
     }
 
+    /// 上架前不提供提现到微信。
+    private var payoutChannels: [WithdrawChannel] {
+        (config?.channels ?? []).filter { $0.id != "wechat" }
+    }
+
     private var selectedChannel: WithdrawChannel? {
-        config?.channels.first { $0.id == channel }
+        payoutChannels.first { $0.id == channel }
     }
 
     private func load() async {
@@ -990,8 +998,9 @@ struct WithdrawView: View {
         do {
             let fetched = try await model.api.fetchWithdrawConfig(token: token)
             config = fetched
-            if fetched.channels.allSatisfy({ $0.id != channel }) {
-                channel = fetched.channels.first?.id ?? "alipay"
+            let channels = fetched.channels.filter { $0.id != "wechat" }
+            if channels.allSatisfy({ $0.id != channel }) {
+                channel = channels.first?.id ?? "alipay"
             }
             history = try await model.api.listWithdrawals(token: token)
         } catch {
@@ -1002,6 +1011,10 @@ struct WithdrawView: View {
     private func submit() async {
         guard let token = model.session?.token else {
             model.showLogin = true
+            return
+        }
+        guard channel != "wechat" else {
+            model.banner = "提现到微信暂未开放"
             return
         }
         let trimmed = account.trimmingCharacters(in: .whitespacesAndNewlines)

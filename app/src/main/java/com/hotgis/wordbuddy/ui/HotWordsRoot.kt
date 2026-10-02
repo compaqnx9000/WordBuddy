@@ -916,12 +916,8 @@ fun HotWordsRoot(
                         onBack = { showPointsMall = false },
                         onOpenOrders = { showGiftOrders = true },
                         onOpenGift = { giftDetailId = it },
-                        onOpenCheckIn = {
-                            showPointsMall = false
-                            tab = MainTab.Me
-                        },
-                        onOpenWithdraw = { showPointsWithdraw = true },
-                        onOpenBuyPoints = { showBuyPoints = true },
+                        streakDays = checkIn.streakDays,
+                        checkedInToday = checkIn.checkedInToday,
                         onLogin = {
                             loginHint = "登录后可兑换礼品"
                             showLogin = true
@@ -992,7 +988,6 @@ fun HotWordsRoot(
                         .fillMaxSize()
                         .hotWordsScreen(padding, consumeStatusBars = false),
                     settings = ui.settings,
-                    notebooks = notebooks,
                     onBack = { showAppSettings = false },
                     onChange = viewModel::updateSettings,
                     loggedIn = session != null,
@@ -1036,7 +1031,6 @@ fun HotWordsRoot(
                             .fillMaxSize()
                             .hotWordsScreen(padding),
                         settings = ui.settings,
-                        notebooks = notebooks,
                         onBack = { overlay = Overlay.Card },
                         onChange = viewModel::updateSettings,
                         loggedIn = session != null,
@@ -1219,6 +1213,16 @@ fun HotWordsRoot(
                                                 ).show()
                                             }
                                             onDone(saved)
+                                        }
+                                    }
+                                },
+                                onFavoriteToNotebook = { entry, notebookId, onDone ->
+                                    if (!requireLogin("收藏生词需要先登录或注册")) {
+                                        onDone(false)
+                                    } else {
+                                        viewModel.saveRelatedWordToNotebook(entry, notebookId) { ok, message ->
+                                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                            onDone(ok)
                                         }
                                     }
                                 },

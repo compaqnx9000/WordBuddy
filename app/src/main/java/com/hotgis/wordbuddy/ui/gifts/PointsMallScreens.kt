@@ -37,11 +37,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBackIos
-import androidx.compose.material.icons.outlined.CardGiftcard
-import androidx.compose.material.icons.outlined.EventAvailable
-import androidx.compose.material.icons.outlined.LocalMall
-import androidx.compose.material.icons.outlined.ReceiptLong
-import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -100,10 +95,9 @@ fun PointsMallScreen(
     onBack: () -> Unit,
     onOpenOrders: () -> Unit,
     onOpenGift: (Long) -> Unit,
-    onOpenCheckIn: () -> Unit,
-    onOpenWithdraw: () -> Unit,
-    onOpenBuyPoints: () -> Unit = {},
     onLogin: () -> Unit,
+    streakDays: Int = 0,
+    checkedInToday: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val api = remember { WordBuddyApi() }
@@ -155,22 +149,10 @@ fun PointsMallScreen(
                     totalPoints = totalPoints,
                     userName = userName,
                     loggedIn = loggedIn,
+                    streakDays = streakDays,
+                    checkedInToday = checkedInToday,
                     onOpenOrders = {
                         if (loggedIn) onOpenOrders() else onLogin()
-                    },
-                    onOpenCheckIn = onOpenCheckIn,
-                    onOpenWithdraw = {
-                        if (loggedIn) onOpenWithdraw() else onLogin()
-                    },
-                    onOpenBuyPoints = {
-                        if (loggedIn) onOpenBuyPoints() else onLogin()
-                    },
-                    onPointsOnly = {
-                        val target = categories.firstOrNull { it.id == "points_only" }?.id
-                            ?: categories.firstOrNull()?.id
-                            ?: "points_only"
-                        category = target
-                        reload(target)
                     },
                 )
             }
@@ -243,11 +225,9 @@ private fun MallHeader(
     totalPoints: Int,
     userName: String,
     loggedIn: Boolean,
+    streakDays: Int,
+    checkedInToday: Boolean,
     onOpenOrders: () -> Unit,
-    onOpenCheckIn: () -> Unit,
-    onOpenWithdraw: () -> Unit,
-    onOpenBuyPoints: () -> Unit,
-    onPointsOnly: () -> Unit,
 ) {
     Column(
         Modifier
@@ -291,38 +271,34 @@ private fun MallHeader(
         }
         Spacer(Modifier.height(14.sdp()))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            QuickAction(Icons.Outlined.ShoppingCart, "购买积分", onClick = onOpenBuyPoints)
-            QuickAction(Icons.Outlined.LocalMall, "0元起兑", onClick = onPointsOnly)
-            QuickAction(Icons.Outlined.CardGiftcard, "积分提现", onClick = onOpenWithdraw)
-            QuickAction(Icons.Outlined.EventAvailable, "每日签到", onClick = onOpenCheckIn)
+            MallStat(value = if (loggedIn) "${streakDays}天" else "—", caption = "连续签到")
+            MallStat(
+                value = if (!loggedIn) "—" else if (checkedInToday) "已签到" else "未签到",
+                caption = "今日",
+            )
         }
     }
 }
 
 @Composable
-private fun QuickAction(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    onClick: () -> Unit,
-) {
+private fun MallStat(value: String, caption: String) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .clip(RoundedCornerShape(12.sdp()))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 6.sdp(), vertical = 4.sdp()),
+        modifier = Modifier.padding(horizontal = 6.sdp(), vertical = 4.sdp()),
     ) {
         Box(
-            Modifier
-                .size(40.sdp())
-                .clip(CircleShape)
-                .background(Stellar.SurfaceHigh),
+            Modifier.height(40.sdp()),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = Stellar.Gold, modifier = Modifier.size(20.sdp()))
+            Text(
+                text = value,
+                color = Stellar.CyanSoft,
+                fontSize = 16.ssp(),
+                fontWeight = FontWeight.Bold,
+            )
         }
         Spacer(Modifier.height(4.sdp()))
-        Text(label, color = Stellar.OnSurfaceVariant, fontSize = 11.ssp())
+        Text(caption, color = Stellar.OnSurfaceVariant, fontSize = 11.ssp())
     }
 }
 

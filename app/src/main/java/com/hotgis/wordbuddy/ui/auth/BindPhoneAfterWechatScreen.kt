@@ -173,7 +173,7 @@ fun BindPhoneAfterWechatScreen(
             LoginField(
                 value = password,
                 onValueChange = onPasswordChange,
-                placeholder = "设置密码（选填）",
+                placeholder = "设置密码（至少 6 位）",
                 leading = Icons.Outlined.Lock,
                 keyboardType = KeyboardType.Password,
                 password = true,
@@ -183,7 +183,7 @@ fun BindPhoneAfterWechatScreen(
             LoginField(
                 value = passwordConfirm,
                 onValueChange = onPasswordConfirmChange,
-                placeholder = "再输入一次密码（若已填）",
+                placeholder = "再输入一次密码",
                 leading = Icons.Outlined.Lock,
                 keyboardType = KeyboardType.Password,
                 password = true,

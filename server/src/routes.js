@@ -8,7 +8,11 @@ import {
   authRequired,
   optionalAuth,
   ensureUserNotebook,
+  createDefaultNotebookIfEmpty,
   hashPassword,
+  isLockedUserNotebook,
+  SYSTEM_VOCAB_NAME,
+  LEGACY_VOCAB_NAMES,
   normalizePassword,
   normalizePhone,
   recordLoginEvent,
@@ -345,7 +349,7 @@ async function applyOauthProfile(userId, profile, source = 'oauth') {
 }
 
 async function finishLogin(req, res, user, method, invite = null) {
-  const vocabNotebookId = await ensureUserNotebook(user.id)
+  const vocabNotebookId = await createDefaultNotebookIfEmpty(user.id)
   // Single-device policy: each successful login invalidates older JWTs.
   const sessionVersion = await rotateSessionVersion(user.id)
   await recordLoginEvent(req, {
@@ -655,8 +659,8 @@ router.post('/auth/bind-phone', authRequired, async (req, res) => {
     res.status(400).json({ error: '请输入正确的手机号' })
     return
   }
-  if (passwordRaw != null && String(passwordRaw).trim() !== '' && !password) {
-    res.status(400).json({ error: '密码需要 6 到 32 位' })
+  if (!password) {
+    res.status(400).json({ error: '请设置登录密码（6 到 32 位）' })
     return
   }
   const me = (
@@ -699,11 +703,9 @@ router.post('/auth/bind-phone', authRequired, async (req, res) => {
   try {
     const fields = ['phone = $2', 'phone_changed_at = now()']
     const params = [me.id, phone]
-    if (password) {
-      fields.push(`password_hash = $${params.length + 1}`)
-      params.push(hashPassword(password))
-      fields.push('password_changed_at = now()')
-    }
+    fields.push(`password_hash = $${params.length + 1}`)
+    params.push(hashPassword(password))
+    fields.push('password_changed_at = now()')
     await query(`UPDATE users SET ${fields.join(', ')} WHERE id = $1`, params)
   } catch (error) {
     if (error?.code === '23505') {
@@ -1590,6 +1592,8 @@ router.get('/notebooks', authRequired, async (req, res) => {
 })
 
 function mapNotebook(row) {
+  const isSystem = row.kind === 'catalog'
+  const isLocked = isSystem || isLockedUserNotebook(row)
   return {
     id: Number(row.id),
     kind: row.kind,
@@ -1598,7 +1602,8 @@ function mapNotebook(row) {
     sortOrder: row.sort_order,
     wordCount: row.word_count ?? 0,
     createdAtMillis: new Date(row.created_at).getTime(),
-    isSystem: row.kind === 'catalog',
+    isSystem,
+    isLocked,
   }
 }
 
@@ -1606,6 +1611,10 @@ router.post('/notebooks', authRequired, async (req, res) => {
   const name = String(req.body?.name || '').trim()
   if (!name) {
     res.status(400).json({ error: '请输入生词本名称' })
+    return
+  }
+  if (name === SYSTEM_VOCAB_NAME || LEGACY_VOCAB_NAMES.includes(name)) {
+    res.status(400).json({ error: '不能使用默认生词本名称' })
     return
   }
   if (name.length > 20) {
@@ -1639,7 +1648,7 @@ router.post('/notebooks', authRequired, async (req, res) => {
 
 router.delete('/notebooks/:id', authRequired, async (req, res) => {
   const notebook = await loadNotebook(Number(req.params.id))
-  if (notebook?.kind === 'catalog') {
+  if (notebook?.kind === 'catalog' || isLockedUserNotebook(notebook)) {
     res.status(403).json({ error: '系统词书不能删除' })
     return
   }
@@ -1647,8 +1656,9 @@ router.delete('/notebooks/:id', authRequired, async (req, res) => {
     res.status(403).json({ error: '不能删除该词本' })
     return
   }
-  // Default「生词本」is a normal user notebook and may be deleted.
-  // ensureUserNotebook recreates one when the user next needs a personal book.
+  // Words reference the notebook with ON DELETE CASCADE; delete them explicitly
+  // so the book and its entries are both gone even if that constraint is missing.
+  await query('DELETE FROM words WHERE notebook_id = $1', [notebook.id])
   await query('DELETE FROM notebooks WHERE id = $1', [notebook.id])
   res.json({ ok: true })
 })

@@ -1,3 +1,5 @@
+// 上架前关闭穿山甲。上架后把这一行改成 `#if true` 即可恢复开屏、信息流和激励视频。
+#if false
 import AppTrackingTransparency
 import SwiftUI
 import UIKit
@@ -447,3 +449,53 @@ private extension UIViewController {
         return self
     }
 }
+#else
+import SwiftUI
+import UIKit
+
+enum RewardShowResult {
+    case rewarded
+    case skipped
+    case failed(String)
+}
+
+@MainActor
+final class PangleAds: NSObject {
+    static let shared = PangleAds()
+
+    func showReward(userId: String?) async -> RewardShowResult {
+        .failed("广告暂未开放")
+    }
+}
+
+struct ColdSplashCover: UIViewControllerRepresentable {
+    var onFinish: () -> Void
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        DispatchQueue.main.async { onFinish() }
+        return UIViewController()
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+}
+
+@MainActor
+final class DrawAdPool: ObservableObject {
+    static let shared = DrawAdPool()
+
+    @Published private(set) var revision = 0
+
+    var hasReady: Bool { false }
+
+    func preload() {}
+
+    func takeReady() -> String? { nil }
+}
+
+struct DrawAdPage: View {
+    let adKey: String
+    let active: Bool
+
+    var body: some View { Color.clear }
+}
+#endif

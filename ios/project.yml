@@ -29,7 +29,9 @@ targets:
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.hotgis.wordbuddy
+        PRODUCT_BUNDLE_IDENTIFIER: com.hotgis.wordbuddy.ios
+        DEVELOPMENT_TEAM: HXN67QW4CL
+        CODE_SIGN_ENTITLEMENTS: WordBuddy/WordBuddy.entitlements
         PRODUCT_NAME: WordBuddy
         INFOPLIST_FILE: WordBuddy/Info.plist
         GENERATE_INFOPLIST_FILE: NO

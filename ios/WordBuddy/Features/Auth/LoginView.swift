@@ -66,22 +66,23 @@ struct LoginView: View {
                 formCard
                     .glassPanel(neon: true)
 
-                if !needPassword && !bindingPhone {
-                    Text("其他登录方式")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.onSurfaceVariant.opacity(0.75))
-                        .padding(.top, 28)
-                    HStack(spacing: 28) {
-                        socialButton("WeChat", label: "微信登录", tint: Color(hex: 0x07C160)) {
-                            Task { await loginWithWechat() }
-                        }
-                        socialButton("Alipay", label: "支付宝登录", tint: Color(hex: 0x1677FF)) {
-                            Task { await loginWithAlipay() }
-                        }
-                    }
-                    .padding(.top, 14)
-                    .disabled(loggingIn)
-                }
+                // 上架前关闭第三方登录（微信、支付宝）。恢复时取消下面这一段注释，并同时提供「通过 Apple 登录」。
+                // if !needPassword && !bindingPhone {
+                //     Text("其他登录方式")
+                //         .font(.system(size: 12))
+                //         .foregroundStyle(Theme.onSurfaceVariant.opacity(0.75))
+                //         .padding(.top, 28)
+                //     HStack(spacing: 28) {
+                //         socialButton("WeChat", label: "微信登录", tint: Color(hex: 0x07C160)) {
+                //             Task { await loginWithWechat() }
+                //         }
+                //         socialButton("Alipay", label: "支付宝登录", tint: Color(hex: 0x1677FF)) {
+                //             Task { await loginWithAlipay() }
+                //         }
+                //     }
+                //     .padding(.top, 14)
+                //     .disabled(loggingIn)
+                // }
 
                 Text(footer)
                     .font(.system(size: 12))
@@ -162,9 +163,9 @@ struct LoginView: View {
             }
 
             if bindingPhone {
-                loginField("设置密码（选填）", text: $password, icon: "lock", secure: true)
+                loginField("设置密码（至少 6 位）", text: $password, icon: "lock", secure: true)
                     .padding(.top, 12)
-                loginField("再输入一次密码（若已填）", text: $passwordConfirm, icon: "lock", secure: true)
+                loginField("再输入一次密码", text: $passwordConfirm, icon: "lock", secure: true)
                     .padding(.top, 12)
             } else if needPassword {
                 loginField("新密码（至少 6 位）", text: $password, icon: "lock", secure: true)
@@ -240,7 +241,7 @@ struct LoginView: View {
 
     private var subtitle: String {
         if bindingPhone {
-            return "\(bindProvider)登录成功。请绑定手机号，以便找回账号与提现。"
+            return "\(bindProvider)登录成功。请绑定手机号并设置登录密码。"
         }
         if needPassword { return "验证通过后设置密码，之后可用手机号+密码登录" }
         switch mode {
@@ -452,15 +453,13 @@ struct LoginView: View {
             errorMessage = "请输入6位验证码"
             return
         }
-        if !password.isEmpty || !passwordConfirm.isEmpty {
-            if password.count < 6 {
-                errorMessage = "密码至少 6 位"
-                return
-            }
-            if password != passwordConfirm {
-                errorMessage = "两次密码不一致"
-                return
-            }
+        guard password.count >= 6 else {
+            errorMessage = "密码至少 6 位"
+            return
+        }
+        guard password == passwordConfirm else {
+            errorMessage = "两次密码不一致"
+            return
         }
         loggingIn = true
         errorMessage = nil
@@ -470,7 +469,7 @@ struct LoginView: View {
                 token: token,
                 phone: phone,
                 code: code,
-                password: password.isEmpty ? nil : password
+                password: password
             )
             bindToken = nil
             try await finish(result)

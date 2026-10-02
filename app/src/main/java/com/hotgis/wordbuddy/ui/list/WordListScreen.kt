@@ -181,6 +181,8 @@ fun WordListScreen(
      * Invoke [onDone] with the resulting favorited state, or null if the toggle failed.
      */
     onToggleFavorite: (entry: VocabEntry, onDone: (Boolean?) -> Unit) -> Unit = { _, onDone -> onDone(null) },
+    /** Favorite a catalog word into a chosen user notebook. */
+    onFavoriteToNotebook: (entry: VocabEntry, notebookId: Long, onDone: (Boolean) -> Unit) -> Unit = { _, _, onDone -> onDone(false) },
     alphabetLetterIndex: Map<Char, Int> = emptyMap(),
     onSeekAlphabetLetter: (Char) -> Unit = {},
     pendingScrollEntryId: Long? = null,
@@ -201,6 +203,8 @@ fun WordListScreen(
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
     var showMoveDialog by remember { mutableStateOf(false) }
+    var showFavoriteToDialog by remember { mutableStateOf(false) }
+    var pendingFavoriteEntry by remember { mutableStateOf<VocabEntry?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var showStatsDialog by remember { mutableStateOf(false) }
@@ -212,7 +216,6 @@ fun WordListScreen(
     // Optimistic favorite overrides so swipe star updates immediately after tap.
     var favoriteOverrides by remember(ui.activeNotebookId) { mutableStateOf(emptyMap<String, Boolean>()) }
     val catalogLocked = notebooks.firstOrNull { it.id == ui.activeNotebookId }?.isSystem == true
-    val defaultFavoriteNotebookId = ui.settings.defaultNotebookId
     fun isFavorited(entry: VocabEntry): Boolean {
         val key = entry.text.lowercase()
         return favoriteOverrides[key]
@@ -372,7 +375,7 @@ fun WordListScreen(
                 if (onCreateNotebookClick()) showCreateDialog = true
             },
             onDeleteRequest = { notebook ->
-                if (!notebook.isSystem) {
+                if (!notebook.isLocked) {
                     notebookToDelete = notebook
                 }
             },
@@ -442,19 +445,10 @@ fun WordListScreen(
                                     onSpeak = {},
                                 )
                             } else if (catalogLocked) {
-                                val favorited = remember(
-                                    entry.text,
-                                    entry.id,
-                                    favoriteRevision,
-                                    defaultFavoriteNotebookId,
-                                    favoriteOverrides[entry.text.lowercase()],
-                                ) {
-                                    isFavorited(entry)
-                                }
                                 SwipeRevealAction(
                                     revealed = openSwipeId == entry.id,
                                     enabled = true,
-                                    actionWidth = 88.sdp(),
+                                    actionWidth = 96.sdp(),
                                     actionColor = Stellar.Gold.copy(alpha = 0.88f),
                                     onRevealChange = { open ->
                                         openSwipeId = when {
@@ -465,23 +459,20 @@ fun WordListScreen(
                                     },
                                     onAction = {
                                         openSwipeId = null
-                                        onToggleFavorite(entry) { nowSaved ->
-                                            if (nowSaved == null) return@onToggleFavorite
-                                            val key = entry.text.lowercase()
-                                            favoriteOverrides = favoriteOverrides + (key to nowSaved)
-                                        }
+                                        pendingFavoriteEntry = entry
+                                        showFavoriteToDialog = true
                                     },
                                     actionContent = {
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                             Icon(
-                                                imageVector = if (favorited) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                                                contentDescription = if (favorited) "取消收藏" else "收藏",
+                                                imageVector = Icons.Outlined.StarBorder,
+                                                contentDescription = "收藏到…",
                                                 tint = Color.White,
                                                 modifier = Modifier.size(22.sdp()),
                                             )
                                             Spacer(Modifier.height(2.sdp()))
                                             Text(
-                                                if (favorited) "取消" else "收藏",
+                                                "收藏到…",
                                                 color = Color.White,
                                                 fontSize = 13.ssp(),
                                                 fontWeight = FontWeight.Medium,
@@ -513,24 +504,51 @@ fun WordListScreen(
                                 }
                             } else {
                             DraggableItem(dragDropState = dragDropState, index = index) { isDragging ->
-                                SwipeRevealAction(
+                                val moveWidth = 76.sdp()
+                                val deleteWidth = 76.sdp()
+                                SwipeRevealActions(
                                     revealed = openSwipeId == entry.id,
                                     enabled = !reordering,
-                                    actionWidth = 76.sdp(),
-                                    actionColor = LocalStellar.current.Pink.copy(alpha = 0.82f),
+                                    actions = listOf(
+                                        SwipeAction(
+                                            width = moveWidth,
+                                            color = Stellar.Cyan.copy(alpha = 0.95f),
+                                            onClick = {
+                                                openSwipeId = null
+                                                selectedIds = setOf(entry.id)
+                                                showMoveDialog = true
+                                            },
+                                        ) {
+                                            Text(
+                                                "移动到",
+                                                color = Color.White,
+                                                fontSize = 15.ssp(),
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                            )
+                                        },
+                                        SwipeAction(
+                                            width = deleteWidth,
+                                            color = LocalStellar.current.Pink.copy(alpha = 0.82f),
+                                            onClick = {
+                                                openSwipeId = null
+                                                onDelete(entry.id)
+                                            },
+                                        ) {
+                                            Text(
+                                                "删除",
+                                                color = Color.White,
+                                                fontSize = 15.ssp(),
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        },
+                                    ),
                                     onRevealChange = { open ->
                                         openSwipeId = when {
                                             open -> entry.id
                                             openSwipeId == entry.id -> null
                                             else -> openSwipeId
                                         }
-                                    },
-                                    onAction = {
-                                        openSwipeId = null
-                                        onDelete(entry.id)
-                                    },
-                                    actionContent = {
-                                        Text("删除", color = Color.White, fontSize = 15.ssp(), fontWeight = FontWeight.Medium)
                                     },
                                 ) {
                                     WordRowBody(
@@ -678,6 +696,32 @@ fun WordListScreen(
         )
     }
 
+    if (showFavoriteToDialog) {
+        MoveToNotebookDialog(
+            notebooks = notebooks.filter { !it.isSystem },
+            selectedCount = 1,
+            title = "收藏到生词本",
+            emptyText = "还没有生词本",
+            onDismiss = {
+                showFavoriteToDialog = false
+                pendingFavoriteEntry = null
+            },
+            onSelect = { targetId ->
+                val target = pendingFavoriteEntry
+                showFavoriteToDialog = false
+                pendingFavoriteEntry = null
+                if (target != null) {
+                    onFavoriteToNotebook(target, targetId) { ok ->
+                        if (ok) {
+                            val key = target.text.lowercase()
+                            favoriteOverrides = favoriteOverrides + (key to true)
+                        }
+                    }
+                }
+            },
+        )
+    }
+
     if (showMoreMenu) {
         NotebookMoreSheet(
             canEdit = !catalogLocked && totalCount > 0,
@@ -759,7 +803,7 @@ private fun NotebookSwitcher(
         ) {
             orderedNotebooks.forEach { notebook ->
                 val selected = notebook.id == activeNotebookId
-                val canDelete = !notebook.isSystem
+                val canDelete = !notebook.isLocked
                 val base = catalogChipStyle(notebook) ?: CatalogChipStyle(
                     background = Stellar.SurfaceHigh,
                     foreground = Stellar.OnSurfaceVariant,
@@ -822,7 +866,7 @@ private fun NotebookSwitcher(
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1,
                     )
-                    if (notebook.isSystem) {
+                    if (notebook.isLocked) {
                         Icon(
                             Icons.Filled.Lock,
                             contentDescription = "系统词书不可修改",
@@ -893,17 +937,18 @@ private fun catalogChipStyle(notebook: Notebook): CatalogChipStyle? {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MoveToNotebookDialog(
     notebooks: List<Notebook>,
     selectedCount: Int,
     onDismiss: () -> Unit,
     onSelect: (Long) -> Unit,
+    title: String = "移动到生词本",
+    emptyText: String = "没有其他生词本",
+    countLabel: String? = null,
 ) {
     val shape = RoundedCornerShape(24.sdp())
     val accent = Stellar.Cyan
-    val accentSoft = Stellar.CyanSoft
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
@@ -924,43 +969,37 @@ private fun MoveToNotebookDialog(
                 .padding(horizontal = 22.sdp(), vertical = 20.sdp()),
         ) {
             Text(
-                text = "移动到生词本",
-                color = accentSoft,
+                text = title,
+                color = Stellar.OnSurface,
                 fontSize = 22.ssp(),
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.height(8.sdp()))
             Text(
-                text = "已选择 $selectedCount 个词条",
+                text = countLabel ?: "已选择 $selectedCount 个词条",
                 color = Stellar.OnSurfaceVariant,
                 fontSize = 14.ssp(),
             )
             Spacer(Modifier.height(14.sdp()))
             if (notebooks.isEmpty()) {
-                Text("没有其他生词本", color = Stellar.OnSurfaceVariant, fontSize = 14.ssp())
+                Text(emptyText, color = Stellar.OnSurfaceVariant, fontSize = 14.ssp())
             } else {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.sdp()),
-                    verticalArrangement = Arrangement.spacedBy(8.sdp()),
-                ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.sdp())) {
                     notebooks.forEach { notebook ->
-                        Box(
+                        Text(
+                            text = notebook.name,
+                            color = Stellar.CyanSoft,
+                            fontSize = 17.ssp(),
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            textAlign = TextAlign.Center,
                             modifier = Modifier
-                                .height(36.sdp())
-                                .clip(RoundedCornerShape(18.sdp()))
-                                .background(Stellar.CyanSoft)
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.sdp()))
+                                .background(Stellar.SurfaceHigh)
                                 .clickable { onSelect(notebook.id) }
-                                .padding(horizontal = 14.sdp()),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = notebook.name,
-                                color = Stellar.OnPrimary,
-                                fontSize = 13.ssp(),
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                            )
-                        }
+                                .padding(vertical = 14.sdp()),
+                        )
                     }
                 }
             }
@@ -1158,6 +1197,13 @@ private fun SelectionActionButton(
     }
 }
 
+private data class SwipeAction(
+    val width: Dp,
+    val color: Color,
+    val onClick: () -> Unit,
+    val content: @Composable () -> Unit,
+)
+
 @Composable
 private fun SwipeRevealAction(
     revealed: Boolean,
@@ -1169,8 +1215,32 @@ private fun SwipeRevealAction(
     actionContent: @Composable () -> Unit,
     content: @Composable () -> Unit,
 ) {
+    SwipeRevealActions(
+        revealed = revealed,
+        enabled = enabled,
+        actions = listOf(
+            SwipeAction(
+                width = actionWidth,
+                color = actionColor,
+                onClick = onAction,
+                content = actionContent,
+            ),
+        ),
+        onRevealChange = onRevealChange,
+        content = content,
+    )
+}
+
+@Composable
+private fun SwipeRevealActions(
+    revealed: Boolean,
+    enabled: Boolean,
+    actions: List<SwipeAction>,
+    onRevealChange: (Boolean) -> Unit,
+    content: @Composable () -> Unit,
+) {
     val density = LocalDensity.current
-    val actionPx = with(density) { actionWidth.toPx() }
+    val actionPx = with(density) { actions.sumOf { it.width.toPx().toDouble() }.toFloat() }
     val offsetX = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val showAction = offsetX.value < -0.5f
@@ -1191,17 +1261,22 @@ private fun SwipeRevealAction(
             .clipToBounds(),
     ) {
         if (showAction) {
-            Box(Modifier.matchParentSize()) {
-                Box(
-                    Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight()
-                        .width(actionWidth)
-                        .background(actionColor)
-                        .clickable(onClick = onAction),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    actionContent()
+            Row(
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight(),
+            ) {
+                actions.forEach { action ->
+                    Box(
+                        Modifier
+                            .fillMaxHeight()
+                            .width(action.width)
+                            .background(action.color)
+                            .clickable(onClick = action.onClick),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        action.content()
+                    }
                 }
             }
         }

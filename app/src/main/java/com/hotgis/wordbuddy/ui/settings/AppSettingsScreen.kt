@@ -42,7 +42,6 @@ import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PersonOff
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
@@ -69,7 +68,6 @@ import android.widget.Toast
 import com.hotgis.wordbuddy.data.AccentStyle
 import com.hotgis.wordbuddy.data.AppTheme
 import com.hotgis.wordbuddy.data.ImageGenProvider
-import com.hotgis.wordbuddy.data.Notebook
 import com.hotgis.wordbuddy.data.StudySettings
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
@@ -103,7 +101,6 @@ import com.hotgis.wordbuddy.ui.profile.ChangePasswordDialog
 @Composable
 fun AppSettingsScreen(
     settings: StudySettings,
-    notebooks: List<Notebook>,
     onBack: () -> Unit,
     onChange: ((StudySettings) -> StudySettings) -> Unit,
     onLogout: () -> Unit = {},
@@ -269,8 +266,6 @@ fun AppSettingsScreen(
                     imageProvider = settings.imageProvider,
                     podcastPlayWhenScreenOff = settings.podcastPlayWhenScreenOff,
                     shortsMetaVisibleDefault = settings.shortsMetaVisibleDefault,
-                    notebooks = notebooks,
-                    defaultNotebookId = settings.defaultNotebookId,
                     onAutoPronounce = { enabled -> onChange { it.copy(speakOnPageChange = enabled) } },
                     onDailyReminder = { enabled -> onChange { it.copy(dailyReminder = enabled) } },
                     onAiImageAutoGen = { enabled -> onChange { it.copy(aiImageAutoGen = enabled) } },
@@ -281,7 +276,6 @@ fun AppSettingsScreen(
                     onShortsMetaVisibleDefault = { enabled ->
                         onChange { it.copy(shortsMetaVisibleDefault = enabled) }
                     },
-                    onDefaultNotebook = { id -> onChange { it.copy(defaultNotebookId = id) } },
                 )
 
                 StorageCacheCard(
@@ -531,15 +525,12 @@ private fun PreferencesCard(
     imageProvider: ImageGenProvider,
     podcastPlayWhenScreenOff: Boolean,
     shortsMetaVisibleDefault: Boolean,
-    notebooks: List<Notebook>,
-    defaultNotebookId: Long,
     onAutoPronounce: (Boolean) -> Unit,
     onDailyReminder: (Boolean) -> Unit,
     onAiImageAutoGen: (Boolean) -> Unit,
     onImageProvider: (ImageGenProvider) -> Unit,
     onPodcastPlayWhenScreenOff: (Boolean) -> Unit,
     onShortsMetaVisibleDefault: (Boolean) -> Unit,
-    onDefaultNotebook: (Long) -> Unit,
 ) {
     Column(
         Modifier
@@ -613,12 +604,6 @@ private fun PreferencesCard(
             checked = aiImageAutoGen,
             accentOnHover = Stellar.Pink,
             onChecked = onAiImageAutoGen,
-        )
-        PreferenceDivider()
-        DefaultNotebookPicker(
-            notebooks = notebooks,
-            selectedId = defaultNotebookId,
-            onSelect = onDefaultNotebook,
         )
     }
 }
@@ -896,60 +881,6 @@ private fun ImageProviderPicker(
                         .clip(RoundedCornerShape(20.sdp()))
                         .background(if (chosen) Stellar.CyanSoft else Stellar.SurfaceHigh)
                         .clickable { onSelect(provider) }
-                        .padding(horizontal = 14.sdp(), vertical = 8.sdp()),
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun DefaultNotebookPicker(
-    notebooks: List<Notebook>,
-    selectedId: Long,
-    onSelect: (Long) -> Unit,
-) {
-    Column(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.Filled.MenuBook,
-                contentDescription = null,
-                tint = Stellar.OnSurfaceVariant.copy(alpha = 0.65f),
-                modifier = Modifier.size(22.sdp()),
-            )
-            Spacer(Modifier.width(12.sdp()))
-            Text(
-                text = "默认收藏生词本",
-                color = Stellar.OnSurface,
-                fontSize = 15.ssp(),
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-        Spacer(Modifier.height(4.sdp()))
-        Text(
-            text = "首页查词点星星时，词条会保存到所选生词本",
-            color = Stellar.OnSurfaceVariant,
-            fontSize = 13.ssp(),
-            modifier = Modifier.padding(start = 34.sdp()),
-        )
-        Spacer(Modifier.height(12.sdp()))
-        FlowRow(
-            modifier = Modifier.padding(start = 34.sdp()),
-            horizontalArrangement = Arrangement.spacedBy(8.sdp()),
-            verticalArrangement = Arrangement.spacedBy(8.sdp()),
-        ) {
-            notebooks.filter { !it.isSystem }.forEach { notebook ->
-                val selected = notebook.id == selectedId
-                Text(
-                    text = notebook.name,
-                    color = if (selected) Stellar.OnPrimary else Stellar.OnSurfaceVariant,
-                    fontSize = 13.ssp(),
-                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.sdp()))
-                        .background(if (selected) Stellar.CyanSoft else Stellar.SurfaceHigh)
-                        .clickable { onSelect(notebook.id) }
                         .padding(horizontal = 14.sdp(), vertical = 8.sdp()),
                 )
             }

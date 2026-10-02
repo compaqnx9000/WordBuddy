@@ -65,7 +65,8 @@ struct VocabEntry: Codable, Equatable, Identifiable, Hashable {
 
 struct Notebook: Codable, Equatable, Identifiable, Hashable {
     static let defaultId: Int64 = 0
-    static let defaultName = "生词本"
+    static let defaultName = "默认生词本"
+    static let legacyDefaultName = "系统生词本"
     static let kindUser = "user"
     static let kindCatalog = "catalog"
 
@@ -76,8 +77,12 @@ struct Notebook: Codable, Equatable, Identifiable, Hashable {
     var kind: String = kindUser
     var slug: String?
     var wordCount: Int = 0
+    var isLockedFlag: Bool? = nil
 
     var isSystem: Bool { kind == Self.kindCatalog }
+
+    /// Catalog books stay locked. The personal「默认生词本」can be deleted like any other book.
+    var isLocked: Bool { isSystem }
 }
 
 enum WordFilter: String, CaseIterable, Identifiable {
@@ -374,6 +379,8 @@ struct GiftItem: Identifiable, Equatable {
     var subtitle: String
     var coverEmoji: String
     var coverColor: String
+    var images: [String] = []
+    var coverImage: String?
     var pointsCost: Int
     var cashFen: Int
     var cashYuan: String
@@ -382,6 +389,13 @@ struct GiftItem: Identifiable, Equatable {
     var redeemedCount: Int
     var needAddress: Bool
     var description: String
+
+    /// Detail banner: uploaded images, or the cover when the gallery is empty.
+    var bannerImages: [String] {
+        if !images.isEmpty { return images }
+        if let coverImage, !coverImage.isEmpty { return [coverImage] }
+        return []
+    }
 
     var priceLabel: String {
         cashFen > 0 ? "\(pointsCost)积分 + \(cashYuan)元" : "\(pointsCost)积分"
