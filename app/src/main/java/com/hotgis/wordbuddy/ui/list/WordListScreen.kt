@@ -16,6 +16,7 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -1258,6 +1259,7 @@ private fun SwipeRevealActions(
     Box(
         Modifier
             .fillMaxWidth()
+            .height(IntrinsicSize.Min)
             .clipToBounds(),
     ) {
         if (showAction) {

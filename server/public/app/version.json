@@ -1,8 +1,8 @@
 {
-  "versionCode": 132,
-  "versionName": "1.41",
+  "versionCode": 136,
+  "versionName": "1.45",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "积分兑礼支持多图：第一张封面，详情页 Banner 轮播。",
-  "releasedAt": "2026-10-01T12:15:00.000Z"
+  "notes": "卡片模式长单词按连字符换行，不再被裁成半截。",
+  "releasedAt": "2026-10-02T14:50:00.000Z"
 }

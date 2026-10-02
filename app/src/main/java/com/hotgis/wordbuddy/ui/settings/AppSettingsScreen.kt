@@ -56,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -450,7 +451,7 @@ private fun AestheticsCard(
         Spacer(Modifier.height(16.sdp()))
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(14.sdp()),
-            verticalArrangement = Arrangement.spacedBy(12.sdp()),
+            verticalArrangement = Arrangement.spacedBy(14.sdp()),
         ) {
             AccentStyle.entries.forEach { style ->
                 ThemeSwatch(
@@ -471,38 +472,31 @@ private fun ThemeSwatch(
     onClick: () -> Unit,
     thumbnailRes: Int? = null,
 ) {
-    val shape = CircleShape
+    val diameter = if (selected) 42.sdp() else 36.sdp()
+    val glow = 8.sdp()
     Box(
         Modifier
-            .size(if (selected) 42.sdp() else 38.sdp())
-            .then(
-                if (selected) {
-                    Modifier.shadow(
-                        elevation = 10.dp,
-                        shape = shape,
-                        ambientColor = color.copy(alpha = 0.55f),
-                        spotColor = color.copy(alpha = 0.55f),
-                    )
-                } else {
-                    Modifier
-                },
-            )
-            .clip(shape)
-            .then(
-                if (thumbnailRes != null) {
-                    Modifier
-                } else {
-                    Modifier.background(color)
-                },
-            )
-            .then(
-                if (selected) {
-                    Modifier.border(2.dp, stellarScreenBackgroundColor(), shape)
-                        .border(3.dp, color, shape)
-                } else {
-                    Modifier
-                },
-            )
+            .size(diameter)
+            .drawBehind {
+                if (!selected) return@drawBehind
+                val core = size.minDimension / 2f
+                val outer = core + glow.toPx()
+                val edge = core / outer
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colorStops = arrayOf(
+                            0f to color.copy(alpha = 0.55f),
+                            edge to color.copy(alpha = 0.50f),
+                            1f to Color.Transparent,
+                        ),
+                        center = center,
+                        radius = outer,
+                    ),
+                    radius = outer,
+                )
+            }
+            .clip(CircleShape)
+            .then(if (thumbnailRes == null) Modifier.background(color) else Modifier)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

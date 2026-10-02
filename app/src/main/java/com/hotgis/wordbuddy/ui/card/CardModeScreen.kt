@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,8 +20,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
@@ -588,71 +591,84 @@ private fun CardWordDisplay(
     glowEnabled: Boolean,
 ) {
     val fontSize = when {
-        word.length >= 14 -> 28.ssp()
-        word.length >= 10 -> 32.ssp()
+        word.length >= 22 -> 24.ssp()
+        word.length >= 16 -> 26.ssp()
+        word.length >= 12 -> 30.ssp()
         else -> 36.ssp()
     }
     val wordStyle = TextStyle(
         fontSize = fontSize,
         fontWeight = FontWeight.ExtraBold,
-        lineHeight = fontSize * 1.2f,
+        lineHeight = fontSize * 1.15f,
     )
     val palette = LocalStellar.current
+    val displayWord = remember(word) { wordWithBreaks(word) }
     val phonicsText = remember(word, phonics, palette) { phonicsDottedWord(word, phonics, palette) }
     val guideLineColor = Stellar.Outline.copy(alpha = 0.28f)
     val guidePaddingH = 10.sdp()
     val guidePaddingV = 8.sdp()
-    val density = LocalDensity.current
-    val slotHeight = with(density) { wordStyle.lineHeight.toDp() + guidePaddingV * 2 }
-    Box(
-        Modifier
-            .height(slotHeight)
-            .wrapContentWidth(Alignment.Start)
-            .drawBehind {
-                if (!phonicsOn) return@drawBehind
-                val dash = PathEffect.dashPathEffect(floatArrayOf(6f, 8f), 0f)
-                val stroke = 1.dp.toPx()
-                drawLine(
-                    color = guideLineColor,
-                    start = Offset(0f, 0f),
-                    end = Offset(size.width, 0f),
-                    strokeWidth = stroke,
-                    pathEffect = dash,
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val textMaxWidth = (maxWidth - guidePaddingH * 2).coerceAtLeast(0.dp)
+        Box(
+            Modifier
+                .wrapContentWidth(Alignment.Start)
+                .wrapContentHeight()
+                .drawBehind {
+                    if (!phonicsOn) return@drawBehind
+                    val dash = PathEffect.dashPathEffect(floatArrayOf(6f, 8f), 0f)
+                    val stroke = 1.dp.toPx()
+                    drawLine(
+                        color = guideLineColor,
+                        start = Offset(0f, 0f),
+                        end = Offset(size.width, 0f),
+                        strokeWidth = stroke,
+                        pathEffect = dash,
+                    )
+                    drawLine(
+                        color = guideLineColor,
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = stroke,
+                        pathEffect = dash,
+                    )
+                },
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Box(
+                Modifier
+                    .padding(horizontal = guidePaddingH, vertical = guidePaddingV)
+                    .widthIn(max = textMaxWidth),
+            ) {
+                Text(
+                    text = displayWord,
+                    style = wordStyle.copy(
+                        color = Stellar.CyanSoft,
+                        shadow = if (glowEnabled) {
+                            Shadow(
+                                color = Stellar.Cyan.copy(alpha = 0.55f),
+                                blurRadius = 22f,
+                            )
+                        } else {
+                            null
+                        },
+                    ),
+                    softWrap = true,
+                    modifier = Modifier.alpha(if (phonicsOn) 0f else 1f),
                 )
-                drawLine(
-                    color = guideLineColor,
-                    start = Offset(0f, size.height),
-                    end = Offset(size.width, size.height),
-                    strokeWidth = stroke,
-                    pathEffect = dash,
+                Text(
+                    text = phonicsText,
+                    style = wordStyle,
+                    softWrap = true,
+                    modifier = Modifier.alpha(if (phonicsOn) 1f else 0f),
                 )
-            },
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        Box(Modifier.padding(horizontal = guidePaddingH)) {
-            Text(
-                text = word,
-                style = wordStyle.copy(
-                    color = Stellar.CyanSoft,
-                    shadow = if (glowEnabled) {
-                        Shadow(
-                            color = Stellar.Cyan.copy(alpha = 0.55f),
-                            blurRadius = 22f,
-                        )
-                    } else {
-                        null
-                    },
-                ),
-                modifier = Modifier.alpha(if (phonicsOn) 0f else 1f),
-            )
-            Text(
-                text = phonicsText,
-                style = wordStyle,
-                modifier = Modifier.alpha(if (phonicsOn) 1f else 0f),
-            )
+            }
         }
     }
 }
+
+/** Prefer wrapping after hyphens instead of cutting a long compound in half. */
+private fun wordWithBreaks(word: String): String =
+    word.replace("-", "-\u200B").replace("/", "/\u200B")
 
 private fun phonicsDottedWord(
     word: String,
