@@ -137,6 +137,17 @@ struct MeView: View {
 
     private var loggedIn: Bool { model.session != nil }
 
+    /// Words saved in every personal notebook, not only the open one.
+    private var collectedWordCount: Int {
+        model.notebooks.reduce(0) { total, book in
+            guard !book.isSystem else { return total }
+            let count = book.id == model.activeNotebookId
+                ? max(book.wordCount, model.wordTotal)
+                : book.wordCount
+            return total + count
+        }
+    }
+
     private var heroCard: some View {
         VStack(spacing: 0) {
             ZStack {
@@ -226,7 +237,7 @@ struct MeView: View {
 
                 Text(
                     loggedIn
-                        ? "已收藏 \(model.wordTotal) 词 · 积分 \(model.checkIn.totalPoints)"
+                        ? "已收藏 \(collectedWordCount) 词 · 积分 \(model.checkIn.totalPoints)"
                         : "登录后同步收藏与积分"
                 )
                 .font(.caption)
