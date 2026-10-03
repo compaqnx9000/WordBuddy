@@ -8,7 +8,9 @@ import {
   authRequired,
   optionalAuth,
   ensureUserNotebook,
+  ensureDefaultVocabNotebook,
   createDefaultNotebookIfEmpty,
+  isDefaultVocabName,
   hashPassword,
   isLockedUserNotebook,
   normalizePassword,
@@ -1571,6 +1573,7 @@ router.get('/catalogs', async (_req, res) => {
 
 router.get('/notebooks', authRequired, async (req, res) => {
   await ensureUserNotebook(req.user.id)
+  await ensureDefaultVocabNotebook(req.user.id)
   const result = await query(
     `
     SELECT n.id, n.kind, n.slug, n.name, n.sort_order, n.created_at,
@@ -1615,6 +1618,10 @@ router.post('/notebooks', authRequired, async (req, res) => {
     res.status(400).json({ error: '名称最多 20 个字' })
     return
   }
+  if (isDefaultVocabName(name)) {
+    res.status(400).json({ error: '不能新建默认生词本' })
+    return
+  }
   const dup = await query(
     `SELECT id FROM notebooks
      WHERE kind = 'user' AND owner_user_id = $1 AND lower(name) = lower($2)`,
@@ -1643,7 +1650,9 @@ router.post('/notebooks', authRequired, async (req, res) => {
 router.delete('/notebooks/:id', authRequired, async (req, res) => {
   const notebook = await loadNotebook(Number(req.params.id))
   if (notebook?.kind === 'catalog' || isLockedUserNotebook(notebook)) {
-    res.status(403).json({ error: '系统词书不能删除' })
+    res.status(403).json({
+      error: isLockedUserNotebook(notebook) ? '默认生词本不能删除' : '系统词书不能删除',
+    })
     return
   }
   if (!canWriteNotebook(notebook, req.user.id)) {
@@ -1853,7 +1862,7 @@ router.post('/notebooks/:id/copy-from', authRequired, async (req, res) => {
        LIMIT $4
      ),
      base AS (
-       SELECT coalesce(min(sort_order), 0)::int AS n
+       SELECT coalesce(max(sort_order), -1)::int AS n
        FROM words WHERE notebook_id = $1
      ),
      inserted AS (
@@ -1863,7 +1872,7 @@ router.post('/notebooks/:id/copy-from', authRequired, async (req, res) => {
        )
        SELECT $1, p.word, p.is_phrase, p.ipa_uk, p.ipa_us,
               p.definitions, p.examples, p.near_words, p.synonyms, p.antonyms,
-              base.n - row_number() OVER (ORDER BY p.sort_order ASC, p.id ASC)
+              base.n + row_number() OVER (ORDER BY p.sort_order ASC, p.id ASC)
        FROM picked p
        CROSS JOIN base
        RETURNING id
@@ -1874,8 +1883,30 @@ router.post('/notebooks/:id/copy-from', authRequired, async (req, res) => {
     [targetId, sourceId, exclude, limit],
   )
   const row = result.rows[0] || { added: 0, remaining: 0 }
+  // Catalog lists (雅思等) are A–Z. Paged copies used to prepend each batch
+  // backwards, so the user notebook came out reversed. Put the whole book in A–Z
+  // once the last page has landed.
+  if (source.kind === 'catalog' && Number(row.remaining) === 0) {
+    await alphabetizeNotebookWords(targetId)
+  }
   res.json({ added: row.added, remaining: row.remaining })
 })
+
+async function alphabetizeNotebookWords(notebookId) {
+  await query(
+    `WITH ranked AS (
+       SELECT id, (row_number() OVER (ORDER BY lower(word) ASC, id ASC) - 1)::int AS n
+       FROM words
+       WHERE notebook_id = $1
+     )
+     UPDATE words w
+     SET sort_order = ranked.n
+     FROM ranked
+     WHERE w.id = ranked.id
+       AND w.sort_order IS DISTINCT FROM ranked.n`,
+    [notebookId],
+  )
+}
 
 router.post('/notebooks/:id/words', authRequired, async (req, res) => {
   const notebookId = Number(req.params.id)

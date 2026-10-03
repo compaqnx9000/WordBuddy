@@ -81,8 +81,8 @@ struct Notebook: Codable, Equatable, Identifiable, Hashable {
 
     var isSystem: Bool { kind == Self.kindCatalog }
 
-    /// Catalog books stay locked. The personal「默认生词本」can be deleted like any other book.
-    var isLocked: Bool { isSystem }
+    /// Catalogs and the personal「默认生词本」cannot be deleted. Words inside the default book still can.
+    var isLocked: Bool { isSystem || name == Self.defaultName || isLockedFlag == true }
 }
 
 enum WordFilter: String, CaseIterable, Identifiable {

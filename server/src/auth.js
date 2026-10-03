@@ -146,21 +146,50 @@ export async function ensureUserNotebook(userId) {
   return null
 }
 
-/** New accounts only. A deleted「默认生词本」is not recreated while the user still has other books, and list refresh does not insert one. */
+export function isDefaultVocabName(name) {
+  return String(name || '').trim() === SYSTEM_VOCAB_NAME
+}
+
+/** Used at signup. Returns an existing personal book, or creates「默认生词本」when the account has none. */
 export async function createDefaultNotebookIfEmpty(userId) {
   const existing = await ensureUserNotebook(userId)
   if (existing) return existing
+  return ensureDefaultVocabNotebook(userId)
+}
+
+/** The personal default book always exists and cannot be deleted or duplicated. */
+export async function ensureDefaultVocabNotebook(userId) {
+  const named = await query(
+    `SELECT id FROM notebooks
+     WHERE kind = 'user' AND owner_user_id = $1 AND name = $2
+     ORDER BY id ASC
+     LIMIT 1`,
+    [userId, SYSTEM_VOCAB_NAME],
+  )
+  if (named.rowCount > 0) return named.rows[0].id
   const created = await query(
     `INSERT INTO notebooks (kind, owner_user_id, name, sort_order)
-     VALUES ('user', $1, $2, 0)
+     SELECT 'user', $1, $2, 0
+     WHERE NOT EXISTS (
+       SELECT 1 FROM notebooks
+       WHERE kind = 'user' AND owner_user_id = $1 AND name = $2
+     )
      RETURNING id`,
     [userId, SYSTEM_VOCAB_NAME],
   )
-  return created.rows[0].id
+  if (created.rowCount > 0) return created.rows[0].id
+  const again = await query(
+    `SELECT id FROM notebooks
+     WHERE kind = 'user' AND owner_user_id = $1 AND name = $2
+     ORDER BY id ASC
+     LIMIT 1`,
+    [userId, SYSTEM_VOCAB_NAME],
+  )
+  return again.rows[0]?.id ?? null
 }
 
 export function isLockedUserNotebook(notebook) {
-  return notebook?.kind === 'catalog'
+  return notebook?.kind === 'user' && isDefaultVocabName(notebook.name)
 }
 
 export function normalizePhone(raw) {

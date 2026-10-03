@@ -143,6 +143,7 @@ class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db",
     fun createNotebook(name: String): Long {
         val trimmed = name.trim()
         require(trimmed.isNotEmpty()) { "名称不能为空" }
+        if (trimmed == Notebook.SYSTEM_VOCAB_NAME) error("不能新建默认生词本")
         if (findNotebookByName(trimmed) != null) error("已有同名生词本")
         val values = ContentValues().apply {
             put("name", trimmed)
@@ -275,6 +276,65 @@ class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db",
         writableDatabase.delete(TABLE, "notebook_id = ?", arrayOf(notebookId.toString()))
     }
 
+    fun updateSortOrders(notebookId: Long, orders: List<Pair<Long, Int>>) {
+        if (orders.isEmpty()) return
+        writableDatabase.beginTransaction()
+        try {
+            val stmt = writableDatabase.compileStatement(
+                "UPDATE $TABLE SET sort_order = ? WHERE id = ? AND notebook_id = ?",
+            )
+            orders.forEach { (id, order) ->
+                stmt.clearBindings()
+                stmt.bindLong(1, order.toLong())
+                stmt.bindLong(2, id)
+                stmt.bindLong(3, notebookId)
+                stmt.executeUpdateDelete()
+            }
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+    }
+
+    /** @return how many rows were removed */
+    fun deleteNotebookWordsExcept(notebookId: Long, keepIds: Set<Long>): Int {
+        if (keepIds.isEmpty()) {
+            val removed = writableDatabase.delete(TABLE, "notebook_id = ?", arrayOf(notebookId.toString()))
+            return removed
+        }
+        val doomed = mutableListOf<Long>()
+        readableDatabase.query(
+            TABLE,
+            arrayOf("id"),
+            "notebook_id = ?",
+            arrayOf(notebookId.toString()),
+            null,
+            null,
+            null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(0)
+                if (id !in keepIds) doomed += id
+            }
+        }
+        if (doomed.isEmpty()) return 0
+        writableDatabase.beginTransaction()
+        try {
+            doomed.chunked(400).forEach { chunk ->
+                val placeholders = chunk.joinToString(",") { "?" }
+                writableDatabase.delete(
+                    TABLE,
+                    "id IN ($placeholders)",
+                    chunk.map { it.toString() }.toTypedArray(),
+                )
+            }
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+        return doomed.size
+    }
+
     fun moveEntriesToNotebook(entryIds: List<Long>, targetNotebookId: Long) {
         if (entryIds.isEmpty()) return
         writableDatabase.beginTransaction()
@@ -346,10 +406,6 @@ class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db",
 
     fun delete(id: Long) {
         writableDatabase.delete(TABLE, "id = ?", arrayOf(id.toString()))
-    }
-
-    fun clearNotebookWords(notebookId: Long) {
-        writableDatabase.delete(TABLE, "notebook_id = ?", arrayOf(notebookId.toString()))
     }
 
     fun updateImageBlob(id: Long, imageBlob: ByteArray?) {
@@ -580,6 +636,11 @@ class VocabRepository(context: Context) {
     val items: StateFlow<List<VocabEntry>> = _items.asStateFlow()
     val notebooks: StateFlow<List<Notebook>> = _notebooks.asStateFlow()
 
+    /** Pull-to-refresh: ids the server actually returned, so local leftovers can be dropped. */
+    private var syncNotebookId: Long = 0L
+    private val syncIds = HashSet<Long>()
+    private var syncTotal: Int = -1
+
     fun publishNotebooks(books: List<Notebook>) {
         db.replaceNotebooks(books)
         // Prefer the caller's order (already remapped sortOrder); avoid reshuffling surprises.
@@ -596,6 +657,70 @@ class VocabRepository(context: Context) {
         }
     }
 
+    /** Keep only [keepIds] in this user notebook. Empty [keepIds] clears the book. */
+    fun retainNotebookWords(notebookId: Long, keepIds: Collection<Long>) {
+        val removed = db.deleteNotebookWordsExcept(notebookId, keepIds.toHashSet())
+        val remaining = db.countWordsInNotebook(notebookId)
+        db.setWordCount(notebookId, remaining)
+        if (activeNotebookId == notebookId && (removed > 0 || remaining == 0)) {
+            _items.value = if (remaining == 0) emptyList() else db.listByNotebook(notebookId)
+            nextCursor = null
+            hasMore = false
+            listWindowStart = 0
+        }
+        _notebooks.value = db.listNotebooks()
+    }
+
+    fun beginAuthoritativeSync(notebookId: Long) {
+        syncNotebookId = notebookId
+        syncIds.clear()
+        syncTotal = -1
+    }
+
+    fun cancelAuthoritativeSync() {
+        syncNotebookId = 0L
+        syncIds.clear()
+        syncTotal = -1
+    }
+
+    /**
+     * After a full user-notebook reload, drop local rows the server no longer has.
+     * Skipped when paging stopped early, so a partial page cannot wipe the book.
+     */
+    fun finishAuthoritativeSync(notebookId: Long) {
+        if (syncNotebookId != notebookId || syncTotal < 0) {
+            cancelAuthoritativeSync()
+            return
+        }
+        val total = syncTotal
+        val ids = syncIds.toSet()
+        cancelAuthoritativeSync()
+        if (ids.size < total) return
+        retainNotebookWords(notebookId, ids)
+    }
+
+    private fun observeAuthoritativePage(notebookId: Long, page: WordPage, reset: Boolean) {
+        if (syncNotebookId != notebookId) return
+        if (reset) {
+            syncIds.clear()
+            syncTotal = page.total
+        }
+        page.items.forEach { syncIds.add(it.id) }
+    }
+
+    /** Apply server sort positions and re-read the open list. Does not drop local rows. */
+    fun applyServerSortOrders(notebookId: Long, orders: List<Pair<Long, Int>>) {
+        db.updateSortOrders(notebookId, orders)
+        if (activeNotebookId == notebookId) {
+            _items.value = db.listByNotebook(notebookId)
+        }
+    }
+
+    fun reloadNotebookList(notebookId: Long) {
+        if (activeNotebookId != notebookId) return
+        _items.value = db.listByNotebook(notebookId)
+    }
+
     fun openCachedNotebook(notebookId: Long) {
         activeNotebookId = notebookId
         val cached = db.listByNotebook(notebookId)
@@ -606,6 +731,14 @@ class VocabRepository(context: Context) {
 
     fun applyFirstPage(notebookId: Long, page: WordPage) {
         activeNotebookId = notebookId
+        observeAuthoritativePage(notebookId, page, reset = true)
+        val userBook = _notebooks.value.firstOrNull { it.id == notebookId }?.isSystem != true
+        // Server notebook is empty. Do not keep painting the old SQLite copy.
+        if (userBook && page.items.isEmpty() && page.nextCursor == null && page.total == 0) {
+            retainNotebookWords(notebookId, emptyList())
+            cancelAuthoritativeSync()
+            return
+        }
         db.upsertEntries(page.items)
         val cached = db.listByNotebook(notebookId)
         val count = maxOf(page.total, cached.size)
@@ -618,6 +751,7 @@ class VocabRepository(context: Context) {
     }
 
     fun applyNextPage(notebookId: Long, page: WordPage) {
+        observeAuthoritativePage(notebookId, page, reset = false)
         db.upsertEntries(page.items)
         nextCursor = page.nextCursor
         hasMore = page.nextCursor != null

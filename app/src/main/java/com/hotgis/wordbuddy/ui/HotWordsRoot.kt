@@ -4,8 +4,14 @@ import android.app.Activity
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,8 +22,11 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBackIosNew
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -31,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -309,6 +319,7 @@ fun HotWordsRoot(
 
     BackHandler {
         when {
+            ui.catalogCopyProgress != null -> Unit
             needsBiometricUnlock -> onExit()
             showLogin || login.needBindPhone || (session != null && session!!.phone.isBlank()) -> {
                 pendingExit = false
@@ -611,6 +622,7 @@ fun HotWordsRoot(
             }
             val foldable = LocalFoldableLayout.current
             val useNotebookSplit = foldable.supportsDualPaneListCard && tab == MainTab.Notebook && overlay == Overlay.None
+            Box(Modifier.fillMaxSize()) {
             Scaffold(
                 // Paint wallpaper under bottomBar too — same continuous look as list/card bars.
                 modifier = Modifier
@@ -996,6 +1008,8 @@ fun HotWordsRoot(
                     onChangePassword = viewModel::changePassword,
                     deletionPending = accountDeletion?.pending == true,
                     onOpenAccountDeletion = { showAccountDeletion = true },
+                    notebooks = notebooks,
+                    onSelectDefaultNotebook = viewModel::setDefaultNotebook,
                     onLogout = {
                         showAppSettings = false
                         viewModel.logout()
@@ -1039,6 +1053,8 @@ fun HotWordsRoot(
                         onChangePassword = viewModel::changePassword,
                         deletionPending = accountDeletion?.pending == true,
                         onOpenAccountDeletion = { showAccountDeletion = true },
+                        notebooks = notebooks,
+                        onSelectDefaultNotebook = viewModel::setDefaultNotebook,
                         onLogout = {
                             overlay = Overlay.None
                             viewModel.logout()
@@ -1207,6 +1223,7 @@ fun HotWordsRoot(
                                 onRecite = onReciteWord,
                                 onBack = { tab = MainTab.Home },
                                 onLoadMore = viewModel::loadMoreWords,
+                                onRefresh = viewModel::refreshCurrentList,
                                 listWindowStart = listWindowStart,
                                 onLoadEarlier = viewModel::loadEarlierWords,
                                 isWordFavorited = viewModel::isWordSaved,
@@ -1361,10 +1378,69 @@ fun HotWordsRoot(
                 }
             }
             }
+            ui.catalogCopyProgress?.let { progress ->
+                CatalogCopyProgressCover(progress)
+            }
+            }
         }
         }
         }
     }
+    }
+}
+
+@Composable
+private fun CatalogCopyProgressCover(progress: CatalogCopyProgress) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.55f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {},
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .width(280.sdp())
+                .clip(RoundedCornerShape(22.sdp()))
+                .background(Stellar.SurfaceContainer)
+                .border(1.dp, Stellar.Cyan.copy(alpha = 0.45f), RoundedCornerShape(22.sdp()))
+                .padding(24.sdp()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.sdp()),
+        ) {
+            Text(
+                text = progress.title,
+                color = Stellar.CyanSoft,
+                fontSize = 17.ssp(),
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
+            if (progress.total > 0) {
+                LinearProgressIndicator(
+                    progress = { progress.copied.toFloat() / progress.total.coerceAtLeast(1).toFloat() },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Stellar.Cyan,
+                    trackColor = Stellar.SurfaceHigh,
+                )
+                Text(
+                    text = "${progress.copied} / ${progress.total}",
+                    color = Stellar.OnSurface,
+                    fontSize = 14.ssp(),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            } else {
+                CircularProgressIndicator(color = Stellar.Cyan)
+                Text(
+                    text = "准备中",
+                    color = Stellar.OnSurfaceVariant,
+                    fontSize = 14.ssp(),
+                )
+            }
+        }
     }
 }
 

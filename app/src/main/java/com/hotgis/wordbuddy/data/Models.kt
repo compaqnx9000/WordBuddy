@@ -115,9 +115,9 @@ data class Notebook(
     val isSystem: Boolean
         get() = kind == KIND_CATALOG
 
-    /** Catalog books stay locked. The personal「默认生词本」can be deleted like any other book. */
+    /** Catalogs and the personal「默认生词本」cannot be deleted. Words inside the default book still can. */
     val isLocked: Boolean
-        get() = isSystem
+        get() = isSystem || name == SYSTEM_VOCAB_NAME || isLockedFlag == true
 
     companion object {
         const val DEFAULT_ID = 0L

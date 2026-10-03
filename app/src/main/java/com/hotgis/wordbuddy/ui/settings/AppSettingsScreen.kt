@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PersonOff
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
@@ -69,6 +70,7 @@ import android.widget.Toast
 import com.hotgis.wordbuddy.data.AccentStyle
 import com.hotgis.wordbuddy.data.AppTheme
 import com.hotgis.wordbuddy.data.ImageGenProvider
+import com.hotgis.wordbuddy.data.Notebook
 import com.hotgis.wordbuddy.data.StudySettings
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
@@ -116,6 +118,8 @@ fun AppSettingsScreen(
     ) -> Unit = { _, _, _, _ -> },
     deletionPending: Boolean = false,
     onOpenAccountDeletion: () -> Unit = {},
+    notebooks: List<Notebook> = emptyList(),
+    onSelectDefaultNotebook: (Long) -> Unit = {},
     modifier: Modifier = Modifier,
     title: String = "设置",
 ) {
@@ -259,6 +263,20 @@ fun AppSettingsScreen(
                         }
                     },
                 )
+
+                val favoriteBooks = notebooks
+                    .filter { !it.isSystem }
+                    .sortedWith(
+                        compareByDescending<Notebook> { it.createdAtMillis }
+                            .thenByDescending { it.id },
+                    )
+                if (favoriteBooks.isNotEmpty()) {
+                    DefaultNotebookCard(
+                        notebooks = favoriteBooks,
+                        selectedId = settings.defaultNotebookId,
+                        onSelect = onSelectDefaultNotebook,
+                    )
+                }
 
                 PreferencesCard(
                     autoPronounce = settings.speakOnPageChange,
@@ -507,6 +525,67 @@ private fun ThemeSwatch(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DefaultNotebookCard(
+    notebooks: List<Notebook>,
+    selectedId: Long,
+    onSelect: (Long) -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .stellarGlass()
+            .padding(16.sdp()),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.sdp()),
+        ) {
+            Icon(
+                Icons.Filled.MenuBook,
+                contentDescription = null,
+                tint = Stellar.Cyan,
+                modifier = Modifier.size(22.sdp()),
+            )
+            Text(
+                text = "默认收藏生词本",
+                color = Stellar.OnSurface,
+                fontSize = 18.ssp(),
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.height(6.sdp()))
+        Text(
+            text = "首页查词点星星时，词条会保存到所选生词本",
+            color = Stellar.OnSurfaceVariant,
+            fontSize = 13.ssp(),
+        )
+        Spacer(Modifier.height(14.sdp()))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.sdp()),
+            verticalArrangement = Arrangement.spacedBy(8.sdp()),
+        ) {
+            notebooks.forEach { notebook ->
+                val selected = notebook.id == selectedId
+                Text(
+                    text = notebook.name,
+                    color = if (selected) Stellar.OnPrimary else Stellar.OnSurface,
+                    fontSize = 14.ssp(),
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(18.sdp()))
+                        .background(if (selected) Stellar.Cyan else Stellar.SurfaceHigh)
+                        .clickable { onSelect(notebook.id) }
+                        .padding(horizontal = 14.sdp(), vertical = 8.sdp()),
+                )
+            }
         }
     }
 }

@@ -214,6 +214,7 @@
       <button class="nav" data-page="checkins" onclick="go('checkins')">签到积分</button>
       <button class="nav" data-page="gifts" onclick="go('gifts')">积分兑礼</button>
       <button class="nav" data-page="giftOrders" onclick="go('giftOrders')">兑换订单</button>
+      <button class="nav" data-page="withdrawals" onclick="go('withdrawals')">提现记录</button>
       <button class="nav" data-page="shorts" onclick="go('shorts')">短视频</button>
       <button class="nav" data-page="audit" onclick="go('audit')">操作日志</button>
       <div style="flex:1"></div>
@@ -242,11 +243,12 @@ const titles = {
   checkins: ['签到积分', '用户累计积分、连续签到、每日签到明细，以及奖励视频每次积分'],
   gifts: ['积分兑礼', '栏目显示、礼品归属分类、库存与积分价格'],
   giftOrders: ['兑换订单', '用户兑换记录与发货状态'],
+  withdrawals: ['提现记录', '按手机号、昵称、搭子号或用户 ID 查询每笔提现'],
   shorts: ['短视频', '视频维护，以及用户在口语/单词/听力的累计停留'],
   audit: ['操作日志', '超级管理员在后台做过的事'],
 };
 
-const state = { page: 'cockpit', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users', cockpitGrain: 'day', cockpitAt: '' };
+const state = { page: 'cockpit', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users', withdrawStatus: '', cockpitGrain: 'day', cockpitAt: '' };
 
 function token() { return localStorage.getItem('hw_admin_token') || ''; }
 function authHeaders() {
@@ -362,6 +364,7 @@ function go(page, extra = {}) {
     state.notebookId = null;
   }
   if (extra.checkInView != null) state.checkInView = extra.checkInView;
+  if (extra.withdrawStatus != null) state.withdrawStatus = extra.withdrawStatus;
   document.querySelectorAll('.nav').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
   document.getElementById('title').textContent = titles[page][0];
   document.getElementById('hint').textContent = titles[page][1];
@@ -705,11 +708,16 @@ async function render() {
         ${pager(d.total)}`;
     } else if (state.page === 'checkins') {
       const rv = await api('/reward-video').catch(() => ({ pointsPerWatch: 5, dailyLimit: 20 }));
-      const rvBar = `<div class="toolbar" style="margin-bottom:12px">
-        <label style="margin:0">奖励视频每次积分</label>
-        <input id="rvPoints" type="number" min="1" max="999" value="${Number(rv.pointsPerWatch) || 5}" style="max-width:120px" />
-        <button class="btn" onclick="saveRewardVideoPoints()">保存</button>
-        <span class="sub">每人每天 ${Number(rv.dailyLimit) || 20} 次，保存后下一次看完视频立即按新积分发放</span>
+      const rvBar = `<div class="card" style="width:100%;max-width:none;margin:0 0 16px;padding:18px 20px">
+        <h1 style="font-size:18px">激励广告积分</h1>
+        <p class="sub" style="margin:0 0 12px">用户看完一条激励视频后获得的积分。保存后，下一次看完立即按新数值发放。</p>
+        <div class="toolbar" style="margin:0">
+          <label style="margin:0">每次获得</label>
+          <input id="rvPoints" type="number" min="1" max="999" value="${Number(rv.pointsPerWatch) || 5}" style="max-width:120px" />
+          <span class="sub" style="margin:0">积分</span>
+          <button class="btn" onclick="saveRewardVideoPoints()">保存</button>
+          <span class="sub" style="margin:0">每人每天 ${Number(rv.dailyLimit) || 20} 次</span>
+        </div>
       </div>`;
       if (state.checkInView === 'logs') {
         const d = await api(`/checkins/logs?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
@@ -717,8 +725,8 @@ async function render() {
           <div class="toolbar">
             <button class="btn ${state.checkInView==='users'?'':'ghost'}" onclick="go('checkins',{checkInView:'users',page:1})">积分排行</button>
             <button class="btn" onclick="go('checkins',{checkInView:'logs',page:1})">签到明细</button>
-            <input style="max-width:240px" placeholder="搜索手机号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('checkins',{q:this.value,page:1,checkInView:'logs'})" />
-            <button class="btn" onclick="go('checkins',{q:document.querySelector('main input').value,page:1,checkInView:'logs'})">搜索</button>
+            <input id="checkinQ" style="max-width:240px" placeholder="搜索手机号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('checkins',{q:this.value,page:1,checkInView:'logs'})" />
+            <button class="btn" onclick="go('checkins',{q:document.getElementById('checkinQ').value,page:1,checkInView:'logs'})">搜索</button>
           </div>
           <table><thead><tr><th>头像</th><th>手机号</th><th>签到日期</th><th>连续天数</th><th>当日积分</th><th>记录时间</th><th></th></tr></thead>
           <tbody>${d.items.map(r => `<tr>
@@ -742,8 +750,8 @@ async function render() {
           <div class="toolbar">
             <button class="btn" onclick="go('checkins',{checkInView:'users',page:1})">积分排行</button>
             <button class="btn ghost" onclick="go('checkins',{checkInView:'logs',page:1})">签到明细</button>
-            <input style="max-width:240px" placeholder="搜索手机号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('checkins',{q:this.value,page:1,checkInView:'users'})" />
-            <button class="btn" onclick="go('checkins',{q:document.querySelector('main input').value,page:1,checkInView:'users'})">搜索</button>
+            <input id="checkinQ" style="max-width:240px" placeholder="搜索手机号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('checkins',{q:this.value,page:1,checkInView:'users'})" />
+            <button class="btn" onclick="go('checkins',{q:document.getElementById('checkinQ').value,page:1,checkInView:'users'})">搜索</button>
           </div>
           <table><thead><tr><th>头像</th><th>手机号</th><th>等级</th><th>累计积分</th><th>连续天数</th><th>最近签到</th><th>今日</th><th></th></tr></thead>
           <tbody>${d.items.map(r => `<tr>
@@ -821,6 +829,23 @@ async function render() {
             </select>
           </td>
         </tr>`).join('') || '<tr><td colspan="7">暂无订单</td></tr>'}</tbody></table>
+        ${pager(d.total)}`;
+    } else if (state.page === 'withdrawals') {
+      const status = state.withdrawStatus || '';
+      const d = await api(`/withdrawals?page=${state.pageNo}&q=${encodeURIComponent(state.q)}&status=${encodeURIComponent(status)}`);
+      const sum = d.summary || {};
+      const successYuan = ((Number(sum.successFen) || 0) / 100).toFixed(2);
+      el.innerHTML = `
+        <div class="toolbar">
+          <input style="max-width:280px" placeholder="手机号 / 昵称 / 搭子号 / 用户ID / 收款账号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('withdrawals',{q:this.value,page:1})" />
+          <select style="max-width:140px" onchange="go('withdrawals',{withdrawStatus:this.value,page:1})">
+            ${[['','全部状态'],['pending','处理中'],['success','已到账'],['failed','失败']].map(([v,l]) =>
+              `<option value="${v}" ${status===v?'selected':''}>${l}</option>`).join('')}
+          </select>
+          <button class="btn" onclick="go('withdrawals',{q:document.querySelector('main input').value,page:1})">搜索</button>
+        </div>
+        <p class="note">共 ${fmtCount(sum.total)} 笔 · 已到账 ${fmtCount(sum.successCount)} 笔 / ${successYuan} 元 / ${fmtCount(sum.successPoints)} 积分 · 处理中 ${fmtCount(sum.pendingCount)} · 失败 ${fmtCount(sum.failedCount)}</p>
+        ${withdrawalTable(d.items, true)}
         ${pager(d.total)}`;
     } else if (state.page === 'shorts') {
       const view = state.shortsView || 'list';
@@ -918,6 +943,23 @@ async function render() {
   } catch (e) {
     el.innerHTML = `<div class="error">${esc(e.message)}</div>`;
   }
+}
+
+function withdrawalTable(items, showUser) {
+  const cols = showUser ? 8 : 7;
+  return `<table><thead><tr>
+    <th>时间</th>${showUser ? '<th>用户</th>' : ''}<th>渠道</th><th>收款账号</th><th>金额</th><th>积分</th><th>状态</th><th>单号 / 说明</th>
+  </tr></thead><tbody>${(items || []).map((w) => `<tr>
+    <td>${fmt(w.createdAt)}${w.updatedAt && w.updatedAt !== w.createdAt ? `<div class="sub">更新 ${fmt(w.updatedAt)}</div>` : ''}</td>
+    ${showUser ? `<td>${esc(w.phone || '—')}<div class="sub">${esc(w.nickname || '—')} · #${w.userId}</div>${w.buddyId ? `<div class="sub">${esc(w.buddyId)}</div>` : ''}
+      <button class="btn ghost small" onclick="openUser(${Number(w.userId)})">用户详情</button></td>` : ''}
+    <td>${esc(w.channelLabel || w.channel || '—')}${w.sandbox ? '<div class="sub">沙箱</div>' : ''}</td>
+    <td class="wrap">${esc(w.account || '—')}</td>
+    <td><b>${esc(w.amountYuan)}</b> 元</td>
+    <td>${w.pointsSpent}</td>
+    <td><span class="tag ${w.status === 'failed' ? 'bad' : ''}">${esc(w.statusLabel || w.status || '—')}</span></td>
+    <td class="wrap">${esc(w.providerTradeNo || '—')}${w.errorMessage ? `<div class="sub">${esc(w.errorMessage)}</div>` : ''}</td>
+  </tr>`).join('') || `<tr><td colspan="${cols}">暂无提现记录</td></tr>`}</tbody></table>`;
 }
 
 function genderHtml(g) {
@@ -1035,6 +1077,11 @@ async function openUser(id) {
     <tbody>${(d.checkInLogs||[]).map(r => `<tr>
       <td>${esc(r.checkInDate)}</td><td>${r.streakDays}</td><td>+${r.pointsEarned}</td><td>${fmt(r.createdAt)}</td>
     </tr>`).join('') || '<tr><td colspan="4">暂无签到</td></tr>'}</tbody></table>
+    <h3>提现记录</h3>
+    <p class="sub">共 ${d.withdrawalSummary?.total ?? 0} 笔 · 已到账 ${d.withdrawalSummary?.successCount ?? 0} 笔 / ${((d.withdrawalSummary?.successFen || 0) / 100).toFixed(2)} 元 / ${d.withdrawalSummary?.successPoints ?? 0} 积分 · 处理中 ${d.withdrawalSummary?.pendingCount ?? 0} · 失败 ${d.withdrawalSummary?.failedCount ?? 0}
+      <button class="btn ghost small" onclick="closeModal();go('withdrawals',{q:'${esc(u.phone)}',page:1,withdrawStatus:''})">查看全部</button>
+    </p>
+    ${withdrawalTable(d.withdrawals, false)}
     <h3>生词本</h3>
     <table><thead><tr><th>名称</th><th>词数</th><th>创建</th><th></th></tr></thead>
     <tbody>${d.notebooks.map(n => `<tr>

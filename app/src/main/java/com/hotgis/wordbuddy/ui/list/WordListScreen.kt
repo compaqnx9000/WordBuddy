@@ -38,6 +38,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.outlined.Add
@@ -59,9 +60,13 @@ import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.Style
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -152,6 +157,7 @@ private fun rememberMeaningStyle(): TextStyle {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WordListScreen(
     entries: List<VocabEntry>,
@@ -176,6 +182,7 @@ fun WordListScreen(
     onRecite: (startEntryId: Long?) -> Unit,
     onBack: () -> Unit,
     onLoadMore: () -> Unit = {},
+    onRefresh: () -> Unit = {},
     /** Absolute index of the first loaded row. Above 0, scrolling to the top should load earlier words. */
     listWindowStart: Int = 0,
     onLoadEarlier: () -> Unit = {},
@@ -451,16 +458,53 @@ fun WordListScreen(
                 )
                 with(density) { measured.size.height.toDp() } + 2.dp
             }
+            val pullState = rememberPullToRefreshState()
             if (entries.isEmpty() && !ui.listLoading) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        "还没有生词，去首页查词并点星星收藏",
-                        color = Stellar.OnSurfaceVariant,
-                        fontSize = 15.ssp(),
-                    )
+                PullToRefreshBox(
+                    isRefreshing = ui.listRefreshing,
+                    onRefresh = onRefresh,
+                    modifier = Modifier.fillMaxSize(),
+                    state = pullState,
+                    indicator = {
+                        PullToRefreshDefaults.Indicator(
+                            modifier = Modifier.align(Alignment.TopCenter),
+                            isRefreshing = ui.listRefreshing,
+                            state = pullState,
+                            color = Stellar.Cyan,
+                            containerColor = Stellar.SurfaceContainer,
+                        )
+                    },
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "还没有生词，去首页查词并点星星收藏",
+                            color = Stellar.OnSurfaceVariant,
+                            fontSize = 15.ssp(),
+                        )
+                    }
                 }
             } else {
                 Box(Modifier.fillMaxSize()) {
+                    PullToRefreshBox(
+                        isRefreshing = ui.listRefreshing,
+                        onRefresh = onRefresh,
+                        modifier = Modifier.fillMaxSize(),
+                        state = pullState,
+                        indicator = {
+                            PullToRefreshDefaults.Indicator(
+                                modifier = Modifier.align(Alignment.TopCenter),
+                                isRefreshing = ui.listRefreshing,
+                                state = pullState,
+                                color = Stellar.Cyan,
+                                containerColor = Stellar.SurfaceContainer,
+                            )
+                        },
+                    ) {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
@@ -638,6 +682,7 @@ fun WordListScreen(
                             }
                             }
                         }
+                    }
                     }
                     AlphabetIndexBar(
                         onSelect = { letter -> jumpToAlphabetLetter(letter) },
@@ -992,7 +1037,7 @@ private fun NotebookSwitcher(
                     if (notebook.isLocked) {
                         Icon(
                             Icons.Filled.Lock,
-                            contentDescription = "系统词书不可修改",
+                            contentDescription = "不可删除",
                             tint = style.foreground,
                             modifier = Modifier.size(12.sdp()),
                         )

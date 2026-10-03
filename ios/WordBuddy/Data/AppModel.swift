@@ -1138,6 +1138,10 @@ final class AppModel: ObservableObject {
             banner = "名称最多 20 个字"
             return
         }
+        guard trimmed != Notebook.defaultName else {
+            banner = "不能新建默认生词本"
+            return
+        }
         do {
             let created = try await api.createNotebook(token: session.token, name: trimmed)
             await loadNotebooks()
@@ -1154,7 +1158,9 @@ final class AppModel: ObservableObject {
 
     func deleteNotebook(_ id: Int64) async {
         guard let session, let notebook = notebooks.first(where: { $0.id == id }), !notebook.isLocked else {
-            if notebooks.first(where: { $0.id == id })?.isLocked == true {
+            if notebooks.first(where: { $0.id == id })?.name == Notebook.defaultName {
+                banner = "默认生词本不能删除"
+            } else if notebooks.first(where: { $0.id == id })?.isLocked == true {
                 banner = "系统词书不能删除"
             }
             return

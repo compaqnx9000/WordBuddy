@@ -44,6 +44,7 @@ import com.hotgis.wordbuddy.data.UserSession
 import com.hotgis.wordbuddy.data.VocabRepository
 import com.hotgis.wordbuddy.data.WordFilter
 import com.hotgis.wordbuddy.data.NotebookImportResult
+import com.hotgis.wordbuddy.data.VocabBackupNotebook
 import com.hotgis.wordbuddy.data.VocabNotebookExporter
 import com.hotgis.wordbuddy.data.VocabNotebookImporter
 import java.time.Instant
@@ -88,6 +89,12 @@ private data class ListQuery(
     val query: String,
 )
 
+data class CatalogCopyProgress(
+    val title: String,
+    val copied: Int,
+    val total: Int,
+)
+
 data class VocabUiState(
     val filter: WordFilter = WordFilter.ALL,
     val sortMode: SortMode = SortMode.MANUAL,
@@ -109,7 +116,10 @@ data class VocabUiState(
     val imageError: String? = null,
     val activeNotebookId: Long = Notebook.DEFAULT_ID,
     val listLoading: Boolean = false,
+    val listRefreshing: Boolean = false,
     val listError: String? = null,
+    /** Whole-notebook favorite. Shown as a live progress card, not a toast. */
+    val catalogCopyProgress: CatalogCopyProgress? = null,
 )
 
 private const val DEV_LOGIN_PHONE = "13611283451"
@@ -181,6 +191,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private var homophonesWordKey: String = ""
     private var pageJob: Job? = null
     private var earlierJob: Job? = null
+    private var refreshJob: Job? = null
+    private var listRefreshGeneration = 0
     private var letterIndexJob: Job? = null
     private var catalogLetterIndexJob: Job? = null
     private var hydrateJob: Job? = null
@@ -233,9 +245,10 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             settingsStore.saveActiveNotebookId(activeId)
         }
         var settings = loaded
-        val defaultNotebook = repo.notebooks.value.firstOrNull { it.id == settings.defaultNotebookId }
-        if (settings.defaultNotebookId !in notebookIds || defaultNotebook?.isSystem == true) {
-            val fallbackId = repo.notebooks.value.firstOrNull { !it.isSystem }?.id ?: Notebook.DEFAULT_ID
+        val userBooks = repo.notebooks.value.filter { !it.isSystem }
+        val savedDefault = settings.defaultNotebookId
+        if (userBooks.isNotEmpty() && userBooks.none { it.id == savedDefault }) {
+            val fallbackId = systemVocabNotebook(userBooks)?.id ?: userBooks.first().id
             settings = settings.copy(defaultNotebookId = fallbackId)
             settingsStore.saveSettings(settings)
         }
@@ -244,10 +257,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             ?: activeId.takeIf { it > 0L }
             ?: Notebook.DEFAULT_ID
         _ui.value = VocabUiState(
-            settings = settings.copy(
-                defaultNotebookId = session?.vocabNotebookId?.takeIf { it > 0L }
-                    ?: settings.defaultNotebookId,
-            ),
+            settings = settings,
             activeNotebookId = startNotebook,
         )
         if (session != null) {
@@ -400,8 +410,27 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
         invalidateIeltsOrderCache(merged)
         withContext(Dispatchers.IO) { repo.publishNotebooks(merged) }
+        reconcileFavoriteNotebook()
         prefetchCatalogHeads(merged.filter { it.isSystem })
         realignVocabNotebookSession()
+    }
+
+    /** The locked personal book. Favorites land here unless the user picked another notebook. */
+    private fun systemVocabNotebook(books: List<Notebook> = notebooks.value): Notebook? {
+        val users = books.filter { !it.isSystem }
+        return users.firstOrNull { it.name == Notebook.SYSTEM_VOCAB_NAME }
+            ?: users.firstOrNull { it.name == Notebook.LEGACY_VOCAB_NAME }
+            ?: users.firstOrNull { it.name == Notebook.OLD_VOCAB_NAME }
+    }
+
+    /** If the chosen favorite book was deleted, select「默认生词本」/「系统生词本」again. */
+    private fun reconcileFavoriteNotebook() {
+        val users = notebooks.value.filter { !it.isSystem }
+        if (users.isEmpty()) return
+        val current = _ui.value.settings.defaultNotebookId
+        if (current > 0L && users.any { it.id == current }) return
+        val fallback = systemVocabNotebook(users)?.id ?: users.first().id
+        setDefaultNotebook(fallback)
     }
 
     /**
@@ -652,9 +681,15 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             }
             result
                 .onSuccess { deleted ->
+                    stopListReload()
+                    withContext(Dispatchers.IO) {
+                        repo.retainNotebookWords(sourceId, excludeWordIds)
+                    }
+                    forgetNotebookIndex(sourceId)
                     refreshNotebookList()
                     if (_ui.value.activeNotebookId == sourceId) {
                         refreshNotebook(sourceId, reset = true, prefetchAll = true)
+                        refreshAlphabetLetterIndex(sourceId)
                     }
                     onDone(if (deleted == 0) "没有可移动的单词" else "已移动 $deleted 个单词")
                 }
@@ -672,9 +707,15 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             val result = runCatching { api.deleteNotebookWords(token(), notebookId, excludeWordIds) }
             result
                 .onSuccess { deleted ->
+                    stopListReload()
+                    withContext(Dispatchers.IO) {
+                        repo.retainNotebookWords(notebookId, excludeWordIds)
+                    }
+                    forgetNotebookIndex(notebookId)
                     refreshNotebookList()
                     if (_ui.value.activeNotebookId == notebookId) {
                         refreshNotebook(notebookId, reset = true, prefetchAll = true)
+                        refreshAlphabetLetterIndex(notebookId)
                     }
                     onDone(if (deleted == 0) "没有可删除的单词" else "已删除 $deleted 个单词")
                 }
@@ -1075,9 +1116,29 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 onResult(false, "生词本不存在")
                 return@launch
             }
+            if (_ui.value.catalogCopyProgress != null) return@launch
+            val title = "正在收藏到「${book.name}」"
+            _ui.update { it.copy(catalogCopyProgress = CatalogCopyProgress(title, copied = 0, total = 0)) }
             val result = runCatching {
-                api.copyNotebookWords(token(), notebookId, sourceId, excludeWordIds)
+                var copied = 0
+                while (true) {
+                    val page = api.copyNotebookWords(
+                        token(),
+                        notebookId,
+                        sourceId,
+                        excludeWordIds,
+                        limit = 400,
+                    )
+                    copied += page.added
+                    val total = maxOf(copied + page.remaining, copied)
+                    _ui.update {
+                        it.copy(catalogCopyProgress = CatalogCopyProgress(title, copied, total))
+                    }
+                    if (page.remaining <= 0 || page.added == 0) break
+                }
+                copied
             }
+            _ui.update { it.copy(catalogCopyProgress = null) }
             result
                 .onSuccess { added ->
                     if (added > 0) _favoriteRevision.value = _favoriteRevision.value + 1
@@ -1210,6 +1271,19 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Pull sort positions so a catalog copied into this book shows A–Z. Definitions stay local. */
+    private suspend fun syncUserNotebookOrder(notebookId: Long) {
+        val token = _session.value?.token ?: return
+        val heads = runCatching { api.listHeads(token, notebookId) }.getOrNull() ?: return
+        if (!coroutineContext.isActive || _ui.value.activeNotebookId != notebookId) return
+        withContext(Dispatchers.IO) {
+            repo.applyServerSortOrders(notebookId, heads.items.map { it.id to it.sortOrder })
+        }
+        if (_ui.value.activeNotebookId != notebookId) return
+        letterIndexByNotebook[notebookId] = heads.letterIndex
+        _alphabetLetterIndex.value = heads.letterIndex
+    }
+
     fun selectNotebook(id: Long) {
         if (id == 0L) return
         val isSystem = notebooks.value.firstOrNull { it.id == id }?.isSystem == true
@@ -1232,6 +1306,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         hydrateJob?.cancel()
         selectNotebookJob?.cancel()
         headsAppendJob?.cancel()
+        listRefreshGeneration++
+        refreshJob?.cancel()
         val hasHeadsInMemory = isSystem && headsCache[id]?.items?.isNotEmpty() == true
         _ui.update {
             it.copy(
@@ -1240,6 +1316,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 shuffledOrder = null,
                 revealedIds = emptySet(),
                 listError = null,
+                listRefreshing = false,
                 listLoading = isSystem && !hasHeadsInMemory,
             )
         }
@@ -1263,6 +1340,9 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             if (_ui.value.activeNotebookId == id) {
                 _ui.update { it.copy(listLoading = false) }
             }
+            if (repo.items.value.isNotEmpty()) {
+                syncUserNotebookOrder(id)
+            }
             // Soft sync from cloud without discarding local-only rows.
             if (repo.items.value.isEmpty()) {
                 refreshNotebook(id, reset = true, prefetchAll = true)
@@ -1275,6 +1355,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     fun loadMoreWords() {
         val id = _ui.value.activeNotebookId
         if (id == 0L || pageJob?.isActive == true || !repo.hasMore) return
+        if (_ui.value.listRefreshing) return
         if (id in headsReady) {
             hydrateNotebook(id)
             return
@@ -1282,10 +1363,119 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         refreshNotebook(id, reset = false, prefetchAll = false)
     }
 
+    /** Pull down and release: reload the open notebook from the server. */
+    fun refreshCurrentList() {
+        val id = _ui.value.activeNotebookId
+        if (id == 0L) return
+        val generation = ++listRefreshGeneration
+        val previous = refreshJob
+        previous?.cancel()
+        refreshJob = viewModelScope.launch {
+            previous?.join()
+            _ui.update { it.copy(listRefreshing = true, listError = null) }
+            try {
+                val notebook = notebooks.value.firstOrNull { it.id == id }
+                if (notebook?.isSystem == true) {
+                    refreshSystemCatalog(id)
+                } else {
+                    refreshUserNotebook(id, generation)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (_ui.value.activeNotebookId == id) {
+                    _ui.update { it.copy(listError = error.message ?: "刷新失败") }
+                }
+            } finally {
+                if (generation == listRefreshGeneration) {
+                    _ui.update { state ->
+                        if (state.activeNotebookId == id) state.copy(listRefreshing = false) else state
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun refreshUserNotebook(id: Long, generation: Int) {
+        stopPaging()
+        runCatching { refreshNotebookList() }
+        repo.beginAuthoritativeSync(id)
+        val auth = token()
+        val firstOk = fetchPage(auth, id, reset = true)
+        if (!firstOk) {
+            repo.cancelAuthoritativeSync()
+            error(_ui.value.listError ?: "刷新失败")
+        }
+        if (generation == listRefreshGeneration && _ui.value.activeNotebookId == id) {
+            _ui.update { it.copy(listRefreshing = false) }
+        }
+        while (coroutineContext.isActive && repo.hasMore && _ui.value.activeNotebookId == id) {
+            if (!fetchPage(auth, id, reset = false)) break
+        }
+        val stillHere = generation == listRefreshGeneration && _ui.value.activeNotebookId == id
+        if (stillHere && !repo.hasMore) {
+            withContext(Dispatchers.IO) { repo.finishAuthoritativeSync(id) }
+            withContext(Dispatchers.IO) { repo.reloadNotebookList(id) }
+        } else {
+            repo.cancelAuthoritativeSync()
+        }
+        if (stillHere) {
+            forgetNotebookIndex(id)
+            refreshAlphabetLetterIndex(id)
+        }
+    }
+
+    private fun forgetNotebookIndex(notebookId: Long) {
+        headsCache.remove(notebookId)
+        headsReady.remove(notebookId)
+        letterIndexByNotebook.remove(notebookId)
+    }
+
+    /** Cancel an in-flight page so it cannot write words back after a delete or refresh. */
+    private suspend fun stopPaging() {
+        val paging = pageJob
+        val earlier = earlierJob
+        paging?.cancel()
+        earlier?.cancel()
+        paging?.join()
+        earlier?.join()
+    }
+
+    /** Stop paging and a pull-to-refresh that is not this coroutine. */
+    private suspend fun stopListReload() {
+        val reload = refreshJob
+        reload?.cancel()
+        stopPaging()
+        reload?.join()
+        _ui.update { it.copy(listRefreshing = false) }
+    }
+
+    private suspend fun refreshSystemCatalog(id: Long) {
+        pageJob?.cancel()
+        headsAppendJob?.cancel()
+        headsCache.remove(id)
+        headsReady.remove(id)
+        letterIndexByNotebook.remove(id)
+        if (!loadHeads(id, applyIfActive = false)) error("刷新失败")
+        val heads = headsCache[id] ?: error("刷新失败")
+        val notebook = notebooks.value.firstOrNull { it.id == id }
+        if (_ui.value.activeNotebookId == id) {
+            _alphabetLetterIndex.value = heads.letterIndex
+        }
+        when {
+            BuiltInWordbookSeeder.isBundledId(id) ->
+                applyBundledProgressive(id, instant = true)
+            notebook?.slug != null && BuiltInWordbookSeeder.specForSlug(notebook.slug) != null ->
+                applyPackagedCatalogProgressive(id, notebook.slug, heads, instant = true)
+            else -> applyHeadsProgressive(id, heads, instant = true)
+        }
+        runCatching { refreshNotebookList() }
+    }
+
     /** Load the page above an alphabet-jump window and keep the current top row in place. */
     fun loadEarlierWords() {
         val id = _ui.value.activeNotebookId
-        if (id == 0L || earlierJob?.isActive == true) return
+        if (id == 0L || earlierJob?.isActive == true || _ui.value.listRefreshing) return
         val windowStart = repo.listWindowStart
         if (windowStart <= 0) return
         val token = _session.value?.token
@@ -1433,12 +1623,12 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Load full bundled rows (definitions included) from APK assets. */
-    private suspend fun applyBundledProgressive(notebookId: Long) {
+    private suspend fun applyBundledProgressive(notebookId: Long, instant: Boolean = false) {
         if (_ui.value.activeNotebookId != notebookId) return
         val packed = withContext(Dispatchers.IO) {
             BuiltInWordbookSeeder.load(getApplication(), notebookId)
         } ?: return
-        applyFullEntriesProgressive(notebookId, packed.entries)
+        applyFullEntriesProgressive(notebookId, packed.entries, instant = instant)
     }
 
     /**
@@ -1449,6 +1639,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         notebookId: Long,
         slug: String,
         heads: WordHeads,
+        instant: Boolean = false,
     ) {
         if (_ui.value.activeNotebookId != notebookId) return
         val packed = withContext(Dispatchers.IO) {
@@ -1480,16 +1671,23 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        applyFullEntriesProgressive(notebookId, aligned, totalOverride = heads.total)
+        applyFullEntriesProgressive(notebookId, aligned, totalOverride = heads.total, instant = instant)
     }
 
     private suspend fun applyFullEntriesProgressive(
         notebookId: Long,
         entries: List<VocabEntry>,
         totalOverride: Int? = null,
+        instant: Boolean = false,
     ) {
         if (_ui.value.activeNotebookId != notebookId) return
         val total = totalOverride ?: entries.size
+        if (instant) {
+            repo.applyHeads(notebookId, entries, total)
+            studyDeckFiltered = null
+            _ui.update { it.copy(listLoading = false) }
+            return
+        }
         val previewCount = minOf(HEADS_PREVIEW_COUNT, entries.size)
         if (_ui.value.activeNotebookId != notebookId) return
         repo.applyHeads(notebookId, entries.subList(0, previewCount), total)
@@ -1580,10 +1778,24 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
      * Paint the first screen of stubs immediately, hydrate definitions, then
      * append remaining stubs in chunks.
      */
-    private suspend fun applyHeadsProgressive(notebookId: Long, heads: WordHeads) {
+    private suspend fun applyHeadsProgressive(
+        notebookId: Long,
+        heads: WordHeads,
+        instant: Boolean = false,
+    ) {
         if (_ui.value.activeNotebookId != notebookId) return
         val items = heads.items
         val total = heads.total
+        if (instant) {
+            val stubs = withContext(Dispatchers.Default) {
+                items.map { it.toStub(notebookId) }
+            }
+            if (_ui.value.activeNotebookId != notebookId) return
+            repo.applyHeads(notebookId, stubs, total)
+            studyDeckFiltered = null
+            _ui.update { it.copy(listLoading = false) }
+            return
+        }
         val previewCount = minOf(HEADS_PREVIEW_COUNT, items.size)
         val preview = withContext(Dispatchers.Default) {
             items.subList(0, previewCount).map { it.toStub(notebookId) }
@@ -1880,6 +2092,10 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             onError("请输入名称")
             return
         }
+        if (trimmed == Notebook.SYSTEM_VOCAB_NAME) {
+            onError("不能新建默认生词本")
+            return
+        }
         viewModelScope.launch {
             runCatching {
                 val created = api.createNotebook(token(), trimmed)
@@ -1896,7 +2112,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteNotebook(id: Long, onError: (String) -> Unit = {}) {
         val target = notebooks.value.firstOrNull { it.id == id }
         if (target == null || target.isLocked) {
-            onError("系统词书不能删除")
+            onError(if (target?.name == Notebook.SYSTEM_VOCAB_NAME) "默认生词本不能删除" else "系统词书不能删除")
             return
         }
         viewModelScope.launch {
@@ -1933,10 +2149,18 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     if (state.settings.defaultNotebookId == id) {
-                        val fallbackId = remaining.firstOrNull { !it.isSystem }?.id ?: Notebook.DEFAULT_ID
+                        val fallbackId = systemVocabNotebook(remaining)?.id
+                            ?: remaining.firstOrNull { !it.isSystem }?.id
+                            ?: Notebook.DEFAULT_ID
                         val settings = state.settings.copy(defaultNotebookId = fallbackId)
                         settingsStore.saveSettings(settings)
                         next = next.copy(settings = settings)
+                        val current = _session.value
+                        if (current != null && fallbackId > 0L && current.vocabNotebookId != fallbackId) {
+                            val updated = current.copy(vocabNotebookId = fallbackId)
+                            sessionStore.save(updated)
+                            _session.value = updated
+                        }
                     }
                     next
                 }
@@ -1968,8 +2192,48 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            runCatching { repo.moveEntriesToNotebook(entryIds, targetNotebookId) }
-                .onFailure { onError(it.message ?: "移动失败") }
+            val sourceId = _ui.value.activeNotebookId
+            val auth = runCatching { token() }.getOrElse {
+                onError(it.message ?: "未登录")
+                return@launch
+            }
+            var moved = 0
+            var failure: String? = null
+            for (id in entryIds.distinct()) {
+                val entry = repo.getById(id) ?: continue
+                if (entry.notebookId == targetNotebookId) continue
+                val result = runCatching {
+                    val saved = api.createWord(
+                        auth,
+                        targetNotebookId,
+                        entry.copy(id = 0L, notebookId = targetNotebookId),
+                    )
+                    api.deleteWord(auth, id)
+                    repo.delete(id)
+                    repo.cacheEntry(saved.copy(imageBlob = saved.imageBlob ?: entry.imageBlob))
+                }
+                if (result.isSuccess) {
+                    moved += 1
+                } else {
+                    failure = result.exceptionOrNull()?.message?.takeIf { it.isNotBlank() } ?: "移动失败"
+                    break
+                }
+            }
+            if (moved > 0) {
+                forgetNotebookIndex(sourceId)
+                forgetNotebookIndex(targetNotebookId)
+                runCatching { refreshNotebookList() }
+                if (_ui.value.activeNotebookId == sourceId) {
+                    refreshAlphabetLetterIndex(sourceId)
+                }
+            }
+            val message = when {
+                failure != null && moved == 0 -> failure
+                failure != null -> "已移动 $moved 个单词，$failure"
+                moved == 0 -> "没有可移动的单词"
+                else -> "已移动 $moved 个单词"
+            }
+            onError(message)
         }
     }
 

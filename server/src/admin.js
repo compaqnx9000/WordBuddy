@@ -558,7 +558,7 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
     res.status(404).json({ error: '用户不存在' })
     return
   }
-  const [notebooks, logins, passwords, sms, devices, checkIn, checkInLogs, shortFavorites] =
+  const [notebooks, logins, passwords, sms, devices, checkIn, checkInLogs, shortFavorites, withdrawals, withdrawalSummary] =
     await Promise.all([
     query(
       `SELECT n.id, n.kind, n.slug, n.name, n.published, n.sort_order, n.owner_user_id, n.created_at,
@@ -606,6 +606,24 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
       [id],
     ),
     listUserShortFavoritesAdmin({ userId: id, limit: 80 }),
+    query(
+      `SELECT id, user_id, channel, account, amount_fen, points_spent, status,
+              provider_trade_no, error_message, sandbox, created_at, updated_at
+       FROM withdrawals WHERE user_id = $1
+       ORDER BY created_at DESC LIMIT 80`,
+      [id],
+    ),
+    query(
+      `SELECT
+         count(*)::int AS n,
+         count(*) FILTER (WHERE status = 'success')::int AS success_n,
+         count(*) FILTER (WHERE status = 'pending')::int AS pending_n,
+         count(*) FILTER (WHERE status = 'failed')::int AS failed_n,
+         COALESCE(SUM(amount_fen) FILTER (WHERE status = 'success'), 0)::bigint AS success_fen,
+         COALESCE(SUM(points_spent) FILTER (WHERE status = 'success'), 0)::bigint AS success_points
+       FROM withdrawals WHERE user_id = $1`,
+      [id],
+    ),
   ])
   const checkInRow = checkIn.rows[0]
   res.json({
@@ -644,6 +662,15 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
       createdAt: iso(row.created_at),
     })),
     shortFavorites,
+    withdrawals: withdrawals.rows.map(mapAdminWithdrawal),
+    withdrawalSummary: {
+      total: Number(withdrawalSummary.rows[0]?.n || 0),
+      successCount: Number(withdrawalSummary.rows[0]?.success_n || 0),
+      pendingCount: Number(withdrawalSummary.rows[0]?.pending_n || 0),
+      failedCount: Number(withdrawalSummary.rows[0]?.failed_n || 0),
+      successFen: Number(withdrawalSummary.rows[0]?.success_fen || 0),
+      successPoints: Number(withdrawalSummary.rows[0]?.success_points || 0),
+    },
   })
 })
 
@@ -1378,6 +1405,103 @@ adminRouter.delete('/gifts/:id', adminRequired, async (req, res) => {
   }
   await audit(req, 'delete_gift', 'gift', id, { title: row.title })
   res.json({ ok: true })
+})
+
+function mapAdminWithdrawal(row) {
+  const amountFen = Math.max(0, Number(row.amount_fen || 0))
+  const status = row.status || ''
+  const statusLabel =
+    status === 'pending' ? '处理中' : status === 'success' ? '已到账' : status === 'failed' ? '失败' : status
+  return {
+    id: Number(row.id),
+    userId: Number(row.user_id),
+    phone: row.phone || null,
+    nickname: row.nickname || null,
+    buddyId: row.buddy_id || null,
+    channel: row.channel,
+    channelLabel: row.channel === 'wechat' ? '微信' : row.channel === 'alipay' ? '支付宝' : row.channel,
+    account: row.account,
+    amountFen,
+    amountYuan: (amountFen / 100).toFixed(2),
+    pointsSpent: Number(row.points_spent || 0),
+    status,
+    statusLabel,
+    providerTradeNo: row.provider_trade_no || null,
+    errorMessage: row.error_message || null,
+    sandbox: Boolean(row.sandbox),
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
+  }
+}
+
+adminRouter.get('/withdrawals', adminRequired, async (req, res) => {
+  const { page, pageSize, offset } = pageParams(req)
+  const q = String(req.query.q || '').trim()
+  const status = String(req.query.status || '').trim()
+  const params = []
+  const where = ['TRUE']
+  if (q) {
+    params.push(`%${q}%`)
+    where.push(`(
+      u.phone ILIKE $${params.length}
+      OR COALESCE(u.nickname, '') ILIKE $${params.length}
+      OR COALESCE(u.buddy_id, '') ILIKE $${params.length}
+      OR w.account ILIKE $${params.length}
+      OR CAST(u.id AS TEXT) ILIKE $${params.length}
+    )`)
+  }
+  if (status === 'pending' || status === 'success' || status === 'failed') {
+    params.push(status)
+    where.push(`w.status = $${params.length}`)
+  }
+  const total = (
+    await query(
+      `SELECT count(*)::int AS n
+       FROM withdrawals w
+       JOIN users u ON u.id = w.user_id
+       WHERE ${where.join(' AND ')}`,
+      params,
+    )
+  ).rows[0].n
+  const summary = (
+    await query(
+      `SELECT
+         count(*)::int AS n,
+         count(*) FILTER (WHERE w.status = 'success')::int AS success_n,
+         count(*) FILTER (WHERE w.status = 'pending')::int AS pending_n,
+         count(*) FILTER (WHERE w.status = 'failed')::int AS failed_n,
+         COALESCE(SUM(w.amount_fen) FILTER (WHERE w.status = 'success'), 0)::bigint AS success_fen,
+         COALESCE(SUM(w.points_spent) FILTER (WHERE w.status = 'success'), 0)::bigint AS success_points
+       FROM withdrawals w
+       JOIN users u ON u.id = w.user_id
+       WHERE ${where.join(' AND ')}`,
+      params,
+    )
+  ).rows[0]
+  params.push(pageSize, offset)
+  const result = await query(
+    `SELECT w.*, u.phone, u.nickname, u.buddy_id
+     FROM withdrawals w
+     JOIN users u ON u.id = w.user_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY w.created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params,
+  )
+  res.json({
+    items: result.rows.map(mapAdminWithdrawal),
+    total,
+    page,
+    pageSize,
+    summary: {
+      total: Number(summary.n || 0),
+      successCount: Number(summary.success_n || 0),
+      pendingCount: Number(summary.pending_n || 0),
+      failedCount: Number(summary.failed_n || 0),
+      successFen: Number(summary.success_fen || 0),
+      successPoints: Number(summary.success_points || 0),
+    },
+  })
 })
 
 adminRouter.get('/gift-orders', adminRequired, async (req, res) => {

@@ -13,6 +13,11 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class NotebookCopyPage(
+    val added: Int,
+    val remaining: Int,
+)
+
 data class AuthResult(
     val session: UserSession?,
     val isNewUser: Boolean = false,
@@ -1150,11 +1155,13 @@ class WordBuddyApi {
         targetId: Long,
         sourceId: Long,
         excludeWordIds: List<Long> = emptyList(),
-    ): Int = withContext(Dispatchers.IO) {
+        limit: Int? = null,
+    ): NotebookCopyPage = withContext(Dispatchers.IO) {
         val body = JSONObject().put("sourceNotebookId", sourceId)
         if (excludeWordIds.isNotEmpty()) {
             body.put("excludeWordIds", JSONArray(excludeWordIds))
         }
+        if (limit != null && limit > 0) body.put("limit", limit)
         val root = request(
             "POST",
             "/notebooks/$targetId/copy-from",
@@ -1162,7 +1169,10 @@ class WordBuddyApi {
             body = body,
             readTimeoutMs = 60_000,
         )
-        root.optInt("added")
+        NotebookCopyPage(
+            added = root.optInt("added"),
+            remaining = root.optInt("remaining"),
+        )
     }
 
     suspend fun createWord(token: String, notebookId: Long, entry: VocabEntry): VocabEntry =

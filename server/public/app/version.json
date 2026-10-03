@@ -1,8 +1,8 @@
 {
-  "versionCode": 136,
-  "versionName": "1.45",
+  "versionCode": 146,
+  "versionName": "1.55",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "卡片模式长单词按连字符换行，不再被裁成半截。",
-  "releasedAt": "2026-10-02T14:50:00.000Z"
+  "notes": "补签积分按连续天数单独计算。",
+  "releasedAt": "2026-10-03T12:35:00.000Z"
 }
