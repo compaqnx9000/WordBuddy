@@ -57,8 +57,10 @@ final class AppModel: ObservableObject {
     @Published var mnemonicRevision = 0
     @Published var avatarImage: UIImage?
     @Published var avatarBusy = false
-    /// Lowercased word text → id in the user's 生词本 (for catalog swipe favorite).
+    /// Lowercased word text → id in the default favorite notebook.
     @Published private(set) var favoritedByText: [String: Int64] = [:]
+    /// Notebook the `favoritedByText` index was loaded from.
+    private var favoritedIndexNotebookId: Int64?
     @Published var checkIn = CheckInState()
     @Published var rewardVideo = RewardVideoOffer()
     @Published var rewardBusy = false
@@ -271,6 +273,7 @@ final class AppModel: ObservableObject {
         avatarImage = nil
         avatarBusy = false
         favoritedByText = [:]
+        favoritedIndexNotebookId = nil
         accounts = AccountStore.list()
     }
 
@@ -330,6 +333,14 @@ final class AppModel: ObservableObject {
     func setDefaultNotebookId(_ value: Int64) {
         defaultNotebookId = value
         SettingsStore.defaultNotebookId = value
+    }
+
+    /// Home-screen star saves into this personal notebook.
+    func setDefaultFavoriteNotebook(_ id: Int64) {
+        guard let notebook = notebooks.first(where: { $0.id == id }), !notebook.isSystem else { return }
+        setDefaultNotebookId(id)
+        assignVocabNotebook(id)
+        Task { await refreshFavoritedIndex() }
     }
 
     func applyPoints(_ points: Int) {
@@ -840,18 +851,29 @@ final class AppModel: ObservableObject {
 
     func isFavorited(_ text: String) -> Bool {
         let key = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !key.isEmpty else { return false }
-        if favoritedByText[key] != nil { return true }
-        let target = saveNotebookId
-        return words.contains { entry in
-            entry.text.caseInsensitiveCompare(text) == .orderedSame &&
-                (target == nil || entry.notebookId == target)
+        guard !key.isEmpty, let notebookId = favoriteNotebookId else { return false }
+        if favoritedIndexNotebookId == notebookId {
+            return favoritedByText[key] != nil
         }
+        guard activeNotebookId == notebookId else { return false }
+        return words.contains { $0.notebookId == notebookId && $0.text.caseInsensitiveCompare(text) == .orderedSame }
+    }
+
+    /// Load the default notebook's words once so lookup can show a filled star.
+    func ensureFavoriteIndex() async {
+        guard let notebookId = favoriteNotebookId else {
+            favoritedByText = [:]
+            favoritedIndexNotebookId = nil
+            return
+        }
+        guard favoritedIndexNotebookId != notebookId else { return }
+        await refreshFavoritedIndex()
     }
 
     func refreshFavoritedIndex() async {
-        guard let session, let notebookId = saveNotebookId else {
+        guard let session, let notebookId = favoriteNotebookId else {
             favoritedByText = [:]
+            favoritedIndexNotebookId = nil
             return
         }
         var map: [String: Int64] = [:]
@@ -869,18 +891,20 @@ final class AppModel: ObservableObject {
                 cursor = next
             }
             favoritedByText = map
+            favoritedIndexNotebookId = notebookId
         } catch {
             // Keep previous index on refresh failure.
             if noteSessionError(error) { return }
         }
     }
 
-    /// Toggle whether [entry] lives in the user's 生词本. Returns resulting favorited state, or nil on failure.
+    /// Toggle whether [entry] lives in the default favorite notebook. Returns the resulting state, or nil on failure.
     func toggleCatalogFavorite(_ entry: VocabEntry) async -> Bool? {
         guard session != nil else {
             showLogin = true
             return nil
         }
+        await ensureFavoriteIndex()
         let key = entry.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !key.isEmpty else { return nil }
         if let existingId = favoritedByText[key] {

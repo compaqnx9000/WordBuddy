@@ -32,11 +32,13 @@ struct NotebookView: View {
     /// Last word the user spoke, revealed, or swiped in the list.
     @State private var lastTouchedId: Int64?
     @State private var alphabetSeekTask: Task<Void, Never>?
-    /// True while the bottom「加载更多」row is on screen, so a drag-release can fetch the next page.
-    @State private var loadMoreRowVisible = false
+    /// True when the visible list is within 8 rows of the loaded end (same threshold as Android).
+    @State private var nearListEnd = false
+    /// Scroll content height. A change while still near the end loads the next page after the last one lands.
+    @State private var listContentHeight = 0
 
     /// Same fixed row height for every notebook (user + catalog), matching Android 3-line meaning block.
-    private static let wordRowHeight: CGFloat = 88
+    fileprivate static let wordRowHeight: CGFloat = 88
     private static let chipHeight: CGFloat = 36
 
     private var visibleWords: [VocabEntry] {
@@ -506,6 +508,13 @@ struct NotebookView: View {
                                 }
                                 .id(word.id)
                                 .onAppear {
+                                    if #unavailable(iOS 18.0) {
+                                        let words = visibleWords
+                                        if let index = words.firstIndex(where: { $0.id == word.id }),
+                                           index >= max(0, words.count - 9) {
+                                            requestLoadMore()
+                                        }
+                                    }
                                     guard word.id == visibleWords.first?.id, model.listWindowStart > 0 else { return }
                                     let anchor = word.id
                                     Task { @MainActor in
@@ -583,47 +592,16 @@ struct NotebookView: View {
                                     }
                                 }
                             }
-                            if model.nextCursor != nil {
-                                Button {
-                                    Task { await model.loadMoreWords() }
-                                } label: {
-                                    HStack {
-                                        Spacer()
-                                        if model.wordsLoading {
-                                            ProgressView().tint(Theme.cyan)
-                                        } else {
-                                            Text("加载更多").foregroundStyle(Theme.cyan)
-                                        }
-                                        Spacer()
-                                    }
-                                    .frame(maxWidth: .infinity, minHeight: 44)
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .onAppear { loadMoreRowVisible = true }
-                                .onDisappear { loadMoreRowVisible = false }
-                                .background {
-                                    LoadMoreDragRelay {
-                                        Task { await model.loadMoreWords() }
-                                    }
-                                }
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                            }
                         }
                         .listStyle(.plain)
                         .scrollContentBackground(.hidden)
-                        .simultaneousGesture(
-                            DragGesture(minimumDistance: 8)
-                                .onEnded { value in
-                                    guard abs(value.translation.height) >= 8, abs(value.translation.height) > abs(value.translation.width) else { return }
-                                    guard loadMoreRowVisible, model.nextCursor != nil else { return }
-                                    Task { await model.loadMoreWords() }
-                                }
-                        )
-                        .modifier(ReleaseToLoadMore(ready: loadMoreRowVisible && model.nextCursor != nil) {
-                            Task { await model.loadMoreWords() }
-                        })
+                        .modifier(LoadMoreOnScroll(nearEnd: $nearListEnd, contentHeight: $listContentHeight))
+                        .onChange(of: nearListEnd) { _, near in
+                            if near { requestLoadMore() }
+                        }
+                        .onChange(of: listContentHeight) { _, _ in
+                            if nearListEnd { requestLoadMore() }
+                        }
                         .refreshable { await model.loadWords() }
                         .onChange(of: scrollTarget) { _, target in
                             guard let target else { return }
@@ -642,7 +620,8 @@ struct NotebookView: View {
                             lastTouchedId = nil
                             selectionMode = false
                             clearSelection()
-                            loadMoreRowVisible = false
+                            nearListEnd = false
+                            listContentHeight = 0
                             alphabetSeekTask?.cancel()
                             alphabetSeekTask = nil
                         }
@@ -964,6 +943,12 @@ struct NotebookView: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+    }
+
+    /// Next page when the visible end is within 8 rows, same as Android's LazyColumn prefetch.
+    private func requestLoadMore() {
+        guard model.nextCursor != nil, !model.wordsLoading else { return }
+        Task { await model.loadMoreWords() }
     }
 
     private func openCards(at index: Int) {
@@ -1433,173 +1418,32 @@ private final class AlphabetRailView: UIView {
     }
 }
 
-/// Loads the next page when a drag ends on the「加载更多」row.
-private struct LoadMoreDragRelay: UIViewRepresentable {
-    var onRelease: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onRelease: onRelease)
-    }
-
-    func makeUIView(context: Context) -> ProbeView {
-        let view = ProbeView()
-        view.isUserInteractionEnabled = false
-        view.backgroundColor = .clear
-        let coordinator = context.coordinator
-        view.onReady = { [weak coordinator] probe in
-            coordinator?.attach(from: probe)
-        }
-        return view
-    }
-
-    func updateUIView(_ uiView: ProbeView, context: Context) {
-        context.coordinator.onRelease = onRelease
-        let coordinator = context.coordinator
-        uiView.onReady = { [weak coordinator] probe in
-            coordinator?.attach(from: probe)
-        }
-        context.coordinator.attach(from: uiView)
-    }
-
-    final class Coordinator: NSObject {
-        var onRelease: () -> Void
-        private weak var scroll: UIScrollView?
-        private weak var host: UIView?
-        private var decelObservation: NSKeyValueObservation?
-        private var pendingRelease = false
-        private var peakPull: CGFloat = 0
-
-        init(onRelease: @escaping () -> Void) {
-            self.onRelease = onRelease
-        }
-
-        func attach(from view: UIView) {
-            host = view
-            guard let found = view.listScrollView(), scroll !== found else { return }
-            if let old = scroll {
-                old.panGestureRecognizer.removeTarget(self, action: #selector(handlePan(_:)))
-            }
-            scroll = found
-            found.panGestureRecognizer.addTarget(self, action: #selector(handlePan(_:)))
-            decelObservation = found.observe(\.isDecelerating, options: [.new]) { [weak self] scroll, _ in
-                guard let self, self.pendingRelease, !scroll.isDecelerating, !scroll.isDragging else { return }
-                self.pendingRelease = false
-                self.fireIfFooterVisible()
-            }
-        }
-
-        @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-            switch gesture.state {
-            case .began:
-                peakPull = 0
-            case .changed:
-                peakPull = max(peakPull, abs(gesture.translation(in: gesture.view).y))
-            case .ended, .cancelled, .failed:
-                let distance = max(peakPull, abs(gesture.translation(in: gesture.view).y))
-                guard distance >= 8 else { return }
-                if scroll?.isDecelerating == true {
-                    pendingRelease = true
-                } else {
-                    fireIfFooterVisible()
-                }
-            default:
-                break
-            }
-        }
-
-        private func fireIfFooterVisible() {
-            guard let scroll, let host, host.window != nil else { return }
-            let point = host.convert(CGPoint(x: host.bounds.midX, y: host.bounds.midY), to: scroll)
-            let visible = scroll.bounds.insetBy(dx: 0, dy: -80)
-            guard visible.contains(point) else { return }
-            let release = onRelease
-            DispatchQueue.main.async { release() }
-        }
-    }
+private struct ListEndProbe: Equatable {
+    var nearEnd: Bool
+    var contentHeight: Int
 }
 
-private final class ProbeView: UIView {
-    var onReady: ((UIView) -> Void)?
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        guard window != nil else { return }
-        onReady?(self)
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        guard window != nil else { return }
-        onReady?(self)
-    }
-}
-
-/// iOS 18+ reports when the finger leaves the list. One release at the bottom loads one page.
-private struct ReleaseToLoadMore: ViewModifier {
-    var ready: Bool
-    var onRelease: () -> Void
-    @State private var box = ReleaseBox()
+/// Prefetch the next page once the visible end is within 8 rows, matching Android.
+private struct LoadMoreOnScroll: ViewModifier {
+    @Binding var nearEnd: Bool
+    @Binding var contentHeight: Int
 
     func body(content: Content) -> some View {
-        phaseContent(content)
-            .onAppear {
-                box.ready = ready
-                box.onRelease = onRelease
-            }
-            .onChange(of: ready) { _, newValue in
-                box.ready = newValue
-                box.onRelease = onRelease
-            }
-    }
-
-    @ViewBuilder
-    private func phaseContent(_ content: Content) -> some View {
         if #available(iOS 18.0, *) {
-            content.onScrollPhaseChange { oldPhase, newPhase in
-                guard box.ready, newPhase == .idle else { return }
-                guard oldPhase == .interacting || oldPhase == .decelerating else { return }
-                box.onRelease()
+            content.onScrollGeometryChange(for: ListEndProbe.self) { geo in
+                let remaining = geo.contentSize.height - geo.contentOffset.y - geo.containerSize.height
+                let threshold = NotebookView.wordRowHeight * 8
+                return ListEndProbe(
+                    nearEnd: geo.contentSize.height > 0 && remaining < threshold,
+                    contentHeight: Int(geo.contentSize.height.rounded())
+                )
+            } action: { _, probe in
+                nearEnd = probe.nearEnd
+                contentHeight = probe.contentHeight
             }
         } else {
             content
         }
-    }
-}
-
-private final class ReleaseBox {
-    var ready = false
-    var onRelease: () -> Void = {}
-}
-
-private extension UIView {
-    /// The word list, not the short horizontal notebook scroller above it.
-    func listScrollView() -> UIScrollView? {
-        var current: UIView? = self
-        while let view = current {
-            if let scroll = view as? UIScrollView, scroll.bounds.height > 160 {
-                return scroll
-            }
-            current = view.superview
-        }
-        guard let window else { return nil }
-        let anchor = convert(center, to: window)
-        var match: UIScrollView?
-        var matchArea = CGFloat.greatestFiniteMagnitude
-        func walk(_ node: UIView) {
-            if let scroll = node as? UIScrollView, scroll.bounds.height > 160 {
-                let frame = scroll.convert(scroll.bounds, to: window)
-                if frame.contains(anchor) {
-                    let area = frame.width * frame.height
-                    if area < matchArea {
-                        match = scroll
-                        matchArea = area
-                    }
-                }
-            }
-            node.subviews.forEach(walk)
-        }
-        walk(window)
-        return match
     }
 }
 

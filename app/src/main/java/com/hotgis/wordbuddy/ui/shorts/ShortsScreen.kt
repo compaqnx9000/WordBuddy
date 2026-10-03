@@ -120,6 +120,7 @@ fun ShortsScreen(
     val scope = rememberCoroutineScope()
     var clips by remember { mutableStateOf<List<ShortClip>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    var loadingMore by remember { mutableStateOf(false) }
     var feed by remember { mutableStateOf<List<ShortFeedItem>>(emptyList()) }
     val pagerState = rememberPagerState(pageCount = { feed.size.coerceAtLeast(1) })
     val readyAdKeys by DrawFeedController.readyKeys.collectAsState()
@@ -181,20 +182,34 @@ fun ShortsScreen(
         }
     }
 
-    LaunchedEffect(pagerState.settledPage, feed.size, readyAdKeys, clips) {
-        if (clips.isEmpty()) return@LaunchedEffect
-        var next = appendClipsIfNeeded(feed, pagerState.settledPage, clips)
-        if (pagerState.settledPage >= feed.lastIndex - 2) {
-            val exclude = clips.map { it.id }
-            val more = loadMoreClips(exclude)
-            if (more.isNotEmpty()) {
-                val merged = (clips + more).distinctBy { it.id }
-                clips = merged
-                next = appendClipsIfNeeded(next, pagerState.settledPage, more)
+    LaunchedEffect(pagerState.settledPage, feed.size) {
+        if (clips.isEmpty() || loadingMore) return@LaunchedEffect
+        if (pagerState.settledPage < feed.lastIndex - 2) return@LaunchedEffect
+        loadingMore = true
+        scope.launch {
+            try {
+                val more = loadMoreClips(clips.map { it.id })
+                // Server refills with a watch-time ranking after every video has been seen.
+                // A failed request still replays the current pool so the pager never ends.
+                val incoming = if (more.isNotEmpty()) more else clips
+                if (incoming.isEmpty()) return@launch
+                if (more.isNotEmpty()) {
+                    clips = (clips + more).distinctBy { it.id }
+                }
+                val stamp = feed.size
+                feed = feed + incoming.mapIndexed { index, clip ->
+                    ShortFeedItem.Video(clip, "v-$stamp-$index-${clip.id}")
+                }
+            } finally {
+                loadingMore = false
             }
         }
-        next = insertUpcomingAds(
-            current = next,
+    }
+
+    LaunchedEffect(pagerState.settledPage, feed.size, readyAdKeys, clips) {
+        if (clips.isEmpty()) return@LaunchedEffect
+        val next = insertUpcomingAds(
+            current = feed,
             settledPage = pagerState.settledPage,
             readyKeys = readyAdKeys,
             clips = clips,
@@ -302,20 +317,6 @@ fun ShortsScreen(
 private fun initialVideoFeed(clips: List<ShortClip>): List<ShortFeedItem> =
     clips.mapIndexed { index, clip -> ShortFeedItem.Video(clip, "v-0-$index-${clip.id}") }
 
-private fun appendClipsIfNeeded(
-    current: List<ShortFeedItem>,
-    settledPage: Int,
-    clips: List<ShortClip>,
-): List<ShortFeedItem> {
-    if (clips.isEmpty() || current.isEmpty()) return current
-    if (current.size >= MAX_FEED_SIZE) return current
-    if (settledPage < current.lastIndex - 1) return current
-    val stamp = current.size
-    return current + clips.mapIndexed { index, clip ->
-        ShortFeedItem.Video(clip, "v-$stamp-$index-${clip.id}")
-    }
-}
-
 private fun insertUpcomingAds(
     current: List<ShortFeedItem>,
     settledPage: Int,
@@ -337,7 +338,6 @@ private fun insertUpcomingAds(
     pending.forEach { key ->
         var videosToSkip = if (firstAdInFeed) 2 else Random.nextInt(2, 4)
         while (videosToSkip > 0) {
-            if (result.size >= MAX_FEED_SIZE) return result
             if (index >= result.size) {
                 val round = result.size
                 clips.forEachIndexed { clipIndex, clip ->
@@ -353,7 +353,6 @@ private fun insertUpcomingAds(
                 null -> break
             }
         }
-        if (result.size >= MAX_FEED_SIZE) return result
         if (index > result.size) index = result.size
         result.add(index, ShortFeedItem.Ad(key))
         Log.i("DrawFeedAd", "inserted ad key=$key at index=$index feedSize=${result.size}")
@@ -361,8 +360,6 @@ private fun insertUpcomingAds(
     }
     return result
 }
-
-private const val MAX_FEED_SIZE = 80
 
 @Composable
 private fun DrawAdPage(

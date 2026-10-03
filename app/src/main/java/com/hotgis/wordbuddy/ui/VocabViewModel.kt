@@ -2596,8 +2596,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         queryKey: String,
         cache: Boolean = false,
     ) {
-        val notebookId = _ui.value.settings.defaultNotebookId
-        val saved = repo.getByWord(notebookId, lookedUp.text)
+        val notebookId = resolveVocabNotebookId() ?: 0L
+        val saved = if (notebookId > 0L) repo.getByWord(notebookId, lookedUp.text) else null
         val near = lookedUp.nearWords
         val synonyms = lookedUp.synonyms
         val antonyms = lookedUp.antonyms

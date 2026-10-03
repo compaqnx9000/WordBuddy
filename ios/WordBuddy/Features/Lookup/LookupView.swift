@@ -414,7 +414,9 @@ struct LookupView: View {
         relatedTab = 0
         defer { lookingUp = false }
         do {
-            entry = try await model.lookup(text)
+            async let lookedUp = model.lookup(text)
+            await model.ensureFavoriteIndex()
+            entry = try await lookedUp
             if let entry { reloadMnemonic(entry.text) }
         } catch {
             entry = nil

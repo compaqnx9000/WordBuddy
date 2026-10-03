@@ -1355,6 +1355,17 @@ struct SettingsView: View {
         .glassPanel()
     }
 
+    private var favoriteNotebooks: [Notebook] {
+        model.notebooks
+            .filter { !$0.isSystem }
+            .sorted { lhs, rhs in
+                if lhs.createdAtMillis != rhs.createdAtMillis {
+                    return lhs.createdAtMillis > rhs.createdAtMillis
+                }
+                return lhs.id > rhs.id
+            }
+    }
+
     private var preferencesCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionTitle("slider.horizontal.3", Theme.cyan, "偏好设置")
@@ -1413,6 +1424,34 @@ struct SettingsView: View {
                 subtitle: "收藏生词时自动生成助记图",
                 isOn: Binding(get: { model.aiImageAutoGen }, set: { model.setAiImageAutoGen($0) })
             )
+            if !favoriteNotebooks.isEmpty {
+                preferenceDivider()
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "book")
+                            .font(.system(size: 18))
+                            .foregroundStyle(Theme.cyan)
+                            .frame(width: 22)
+                        Text("默认收藏生词本")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.onSurface)
+                    }
+                    Text("首页查词点星星时，词条会保存到所选生词本")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.onSurfaceVariant)
+                        .padding(.leading, 32)
+                    ChipFlow(spacing: 8) {
+                        ForEach(favoriteNotebooks) { notebook in
+                            choiceChip(notebook.name, selected: notebook.id == model.defaultNotebookId) {
+                                model.setDefaultFavoriteNotebook(notebook.id)
+                            }
+                        }
+                    }
+                    .padding(.leading, 32)
+                    .padding(.top, 6)
+                }
+                .padding(.top, 16)
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

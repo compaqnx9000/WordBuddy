@@ -270,15 +270,11 @@ fun AppSettingsScreen(
                         compareByDescending<Notebook> { it.createdAtMillis }
                             .thenByDescending { it.id },
                     )
-                if (favoriteBooks.isNotEmpty()) {
-                    DefaultNotebookCard(
-                        notebooks = favoriteBooks,
-                        selectedId = settings.defaultNotebookId,
-                        onSelect = onSelectDefaultNotebook,
-                    )
-                }
 
                 PreferencesCard(
+                    notebooks = favoriteBooks,
+                    selectedNotebookId = settings.defaultNotebookId,
+                    onSelectNotebook = onSelectDefaultNotebook,
                     autoPronounce = settings.speakOnPageChange,
                     dailyReminder = settings.dailyReminder,
                     aiImageAutoGen = settings.aiImageAutoGen,
@@ -531,17 +527,12 @@ private fun ThemeSwatch(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DefaultNotebookCard(
+private fun DefaultNotebookPicker(
     notebooks: List<Notebook>,
     selectedId: Long,
     onSelect: (Long) -> Unit,
 ) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .stellarGlass()
-            .padding(16.sdp()),
-    ) {
+    Column(Modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.sdp()),
@@ -592,6 +583,9 @@ private fun DefaultNotebookCard(
 
 @Composable
 private fun PreferencesCard(
+    notebooks: List<Notebook>,
+    selectedNotebookId: Long,
+    onSelectNotebook: (Long) -> Unit,
     autoPronounce: Boolean,
     dailyReminder: Boolean,
     aiImageAutoGen: Boolean,
@@ -678,6 +672,15 @@ private fun PreferencesCard(
             accentOnHover = Stellar.Pink,
             onChecked = onAiImageAutoGen,
         )
+        if (notebooks.isNotEmpty()) {
+            PreferenceDivider()
+            Spacer(Modifier.height(18.sdp()))
+            DefaultNotebookPicker(
+                notebooks = notebooks,
+                selectedId = selectedNotebookId,
+                onSelect = onSelectNotebook,
+            )
+        }
     }
 }
 

@@ -126,9 +126,157 @@ export async function listAdminShorts({ q, category, published, page = 1, pageSi
   return { items: result.rows.map((row) => mapShortVideo(row)), total, page, pageSize }
 }
 
+const CATEGORY_ORDER = SHORT_CATEGORIES.map((c) => c.id)
+
 /**
- * Category affinity from recent watch time, then rank unpublished-excluded videos.
- * Cold start: uniform category weights + sort_order.
+ * Watch-time share decides how often each category appears.
+ * A few seconds is still a cold start (even mix). Longer 口语 time takes most slots,
+ * with a floor so the other categories still show up.
+ */
+export function categoryWeightsFromWatch(watchMsByCategory, favoriteCountByCategory = {}) {
+  const weights = Object.fromEntries(CATEGORY_ORDER.map((cat) => [cat, 1]))
+  const total = CATEGORY_ORDER.reduce((sum, cat) => sum + Math.max(0, Number(watchMsByCategory[cat]) || 0), 0)
+  if (total >= 3000) {
+    for (const cat of CATEGORY_ORDER) {
+      const share = Math.max(0, Number(watchMsByCategory[cat]) || 0) / total
+      weights[cat] = 0.35 + share * 5.65
+    }
+  }
+  for (const cat of CATEGORY_ORDER) {
+    const fav = Math.max(0, Number(favoriteCountByCategory[cat]) || 0)
+    if (fav > 0) weights[cat] += Math.min(1.2, fav * 0.3)
+  }
+  return weights
+}
+
+function allocateCategorySlots(weights, limit) {
+  const total = CATEGORY_ORDER.reduce((sum, cat) => sum + (weights[cat] || 0), 0) || 1
+  const counts = Object.fromEntries(CATEGORY_ORDER.map((cat) => [cat, 0]))
+  const remainders = []
+  let used = 0
+  for (const cat of CATEGORY_ORDER) {
+    const exact = ((weights[cat] || 0) / total) * limit
+    const base = Math.floor(exact)
+    counts[cat] = base
+    used += base
+    remainders.push({ cat, rem: exact - base })
+  }
+  remainders.sort((a, b) => b.rem - a.rem)
+  let i = 0
+  while (used < limit && remainders.length) {
+    counts[remainders[i % remainders.length].cat] += 1
+    used += 1
+    i += 1
+  }
+  return counts
+}
+
+/** Spread minority categories through the page instead of dumping them at the end. */
+function spreadCategoryPattern(counts, limit) {
+  const seq = Array(limit).fill(null)
+  const taken = new Set()
+  const ordered = CATEGORY_ORDER
+    .map((cat) => [cat, counts[cat] || 0])
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => a[1] - b[1])
+  for (const [cat, n] of ordered) {
+    for (let i = 1; i <= n; i++) {
+      let pos = Math.round((i * (limit + 1)) / (n + 1)) - 1
+      if (pos < 0) pos = 0
+      while (pos < limit && taken.has(pos)) pos += 1
+      if (pos >= limit) pos = seq.findIndex((slot) => slot == null)
+      if (pos < 0) break
+      seq[pos] = cat
+      taken.add(pos)
+    }
+  }
+  const fallback = CATEGORY_ORDER.slice().sort((a, b) => (counts[b] || 0) - (counts[a] || 0))[0] || 'speaking'
+  return seq.map((cat) => cat || fallback)
+}
+
+function videoFreshness(row, excludeSet, recentIds) {
+  const id = Number(row.id)
+  let score = 1 / (1 + Math.max(0, Number(row.sort_order) || 0) * 0.05)
+  if (!excludeSet.has(id)) score += 100
+  if (!recentIds.has(id)) score += 20
+  score += Math.random() * 0.2
+  return score
+}
+
+/**
+ * One page of the feed. Unseen videos of the preferred category come first inside
+ * that category. When the catalog is exhausted, the same pool is reused so the
+ * client can keep paging in a loop.
+ */
+export function planShortFeed(rows, { limit = 20, excludeIds = [], weights, recentIds = new Set() } = {}) {
+  const size = Math.min(50, Math.max(1, Number(limit) || 20))
+  const excludeSet = new Set(
+    (Array.isArray(excludeIds) ? excludeIds : [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id) && id > 0),
+  )
+  const buckets = Object.fromEntries(CATEGORY_ORDER.map((cat) => [cat, []]))
+  for (const row of rows) {
+    buckets[normalizeCategory(row.category)].push(row)
+  }
+  for (const cat of CATEGORY_ORDER) {
+    buckets[cat].sort((a, b) => videoFreshness(b, excludeSet, recentIds) - videoFreshness(a, excludeSet, recentIds))
+  }
+  const availableWeights = { ...weights }
+  for (const cat of CATEGORY_ORDER) {
+    if (!buckets[cat].length) availableWeights[cat] = 0
+  }
+  if (CATEGORY_ORDER.every((cat) => !buckets[cat].length)) return []
+  const counts = allocateCategorySlots(availableWeights, size)
+  const pattern = spreadCategoryPattern(counts, size)
+  const pointers = Object.fromEntries(CATEGORY_ORDER.map((cat) => [cat, 0]))
+  const used = new Set()
+  const picked = []
+  const substitute = CATEGORY_ORDER.slice().sort(
+    (a, b) => (availableWeights[b] || 0) - (availableWeights[a] || 0),
+  )
+  for (const slot of pattern) {
+    let row = null
+    if (buckets[slot]?.length) {
+      // Repeat this category before giving the slot away. A 口语-heavy mix stays 口语
+      // even when that category has fewer videos than its slot count.
+      row = takeCategoryVideo(buckets[slot], pointers, slot, used, false)
+        || takeCategoryVideo(buckets[slot], pointers, slot, used, true)
+    }
+    if (!row) {
+      for (const cat of substitute) {
+        if (cat === slot) continue
+        row = takeCategoryVideo(buckets[cat], pointers, cat, used, false)
+          || takeCategoryVideo(buckets[cat], pointers, cat, used, true)
+        if (row) break
+      }
+    }
+    if (row) picked.push(row)
+    if (picked.length >= size) break
+  }
+  return picked
+}
+
+function takeCategoryVideo(list, pointers, cat, used, allowRepeat) {
+  if (!list?.length) return null
+  for (let n = 0; n < list.length; n++) {
+    const index = (pointers[cat] + n) % list.length
+    const row = list[index]
+    if (!used.has(Number(row.id))) {
+      pointers[cat] = (index + 1) % list.length
+      used.add(Number(row.id))
+      return row
+    }
+  }
+  if (!allowRepeat) return null
+  const row = list[pointers[cat] % list.length]
+  pointers[cat] = (pointers[cat] + 1) % list.length
+  return row
+}
+
+/**
+ * Category mix follows recent watch time. The page stays full even after every
+ * video has already been shown, so clients can loop instead of stopping.
  */
 export async function recommendShorts({
   userId = null,
@@ -138,17 +286,14 @@ export async function recommendShorts({
   absoluteBase = '',
 } = {}) {
   const size = Math.min(50, Math.max(1, Number(limit) || 20))
-  const exclude = (Array.isArray(excludeIds) ? excludeIds : [])
-    .map((id) => Number(id))
-    .filter((id) => Number.isFinite(id) && id > 0)
-
-  const affinity = { speaking: 1, vocab: 1, listening: 1 }
   const identityClause =
     userId != null
       ? 'user_id = $1'
       : deviceKey
         ? 'device_key = $1'
         : null
+  const watchMs = { speaking: 0, vocab: 0, listening: 0 }
+  const recentIds = new Set()
   if (identityClause) {
     const identityValue = userId != null ? userId : deviceKey
     const rows = (
@@ -164,48 +309,24 @@ export async function recommendShorts({
     ).rows
     for (const row of rows) {
       const cat = normalizeCategory(row.category)
-      const ms = Math.max(0, Number(row.ms) || 0)
-      // Soft floor so new categories still appear; boost by watch time (minutes).
-      affinity[cat] = 1 + Math.log1p(ms / 1000) * 2
+      watchMs[cat] = Math.max(0, Number(row.ms) || 0)
     }
-  }
-
-  const params = []
-  const where = ['published = TRUE']
-  if (exclude.length) {
-    params.push(exclude)
-    where.push(`id <> ALL($${params.length}::bigint[])`)
-  }
-  const candidates = (
-    await query(
-      `SELECT * FROM short_videos
-       WHERE ${where.join(' AND ')}
-       ORDER BY sort_order ASC, id DESC
-       LIMIT 400`,
-      params,
-    )
-  ).rows
-
-  // Recently watched demotion
-  const recentIds = new Set()
-  if (identityClause) {
-    const identityValue = userId != null ? userId : deviceKey
     const recent = (
       await query(
         `SELECT video_id
          FROM short_video_watches
          WHERE ${identityClause}
-           AND created_at > now() - interval '7 days'
+           AND created_at > now() - interval '2 days'
          ORDER BY created_at DESC
-         LIMIT 80`,
+         LIMIT 40`,
         [identityValue],
       )
     ).rows
     for (const row of recent) recentIds.add(Number(row.video_id))
   }
 
-  // Favorite category affinity (logged-in only) — helps push liked topics.
   const favoriteIds = new Set()
+  const favoriteCounts = { speaking: 0, vocab: 0, listening: 0 }
   if (userId != null) {
     const favCats = (
       await query(
@@ -218,8 +339,7 @@ export async function recommendShorts({
       )
     ).rows
     for (const row of favCats) {
-      const cat = normalizeCategory(row.category)
-      affinity[cat] = (affinity[cat] || 1) + Math.max(0, Number(row.n) || 0) * 0.85
+      favoriteCounts[normalizeCategory(row.category)] = Math.max(0, Number(row.n) || 0)
     }
     const favIds = (
       await query(`SELECT video_id FROM short_video_favorites WHERE user_id = $1`, [userId])
@@ -227,22 +347,24 @@ export async function recommendShorts({
     for (const row of favIds) favoriteIds.add(Number(row.video_id))
   }
 
-  const scored = candidates.map((row) => {
-    const cat = normalizeCategory(row.category)
-    const catScore = affinity[cat] || 1
-    const watchedPenalty = recentIds.has(Number(row.id)) ? 0.25 : 1
-    const sortBoost = 1 / (1 + Math.max(0, Number(row.sort_order) || 0) * 0.02)
-    const jitter = 0.92 + Math.random() * 0.16
-    return {
-      row,
-      score: catScore * watchedPenalty * sortBoost * jitter,
-    }
+  const candidates = (
+    await query(
+      `SELECT * FROM short_videos
+       WHERE published = TRUE
+       ORDER BY sort_order ASC, id DESC
+       LIMIT 1000`,
+    )
+  ).rows
+  const weights = categoryWeightsFromWatch(watchMs, favoriteCounts)
+  const page = planShortFeed(candidates, {
+    limit: size,
+    excludeIds,
+    weights,
+    recentIds,
   })
-  scored.sort((a, b) => b.score - a.score)
-
-  return scored.slice(0, size).map((item) =>
+  return page.map((row) =>
     mapShortVideo(
-      { ...item.row, favorited: favoriteIds.has(Number(item.row.id)) },
+      { ...row, favorited: favoriteIds.has(Number(row.id)) },
       { absoluteBase },
     ),
   )

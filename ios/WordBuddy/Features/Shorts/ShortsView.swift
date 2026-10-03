@@ -2,20 +2,20 @@ import AVFoundation
 import SwiftUI
 
 enum ShortFeedItem: Identifiable {
-    case clip(ShortClip)
+    case clip(ShortClip, cycle: Int)
     case draw(String)
 
     var id: String {
         switch self {
-        case .clip(let clip):
-            return "clip-\(clip.id)"
+        case .clip(let clip, let cycle):
+            return "clip-\(cycle)-\(clip.id)"
         case .draw(let key):
             return "draw-\(key)"
         }
     }
 
     var clip: ShortClip? {
-        if case .clip(let clip) = self { return clip }
+        if case .clip(let clip, _) = self { return clip }
         return nil
     }
 
@@ -36,6 +36,7 @@ struct ShortsView: View {
     @ObservedObject private var drawPool = DrawAdPool.shared
     @State private var loading = false
     @State private var loadingMore = false
+    @State private var feedCycle = 0
     @State private var errorMessage: String?
     @State private var fullscreen = false
 
@@ -114,7 +115,8 @@ struct ShortsView: View {
         do {
             let items = playable(try await model.api.fetchShortsFeed(token: model.session?.token))
             clips = items
-            feed = items.map { .clip($0) }
+            feedCycle = 0
+            feed = items.map { .clip($0, cycle: 0) }
             if currentId == nil || !feed.contains(where: { $0.id == currentId }) {
                 currentId = feed.first?.id
             }
@@ -134,16 +136,37 @@ struct ShortsView: View {
         loadingMore = true
         defer { loadingMore = false }
         do {
-            let known = Set(clips.map(\.id))
             let more = playable(
                 try await model.api.fetchShortsFeed(token: model.session?.token, excludeIds: clips.map(\.id))
-            ).filter { !known.contains($0.id) }
-            clips.append(contentsOf: more)
-            feed.append(contentsOf: more.map { .clip($0) })
-            insertUpcomingDraw()
+            )
+            // The server refills a watch-time ranking after the catalog wraps.
+            // If that page is empty, replay the videos already loaded so the list never ends.
+            let incoming = more.isEmpty ? clips : more
+            guard !incoming.isEmpty else { return }
+            if !more.isEmpty {
+                var merged = clips
+                let known = Set(merged.map(\.id))
+                for clip in more where !known.contains(clip.id) {
+                    merged.append(clip)
+                }
+                clips = merged
+            }
+            appendCycle(incoming)
         } catch {
-            _ = model.noteSessionError(error)
+            if !clips.isEmpty {
+                appendCycle(clips)
+            } else {
+                _ = model.noteSessionError(error)
+            }
         }
+    }
+
+    private func appendCycle(_ items: [ShortClip]) {
+        guard !items.isEmpty else { return }
+        feedCycle += 1
+        let cycle = feedCycle
+        feed.append(contentsOf: items.map { .clip($0, cycle: cycle) })
+        insertUpcomingDraw()
     }
 
     private func playable(_ clips: [ShortClip]) -> [ShortClip] {
@@ -174,15 +197,18 @@ struct ShortsView: View {
     private func setFavorite(_ id: String, favorited: Bool) {
         guard let index = clips.firstIndex(where: { $0.id == id }) else { return }
         clips[index].favorited = favorited
-        if let feedIndex = feed.firstIndex(where: { $0.clip?.id == id }) {
-            feed[feedIndex] = .clip(clips[index])
+        let updated = clips[index]
+        for feedIndex in feed.indices {
+            if case .clip(let existing, let cycle) = feed[feedIndex], existing.id == id {
+                feed[feedIndex] = .clip(updated, cycle: cycle)
+            }
         }
     }
 
     @ViewBuilder
     private func feedPage(_ item: ShortFeedItem) -> some View {
         switch item {
-        case .clip(let clip):
+        case .clip(let clip, _):
             ShortPage(
                 clip: clip,
                 engaged: isSelected && item.id == currentId,
