@@ -146,6 +146,7 @@ fun HotWordsRoot(
     val accountSwitching by viewModel.accountSwitching.collectAsStateWithLifecycle()
     val login by viewModel.login.collectAsStateWithLifecycle()
     val alphabetLetterIndex by viewModel.alphabetLetterIndex.collectAsStateWithLifecycle()
+    val listWindowStart by viewModel.listWindowStart.collectAsStateWithLifecycle()
     val pendingListScrollEntryId by viewModel.pendingListScrollEntryId.collectAsStateWithLifecycle()
     val favoriteRevision by viewModel.favoriteRevision.collectAsStateWithLifecycle()
     val homophones by viewModel.homophones.collectAsStateWithLifecycle()
@@ -1186,16 +1187,28 @@ fun HotWordsRoot(
                                         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                                     }
                                 },
+                                onMoveEntire = { sourceId, targetId, excludeIds ->
+                                    viewModel.moveEntireNotebook(sourceId, targetId, excludeIds) { message ->
+                                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                    }
+                                },
                                 wordCountInNotebook = viewModel::wordCountInNotebook,
                                 onToggleHide = viewModel::toggleHideDefinitions,
                                 onReveal = viewModel::toggleReveal,
                                 onSpeak = viewModel::speak,
                                 onDelete = viewModel::deleteWord,
                                 onDeleteEntries = viewModel::deleteWords,
+                                onDeleteEntire = { notebookId, excludeIds ->
+                                    viewModel.deleteEntireNotebookWords(notebookId, excludeIds) { message ->
+                                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                    }
+                                },
                                 onReorder = viewModel::reorderWords,
                                 onRecite = onReciteWord,
                                 onBack = { tab = MainTab.Home },
                                 onLoadMore = viewModel::loadMoreWords,
+                                listWindowStart = listWindowStart,
+                                onLoadEarlier = viewModel::loadEarlierWords,
                                 isWordFavorited = viewModel::isWordSaved,
                                 favoriteRevision = favoriteRevision,
                                 onToggleFavorite = { entry, onDone ->
@@ -1222,6 +1235,26 @@ fun HotWordsRoot(
                                     } else {
                                         viewModel.saveRelatedWordToNotebook(entry, notebookId) { ok, message ->
                                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                            onDone(ok)
+                                        }
+                                    }
+                                },
+                                onFavoriteEntries = { chosen, notebookId, onDone ->
+                                    if (!requireLogin("收藏生词需要先登录或注册")) {
+                                        onDone(false)
+                                    } else {
+                                        viewModel.saveRelatedWordsToNotebook(chosen, notebookId) { ok, message ->
+                                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                            onDone(ok)
+                                        }
+                                    }
+                                },
+                                onCopyCatalog = { sourceId, notebookId, excludeIds, onDone ->
+                                    if (!requireLogin("收藏生词需要先登录或注册")) {
+                                        onDone(false)
+                                    } else {
+                                        viewModel.copyCatalogIntoNotebook(sourceId, notebookId, excludeIds) { ok, message ->
+                                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                                             onDone(ok)
                                         }
                                     }

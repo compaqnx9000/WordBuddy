@@ -18,6 +18,7 @@ enum class ImportAction { Added, Updated }
 data class NotebookImportResult(
     val added: Int,
     val updated: Int,
+    val notebooks: Int = 0,
 )
 
 private const val TABLE = "vocab"
@@ -347,6 +348,10 @@ class VocabDbHelper(context: Context) : SQLiteOpenHelper(context, "hotwords.db",
         writableDatabase.delete(TABLE, "id = ?", arrayOf(id.toString()))
     }
 
+    fun clearNotebookWords(notebookId: Long) {
+        writableDatabase.delete(TABLE, "notebook_id = ?", arrayOf(notebookId.toString()))
+    }
+
     fun updateImageBlob(id: Long, imageBlob: ByteArray?) {
         val values = ContentValues()
         if (imageBlob == null) {
@@ -561,9 +566,14 @@ class VocabRepository(context: Context) {
     private var nextCursor: String? = null
     var hasMore: Boolean = false
         private set
-    /** When > 0, [_items} is a window starting at this absolute notebook index (alphabet jump). */
+    /** When > 0, [_items] is a window starting at this absolute notebook index (alphabet jump). */
+    private val _listWindowStart = MutableStateFlow(0)
+    val listWindowStartFlow: StateFlow<Int> = _listWindowStart.asStateFlow()
     var listWindowStart: Int = 0
-        private set
+        private set(value) {
+            field = value
+            _listWindowStart.value = value
+        }
 
     private val _items = MutableStateFlow(emptyList<VocabEntry>())
     private val _notebooks = MutableStateFlow(db.listNotebooks())
@@ -574,6 +584,16 @@ class VocabRepository(context: Context) {
         db.replaceNotebooks(books)
         // Prefer the caller's order (already remapped sortOrder); avoid reshuffling surprises.
         _notebooks.value = books
+    }
+
+    fun clearNotebookWords(notebookId: Long) {
+        db.clearNotebookWords(notebookId)
+        if (activeNotebookId == notebookId) {
+            _items.value = emptyList()
+            nextCursor = null
+            hasMore = true
+            listWindowStart = 0
+        }
     }
 
     fun openCachedNotebook(notebookId: Long) {
@@ -619,6 +639,20 @@ class VocabRepository(context: Context) {
         listWindowStart = fromIndex.coerceAtLeast(0)
         _items.value = page.items
         _notebooks.value = db.listNotebooks()
+    }
+
+    /** Insert the page above an alphabet-jump window. Keeps the forward cursor. */
+    fun prependEarlier(notebookId: Long, page: WordPage, newStart: Int) {
+        if (activeNotebookId != notebookId || page.items.isEmpty()) return
+        db.upsertEntries(page.items)
+        val seen = _items.value.mapTo(HashSet()) { it.id }
+        val fresh = page.items.filter { seen.add(it.id) }
+        if (fresh.isEmpty()) {
+            if (newStart <= 0) listWindowStart = 0
+            return
+        }
+        listWindowStart = newStart.coerceAtLeast(0)
+        _items.value = fresh + _items.value
     }
 
     /** Full ordered stubs (or existing full rows) so alphabet / slider can seek in RAM. */

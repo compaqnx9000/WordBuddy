@@ -68,6 +68,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -163,16 +164,21 @@ fun WordListScreen(
     onCreateNotebook: (String) -> Unit,
     onDeleteNotebook: (Long) -> Unit,
     onMoveEntries: (List<Long>, Long) -> Unit,
+    onMoveEntire: (sourceId: Long, targetId: Long, excludeIds: List<Long>) -> Unit = { _, _, _ -> },
     wordCountInNotebook: (Long) -> Int,
     onToggleHide: () -> Unit,
     onReveal: (Long) -> Unit,
     onSpeak: (VocabEntry) -> Unit,
     onDelete: (Long) -> Unit,
     onDeleteEntries: (List<Long>) -> Unit,
+    onDeleteEntire: (notebookId: Long, excludeIds: List<Long>) -> Unit = { _, _ -> },
     onReorder: (from: Int, to: Int) -> Unit,
     onRecite: (startEntryId: Long?) -> Unit,
     onBack: () -> Unit,
     onLoadMore: () -> Unit = {},
+    /** Absolute index of the first loaded row. Above 0, scrolling to the top should load earlier words. */
+    listWindowStart: Int = 0,
+    onLoadEarlier: () -> Unit = {},
     /** Whether [word] is already in the user's vocab notebook (生词本). */
     isWordFavorited: (String) -> Boolean = { false },
     /** Bumps when favorite notebook membership changes — forces swipe label recomposition. */
@@ -184,6 +190,8 @@ fun WordListScreen(
     onToggleFavorite: (entry: VocabEntry, onDone: (Boolean?) -> Unit) -> Unit = { _, onDone -> onDone(null) },
     /** Favorite a catalog word into a chosen user notebook. */
     onFavoriteToNotebook: (entry: VocabEntry, notebookId: Long, onDone: (Boolean) -> Unit) -> Unit = { _, _, onDone -> onDone(false) },
+    onFavoriteEntries: (entries: List<VocabEntry>, notebookId: Long, onDone: (Boolean) -> Unit) -> Unit = { _, _, onDone -> onDone(false) },
+    onCopyCatalog: (sourceId: Long, targetId: Long, excludeIds: List<Long>, onDone: (Boolean) -> Unit) -> Unit = { _, _, _, onDone -> onDone(false) },
     alphabetLetterIndex: Map<Char, Int> = emptyMap(),
     onSeekAlphabetLetter: (Char) -> Unit = {},
     pendingScrollEntryId: Long? = null,
@@ -203,8 +211,12 @@ fun WordListScreen(
     var notebookToDelete by remember { mutableStateOf<Notebook?>(null) }
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    var selectedEntries by remember { mutableStateOf(mapOf<Long, VocabEntry>()) }
+    var selectedEntire by remember { mutableStateOf(false) }
+    var excludedIds by remember { mutableStateOf(setOf<Long>()) }
     var showMoveDialog by remember { mutableStateOf(false) }
     var showFavoriteToDialog by remember { mutableStateOf(false) }
+    var showBatchFavorite by remember { mutableStateOf(false) }
     var pendingFavoriteEntry by remember { mutableStateOf<VocabEntry?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
@@ -217,6 +229,11 @@ fun WordListScreen(
     // Optimistic favorite overrides so swipe star updates immediately after tap.
     var favoriteOverrides by remember(ui.activeNotebookId) { mutableStateOf(emptyMap<String, Boolean>()) }
     val catalogLocked = notebooks.firstOrNull { it.id == ui.activeNotebookId }?.isSystem == true
+    val selectionCount = if (selectedEntire) {
+        (totalCount - excludedIds.size).coerceAtLeast(0)
+    } else {
+        selectedIds.size
+    }
     fun isFavorited(entry: VocabEntry): Boolean {
         val key = entry.text.lowercase()
         return favoriteOverrides[key]
@@ -264,6 +281,9 @@ fun WordListScreen(
         lastClickedEntryId = null
         selectionMode = false
         selectedIds = emptySet()
+        selectedEntries = emptyMap()
+        selectedEntire = false
+        excludedIds = emptySet()
         openSwipeId = null
         // Only jump to top when switching notebooks — not when returning from card.
         if (pendingScrollEntryId == null) {
@@ -290,6 +310,29 @@ fun WordListScreen(
             .collect { last ->
                 if (ui.listLoading || entries.isEmpty() || last < 0) return@collect
                 if (last >= (entries.lastIndex - 8).coerceAtLeast(0)) onLoadMore()
+            }
+    }
+    val windowStartState = rememberUpdatedState(listWindowStart)
+    val loadEarlierState = rememberUpdatedState(onLoadEarlier)
+    LaunchedEffect(ui.activeNotebookId) {
+        var leftTop = false
+        var primed = false
+        snapshotFlow { listState.firstVisibleItemIndex to windowStartState.value }
+            .collect { (first, start) ->
+                if (start <= 0) {
+                    leftTop = false
+                    primed = false
+                    return@collect
+                }
+                if (first > 0) {
+                    leftTop = true
+                    return@collect
+                }
+                if (!primed || leftTop) {
+                    primed = true
+                    leftTop = false
+                    loadEarlierState.value()
+                }
             }
     }
     val dragDropState = rememberDragDropState(listState, onMove = onReorder)
@@ -340,13 +383,16 @@ fun WordListScreen(
             ListTopBar(
                 title = activeNotebookName,
                 selectionMode = selectionMode,
-                selectedCount = selectedIds.size,
+                selectedCount = selectionCount,
                 showModeSubtitle = !splitPaneBody,
                 showMoreButton = !splitPaneBody,
                 onBack = {
                     if (selectionMode) {
                         selectionMode = false
                         selectedIds = emptySet()
+                        selectedEntries = emptyMap()
+        selectedEntire = false
+        excludedIds = emptySet()
                     } else {
                         onBack()
                     }
@@ -355,6 +401,9 @@ fun WordListScreen(
                 onCancelSelection = {
                     selectionMode = false
                     selectedIds = emptySet()
+                    selectedEntries = emptyMap()
+        selectedEntire = false
+        excludedIds = emptySet()
                 },
             )
         }
@@ -425,7 +474,11 @@ fun WordListScreen(
                         verticalArrangement = Arrangement.spacedBy(8.sdp()),
                     ) {
                         itemsIndexed(entries, key = { _, item -> "${item.notebookId}:${item.id}:${item.text}" }) { index, entry ->
-                            val selected = entry.id in selectedIds
+                            val selected = if (selectedEntire) {
+                                entry.id !in excludedIds
+                            } else {
+                                entry.id in selectedIds
+                            }
                             if (selectionMode) {
                                 WordRowBody(
                                     entry = entry,
@@ -436,10 +489,18 @@ fun WordListScreen(
                                     selectionMode = true,
                                     selected = selected,
                                     onSelectToggle = {
-                                        selectedIds = if (selected) {
-                                            selectedIds - entry.id
+                                        if (selectedEntire) {
+                                            excludedIds = if (entry.id in excludedIds) {
+                                                excludedIds - entry.id
+                                            } else {
+                                                excludedIds + entry.id
+                                            }
+                                        } else if (selected) {
+                                            selectedIds = selectedIds - entry.id
+                                            selectedEntries = selectedEntries - entry.id
                                         } else {
-                                            selectedIds + entry.id
+                                            selectedIds = selectedIds + entry.id
+                                            selectedEntries = selectedEntries + (entry.id to entry)
                                         }
                                     },
                                     onToggleMeaning = {},
@@ -587,21 +648,31 @@ fun WordListScreen(
         }
         if (selectionMode) {
             SelectionActionBar(
-                enabled = selectedIds.isNotEmpty(),
-                selectAllEnabled = entries.isNotEmpty(),
-                allSelected = entries.isNotEmpty() && selectedIds.size == entries.size,
+                enabled = selectionCount > 0,
+                selectAllEnabled = totalCount > 0,
+                allSelected = selectedEntire && excludedIds.isEmpty(),
+                moveLabel = if (catalogLocked) "收藏到…" else "移动到…",
+                showDelete = !catalogLocked,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.sdp(), vertical = 10.sdp())
                     .windowInsetsPadding(WindowInsets.navigationBars),
                 onSelectAll = {
-                    selectedIds = if (entries.isNotEmpty() && selectedIds.size == entries.size) {
-                        emptySet()
+                    if (selectedEntire && excludedIds.isEmpty()) {
+                        selectedEntire = false
+                        excludedIds = emptySet()
+                        selectedIds = emptySet()
+                        selectedEntries = emptyMap()
                     } else {
-                        entries.map { it.id }.toSet()
+                        selectedEntire = true
+                        excludedIds = emptySet()
+                        selectedIds = emptySet()
+                        selectedEntries = emptyMap()
                     }
                 },
-                onMove = { showMoveDialog = true },
+                onMove = {
+                    if (catalogLocked) showBatchFavorite = true else showMoveDialog = true
+                },
                 onDelete = { showDeleteConfirm = true },
             )
         } else if (!splitPaneBody) {
@@ -662,6 +733,9 @@ fun WordListScreen(
                 if (selectionMode) {
                     selectionMode = false
                     selectedIds = emptySet()
+                    selectedEntries = emptyMap()
+        selectedEntire = false
+        excludedIds = emptySet()
                 }
             },
         )
@@ -670,15 +744,22 @@ fun WordListScreen(
     if (showDeleteConfirm) {
         StellarConfirmDialog(
             title = "删除词条",
-            message = "确定删除选中的 ${selectedIds.size} 个词条吗？此操作不可撤销。",
+            message = "确定删除选中的 $selectionCount 个词条吗？此操作不可撤销。",
             confirmText = "删除",
             destructive = true,
             onDismiss = { showDeleteConfirm = false },
             onConfirm = {
-                onDeleteEntries(selectedIds.toList())
+                if (selectedEntire) {
+                    onDeleteEntire(ui.activeNotebookId, excludedIds.toList())
+                } else {
+                    onDeleteEntries(selectedIds.toList())
+                }
                 showDeleteConfirm = false
                 selectionMode = false
                 selectedIds = emptySet()
+                selectedEntries = emptyMap()
+        selectedEntire = false
+        excludedIds = emptySet()
             },
         )
     }
@@ -686,13 +767,20 @@ fun WordListScreen(
     if (showMoveDialog) {
         MoveToNotebookDialog(
             notebooks = notebooks.filter { !it.isSystem && it.id != ui.activeNotebookId },
-            selectedCount = selectedIds.size,
+            selectedCount = selectionCount,
             onDismiss = { showMoveDialog = false },
             onSelect = { targetId ->
-                onMoveEntries(selectedIds.toList(), targetId)
+                if (selectedEntire) {
+                    onMoveEntire(ui.activeNotebookId, targetId, excludedIds.toList())
+                } else {
+                    onMoveEntries(selectedIds.toList(), targetId)
+                }
                 showMoveDialog = false
                 selectionMode = false
                 selectedIds = emptySet()
+                selectedEntries = emptyMap()
+        selectedEntire = false
+        excludedIds = emptySet()
             },
         )
     }
@@ -723,13 +811,47 @@ fun WordListScreen(
         )
     }
 
+    if (showBatchFavorite) {
+        MoveToNotebookDialog(
+            notebooks = notebooks.filter { !it.isSystem },
+            selectedCount = selectionCount,
+            title = "收藏到生词本",
+            emptyText = "还没有生词本",
+            onDismiss = { showBatchFavorite = false },
+            onSelect = { targetId ->
+                val entire = selectedEntire
+                val excluded = excludedIds.toList()
+                val sourceId = ui.activeNotebookId
+                val chosen = selectedIds.mapNotNull { selectedEntries[it] }
+                showBatchFavorite = false
+                selectionMode = false
+                selectedIds = emptySet()
+                selectedEntries = emptyMap()
+                selectedEntire = false
+                excludedIds = emptySet()
+                if (entire) {
+                    onCopyCatalog(sourceId, targetId, excluded) { }
+                } else {
+                    onFavoriteEntries(chosen, targetId) { ok ->
+                        if (ok) {
+                            favoriteOverrides = favoriteOverrides + chosen.associate { it.text.lowercase() to true }
+                        }
+                    }
+                }
+            },
+        )
+    }
+
     if (showMoreMenu) {
         NotebookMoreSheet(
-            canEdit = !catalogLocked && totalCount > 0,
+            canEdit = totalCount > 0,
             onEdit = {
                 showMoreMenu = false
                 selectionMode = true
                 selectedIds = emptySet()
+                selectedEntries = emptyMap()
+        selectedEntire = false
+        excludedIds = emptySet()
                 openSwipeId = null
             },
             onStats = {
@@ -1128,6 +1250,8 @@ private fun SelectionActionBar(
     selectAllEnabled: Boolean,
     allSelected: Boolean,
     modifier: Modifier = Modifier,
+    moveLabel: String = "移动到…",
+    showDelete: Boolean = true,
     onSelectAll: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
@@ -1144,19 +1268,21 @@ private fun SelectionActionBar(
             onClick = onSelectAll,
         )
         SelectionActionButton(
-            label = "移动到…",
+            label = moveLabel,
             enabled = enabled,
             destructive = false,
             modifier = Modifier.weight(1f),
             onClick = onMove,
         )
-        SelectionActionButton(
-            label = "删除",
-            enabled = enabled,
-            destructive = true,
-            modifier = Modifier.weight(1f),
-            onClick = onDelete,
-        )
+        if (showDelete) {
+            SelectionActionButton(
+                label = "删除",
+                enabled = enabled,
+                destructive = true,
+                modifier = Modifier.weight(1f),
+                onClick = onDelete,
+            )
+        }
     }
 }
 

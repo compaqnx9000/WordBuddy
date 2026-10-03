@@ -1145,6 +1145,26 @@ class WordBuddyApi {
         statusLabel = obj.optString("statusLabel"),
     )
 
+    suspend fun copyNotebookWords(
+        token: String,
+        targetId: Long,
+        sourceId: Long,
+        excludeWordIds: List<Long> = emptyList(),
+    ): Int = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("sourceNotebookId", sourceId)
+        if (excludeWordIds.isNotEmpty()) {
+            body.put("excludeWordIds", JSONArray(excludeWordIds))
+        }
+        val root = request(
+            "POST",
+            "/notebooks/$targetId/copy-from",
+            token,
+            body = body,
+            readTimeoutMs = 60_000,
+        )
+        root.optInt("added")
+    }
+
     suspend fun createWord(token: String, notebookId: Long, entry: VocabEntry): VocabEntry =
         withContext(Dispatchers.IO) {
             val root = request(
@@ -1183,6 +1203,25 @@ class WordBuddyApi {
 
     suspend fun deleteWord(token: String, id: Long) = withContext(Dispatchers.IO) {
         request("DELETE", "/words/$id", token)
+    }
+
+    suspend fun deleteNotebookWords(
+        token: String,
+        notebookId: Long,
+        excludeWordIds: List<Long> = emptyList(),
+    ): Int = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+        if (excludeWordIds.isNotEmpty()) {
+            body.put("excludeWordIds", JSONArray(excludeWordIds))
+        }
+        val root = request(
+            "POST",
+            "/notebooks/$notebookId/words/bulk-delete",
+            token,
+            body = body,
+            readTimeoutMs = 60_000,
+        )
+        root.optInt("deleted")
     }
 
     suspend fun fetchHomophones(token: String?, word: String, limit: Int = 3): List<WordHomophone> =

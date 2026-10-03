@@ -200,6 +200,21 @@ actor WordBuddyAPI {
         _ = try await request(method: "DELETE", path: "/notebooks/\(id)", auth: token, body: nil)
     }
 
+    func deleteNotebookWords(token: String, notebookId: Int64, excludeWordIds: [Int64]) async throws -> Int {
+        var body: [String: Any] = [:]
+        if !excludeWordIds.isEmpty {
+            body["excludeWordIds"] = excludeWordIds
+        }
+        let root = try await request(
+            method: "POST",
+            path: "/notebooks/\(notebookId)/words/bulk-delete",
+            auth: token,
+            body: body,
+            long: true
+        )
+        return JSONValue.int(root, key: "deleted")
+    }
+
     func deleteWord(token: String, id: Int64) async throws {
         _ = try await request(method: "DELETE", path: "/words/\(id)", auth: token, body: nil)
     }
@@ -320,6 +335,30 @@ actor WordBuddyAPI {
                 "completed": completed,
             ]
         )
+    }
+
+    func copyNotebookWords(
+        token: String,
+        targetId: Int64,
+        sourceId: Int64,
+        excludeWordIds: [Int64],
+        limit: Int
+    ) async throws -> (added: Int, remaining: Int) {
+        var body: [String: Any] = [
+            "sourceNotebookId": sourceId,
+            "limit": limit,
+        ]
+        if !excludeWordIds.isEmpty {
+            body["excludeWordIds"] = excludeWordIds
+        }
+        let root = try await request(
+            method: "POST",
+            path: "/notebooks/\(targetId)/copy-from",
+            auth: token,
+            body: body,
+            long: true
+        )
+        return (JSONValue.int(root, key: "added"), JSONValue.int(root, key: "remaining"))
     }
 
     func createWord(token: String, notebookId: Int64, entry: VocabEntry) async throws -> VocabEntry {

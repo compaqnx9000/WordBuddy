@@ -47,8 +47,6 @@ struct CardModeView: View {
                 Text("没有可学习的单词")
                     .foregroundStyle(Theme.onSurfaceVariant)
                 Spacer()
-            } else if shuffled, let entry = shuffledDeck.first(where: { $0.id == currentId }) ?? shuffledDeck.first {
-                card(entry)
             } else {
                 ScrollView(.horizontal) {
                     LazyHStack(spacing: 0) {
@@ -184,9 +182,6 @@ struct CardModeView: View {
                     definitionCard(entry)
                     relatedBlock(entry)
                 }
-                .modifier(ShuffleCardDrag(enabled: shuffled) { delta in
-                    Task { await step(delta) }
-                })
                 if !entry.examples.isEmpty {
                     CardExamplePanel(word: entry.text, examples: entry.examples, accent: model.accent)
                 }
@@ -389,9 +384,7 @@ struct CardModeView: View {
         if let pendingSeek {
             return min(max(0, pendingSeek), max(0, pageTotal - 1))
         }
-        guard let currentId, let local = deck.firstIndex(where: { $0.id == currentId }) else { return 0 }
-        if shuffled { return local }
-        return min(model.listWindowStart + local, max(0, pageTotal - 1))
+        return absoluteDisplayIndex
     }
 
     private func syncSeekValue() {
@@ -405,10 +398,17 @@ struct CardModeView: View {
         seekValue = Double(absoluteDisplayIndex)
     }
 
+    /// Original notebook position for the word now on screen. Shuffle playback uses this, so the counter jumps instead of counting 1253, 1254.
+    private func wordId(atNatural index: Int) -> Int64? {
+        naturalIndexById.first { $0.value == index }?.key
+    }
+
     /// Card position without the slider hold, so a late window update cannot pull the thumb back to 0.
     private var absoluteDisplayIndex: Int {
         guard let currentId, let local = deck.firstIndex(where: { $0.id == currentId }) else { return 0 }
-        if shuffled { return local }
+        if shuffled, let natural = naturalIndexById[currentId] {
+            return min(natural, max(0, pageTotal - 1))
+        }
         return min(model.listWindowStart + local, max(0, pageTotal - 1))
     }
 
@@ -422,7 +422,9 @@ struct CardModeView: View {
                 if delta > 0 { stopPlay() }
                 return
             }
-            self.currentId = deck[next].id
+            withAnimation(.easeOut(duration: 0.32)) {
+                self.currentId = deck[next].id
+            }
             return
         }
         guard let index = model.words.firstIndex(where: { $0.id == currentId }) else { return }
@@ -464,8 +466,7 @@ struct CardModeView: View {
     private func scheduleLiveSeek(_ target: Int) {
         if shuffled {
             stopLiveSeek()
-            guard deck.indices.contains(target) else { return }
-            let id = deck[target].id
+            guard let id = wordId(atNatural: target) else { return }
             if currentId != id { currentId = id }
             return
         }
@@ -501,8 +502,8 @@ struct CardModeView: View {
 
     private func seek(to absolute: Int) async {
         if shuffled {
-            guard deck.indices.contains(absolute) else { return }
-            currentId = deck[absolute].id
+            guard let id = wordId(atNatural: absolute) else { return }
+            currentId = id
             return
         }
         let target = min(max(0, absolute), max(0, pageTotal - 1))
@@ -604,9 +605,9 @@ struct CardModeView: View {
         } else {
             currentId = stubs.first?.id
         }
-        if let currentId, let pos = stubs.firstIndex(where: { $0.id == currentId }) {
-            pendingSeek = pos
-            seekValue = Double(pos)
+        if let currentId, let natural = indexById[currentId] {
+            pendingSeek = natural
+            seekValue = Double(natural)
         }
         syncSeekValue()
         hydrateCurrent()
@@ -661,27 +662,6 @@ struct CardModeView: View {
             word: entry.text,
             meaningHint: entry.definitions.first?.meaning ?? ""
         )
-    }
-}
-
-private struct ShuffleCardDrag: ViewModifier {
-    var enabled: Bool
-    var onStep: (Int) -> Void
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if enabled {
-            content.simultaneousGesture(
-                DragGesture(minimumDistance: 28).onEnded { value in
-                    let dx = value.translation.width
-                    let dy = value.translation.height
-                    guard abs(dx) > abs(dy) * 1.4, abs(dx) > 48 else { return }
-                    onStep(dx < 0 ? 1 : -1)
-                }
-            )
-        } else {
-            content
-        }
     }
 }
 

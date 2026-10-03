@@ -1,6 +1,7 @@
 package com.hotgis.wordbuddy.ui
 
 import android.app.Application
+import android.content.Context
 import com.hotgis.wordbuddy.auth.WeChatAuth
 import com.hotgis.wordbuddy.pay.AlipayPayHelper
 import android.graphics.Bitmap
@@ -179,6 +180,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     val homophones: StateFlow<List<WordHomophone>> = _homophones.asStateFlow()
     private var homophonesWordKey: String = ""
     private var pageJob: Job? = null
+    private var earlierJob: Job? = null
     private var letterIndexJob: Job? = null
     private var catalogLetterIndexJob: Job? = null
     private var hydrateJob: Job? = null
@@ -194,6 +196,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private val _alphabetLetterIndex = MutableStateFlow<Map<Char, Int>>(emptyMap())
     /** Server-precomputed A–Z/# → absolute list index for the active notebook. */
     val alphabetLetterIndex: StateFlow<Map<Char, Int>> = _alphabetLetterIndex.asStateFlow()
+    /** Absolute index of the first loaded row. Greater than 0 after an alphabet jump. */
+    val listWindowStart: StateFlow<Int> = repo.listWindowStartFlow
     private val _pendingListScrollEntryId = MutableStateFlow<Long?>(null)
     /** When leaving card mode, list should land on this entry once. */
     val pendingListScrollEntryId: StateFlow<Long?> = _pendingListScrollEntryId.asStateFlow()
@@ -394,6 +398,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         val merged = (users + orderedCatalogs).mapIndexed { index, book ->
             book.copy(sortOrder = index)
         }
+        invalidateIeltsOrderCache(merged)
         withContext(Dispatchers.IO) { repo.publishNotebooks(merged) }
         prefetchCatalogHeads(merged.filter { it.isSystem })
         realignVocabNotebookSession()
@@ -403,6 +408,19 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
      * Warm word-head lists + letter maps for 中考 / 高考 / CET4 / CET6
      * so alphabet scrubbing and card seeking stay in RAM.
      */
+    /** Drop on-device IELTS rows once so a reordered list, then filled definitions, replace the old cache. */
+    private fun invalidateIeltsOrderCache(books: List<Notebook>) {
+        val prefs = getApplication<Application>().getSharedPreferences("hotwords_catalog_cache", Context.MODE_PRIVATE)
+        if (prefs.getInt("ielts_alpha", 0) >= 2) return
+        books.filter { it.slug == "ielts" }.forEach { book ->
+            repo.clearNotebookWords(book.id)
+            headsCache.remove(book.id)
+            headsReady.remove(book.id)
+            letterIndexByNotebook.remove(book.id)
+        }
+        prefs.edit().putInt("ielts_alpha", 2).apply()
+    }
+
     private fun prefetchCatalogHeads(catalogs: List<Notebook>) {
         if (catalogs.isEmpty()) return
         val missing = catalogs.filter { it.id !in headsReady }
@@ -619,6 +637,49 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteWord(id: Long) {
         deleteWords(listOf(id))
+    }
+
+    fun moveEntireNotebook(
+        sourceId: Long,
+        targetId: Long,
+        excludeWordIds: List<Long>,
+        onDone: (String) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            val result = runCatching {
+                api.copyNotebookWords(token(), targetId, sourceId, excludeWordIds)
+                api.deleteNotebookWords(token(), sourceId, excludeWordIds)
+            }
+            result
+                .onSuccess { deleted ->
+                    refreshNotebookList()
+                    if (_ui.value.activeNotebookId == sourceId) {
+                        refreshNotebook(sourceId, reset = true, prefetchAll = true)
+                    }
+                    onDone(if (deleted == 0) "没有可移动的单词" else "已移动 $deleted 个单词")
+                }
+                .onFailure { onDone(it.message ?: "移动失败") }
+        }
+    }
+
+    fun deleteEntireNotebookWords(
+        notebookId: Long,
+        excludeWordIds: List<Long>,
+        onDone: (String) -> Unit = {},
+    ) {
+        if (notebooks.value.firstOrNull { it.id == notebookId }?.isSystem == true) return
+        viewModelScope.launch {
+            val result = runCatching { api.deleteNotebookWords(token(), notebookId, excludeWordIds) }
+            result
+                .onSuccess { deleted ->
+                    refreshNotebookList()
+                    if (_ui.value.activeNotebookId == notebookId) {
+                        refreshNotebook(notebookId, reset = true, prefetchAll = true)
+                    }
+                    onDone(if (deleted == 0) "没有可删除的单词" else "已删除 $deleted 个单词")
+                }
+                .onFailure { onDone(it.message ?: "删除失败") }
+        }
     }
 
     fun deleteWords(ids: List<Long>) {
@@ -1002,6 +1063,65 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun copyCatalogIntoNotebook(
+        sourceId: Long,
+        notebookId: Long,
+        excludeWordIds: List<Long>,
+        onResult: (ok: Boolean, message: String) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val book = notebooks.value.firstOrNull { it.id == notebookId && !it.isSystem }
+            if (book == null) {
+                onResult(false, "生词本不存在")
+                return@launch
+            }
+            val result = runCatching {
+                api.copyNotebookWords(token(), notebookId, sourceId, excludeWordIds)
+            }
+            result
+                .onSuccess { added ->
+                    if (added > 0) _favoriteRevision.value = _favoriteRevision.value + 1
+                    refreshNotebookList()
+                    onResult(
+                        added > 0,
+                        if (added > 0) "已收藏 $added 个词到「${book.name}」" else "没有新单词可收藏",
+                    )
+                }
+                .onFailure { error ->
+                    onResult(false, error.message ?: "收藏失败")
+                }
+        }
+    }
+
+    fun saveRelatedWordsToNotebook(
+        entries: List<VocabEntry>,
+        notebookId: Long,
+        onResult: (ok: Boolean, message: String) -> Unit,
+    ) {
+        if (entries.size == 1) {
+            saveRelatedWordToNotebook(entries.first(), notebookId, onResult)
+            return
+        }
+        viewModelScope.launch {
+            val book = notebooks.value.firstOrNull { it.id == notebookId && !it.isSystem }
+            if (book == null) {
+                onResult(false, "生词本不存在")
+                return@launch
+            }
+            var added = 0
+            for (entry in entries) {
+                if (runCatching { saveRelatedWordToNotebookSync(entry, book.id) }.isSuccess) {
+                    added++
+                }
+            }
+            if (added > 0) _favoriteRevision.value = _favoriteRevision.value + 1
+            onResult(
+                added > 0,
+                if (added > 0) "已收藏 $added 个词到「${book.name}」" else "没有新单词可收藏",
+            )
+        }
+    }
+
     private suspend fun saveRelatedWordToNotebookSync(entry: VocabEntry, notebookId: Long): VocabEntry {
         val toSave = entry.copy(
             id = 0L,
@@ -1162,6 +1282,45 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         refreshNotebook(id, reset = false, prefetchAll = false)
     }
 
+    /** Load the page above an alphabet-jump window and keep the current top row in place. */
+    fun loadEarlierWords() {
+        val id = _ui.value.activeNotebookId
+        if (id == 0L || earlierJob?.isActive == true) return
+        val windowStart = repo.listWindowStart
+        if (windowStart <= 0) return
+        val token = _session.value?.token
+        val notebook = notebooks.value.firstOrNull { it.id == id }
+        if (token == null && notebook?.isSystem != true) return
+        val start = (windowStart - PAGE_LIMIT).coerceAtLeast(0)
+        val limit = windowStart - start
+        if (limit <= 0) return
+        val anchor = repo.items.value.firstOrNull()?.id
+        earlierJob = viewModelScope.launch {
+            val page = try {
+                api.listWords(token, id, cursor = null, limit = limit, fromIndex = start)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                if (notebook?.isSystem != true || token == null) return@launch
+                try {
+                    api.listWords(null, id, cursor = null, limit = limit, fromIndex = start)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    return@launch
+                }
+            }
+            if (!isActive || _ui.value.activeNotebookId != id || repo.listWindowStart != windowStart) return@launch
+            if (page.items.isEmpty()) return@launch
+            withContext(Dispatchers.IO) {
+                repo.prependEarlier(id, page, start)
+            }
+            if (anchor != null && _ui.value.activeNotebookId == id) {
+                _pendingListScrollEntryId.value = anchor
+            }
+        }
+    }
+
     /**
      * Ensure the list shows [letter]. With heads in RAM, load stubs up to the
      * server-computed offset then hydrate definitions there.
@@ -1194,6 +1353,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         pageJob?.cancel()
+        earlierJob?.cancel()
         pageJob = viewModelScope.launch {
             val windowStart = repo.listWindowStart
             val coveredEnd = windowStart + repo.items.value.size
@@ -1894,11 +2054,14 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             .getOrNull()
     }
 
-    fun exportNotebookJson(): String {
-        val notebookId = _ui.value.activeNotebookId
-        val entries = repo.items.value.filter { it.notebookId == notebookId }
-        val notebook = notebooks.value.firstOrNull { it.id == notebookId }
-        return VocabNotebookExporter.toJson(entries, notebook)
+    suspend fun exportNotebookJson(): String {
+        val token = token()
+        val books = api.listNotebooks(token).filter { !it.isSystem }
+        if (books.isEmpty()) error("还没有可导出的生词本")
+        val payload = books.map { book ->
+            VocabBackupNotebook(book.name, allCloudWords(token, book.id))
+        }
+        return VocabNotebookExporter.toJson(payload)
     }
 
     fun suggestedExportFileName(): String {
@@ -1907,11 +2070,63 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun importNotebookJson(json: String): NotebookImportResult {
-        val entries = VocabNotebookImporter.fromJson(json)
-        if (entries.isEmpty()) {
-            throw IllegalArgumentException("备份中没有词条")
+        val token = token()
+        val books = VocabNotebookImporter.fromBackup(json)
+        if (books.isEmpty()) throw IllegalArgumentException("备份中没有生词本")
+        var added = 0
+        var firstId: Long? = null
+        for (book in books) {
+            val notebookId = notebookIdNamed(token, book.name)
+            if (firstId == null) firstId = notebookId
+            val known = allCloudWords(token, notebookId).map { it.text.trim().lowercase() }.toMutableSet()
+            for (entry in book.entries) {
+                val key = entry.text.trim().lowercase()
+                if (key.isBlank() || key in known) continue
+                api.createWord(token, notebookId, entry.copy(id = 0, notebookId = notebookId))
+                known += key
+                added++
+            }
         }
-        return repo.importEntries(_ui.value.activeNotebookId, entries)
+        refreshNotebookList()
+        val openId = firstId
+        if (openId != null && notebooks.value.any { it.id == openId }) {
+            _ui.update {
+                it.copy(
+                    activeNotebookId = openId,
+                    cardIndex = 0,
+                    shuffledOrder = null,
+                    listError = null,
+                )
+            }
+            refreshNotebook(openId, reset = true, prefetchAll = true)
+        }
+        return NotebookImportResult(added = added, updated = 0, notebooks = books.size)
+    }
+
+    private suspend fun notebookIdNamed(token: String, name: String): Long {
+        val trimmed = name.trim()
+        notebooks.value.firstOrNull { !it.isSystem && it.name.equals(trimmed, ignoreCase = true) }?.let { return it.id }
+        return try {
+            api.createNotebook(token, trimmed).id
+        } catch (error: Exception) {
+            api.listNotebooks(token)
+                .firstOrNull { !it.isSystem && it.name.equals(trimmed, ignoreCase = true) }
+                ?.id
+                ?: throw error
+        }
+    }
+
+    private suspend fun allCloudWords(token: String, notebookId: Long): List<VocabEntry> {
+        val collected = mutableListOf<VocabEntry>()
+        var cursor: String? = null
+        repeat(40) {
+            val page = api.listWords(token, notebookId, cursor, limit = 100)
+            collected += page.items
+            val next = page.nextCursor
+            if (next.isNullOrBlank()) return collected
+            cursor = next
+        }
+        return collected
     }
 
     private suspend fun syncEntryEverywhere(id: Long) {

@@ -451,7 +451,7 @@ struct MeView: View {
             Button {
                 Task { await exportNotebook() }
             } label: {
-                menuRowLabel("square.and.arrow.up", Theme.cyan, "导出词库", transferring ? "导出中…" : "不含图片和发音")
+                menuRowLabel("square.and.arrow.up", Theme.cyan, "导出词库", transferring ? "导出中…" : "全部生词本，不含图片")
             }
             .buttonStyle(.plain)
             .disabled(transferring)
@@ -459,7 +459,7 @@ struct MeView: View {
             Button {
                 showImport = true
             } label: {
-                menuRowLabel("square.and.arrow.down", Theme.pink, "导入词库", "合并导入")
+                menuRowLabel("square.and.arrow.down", Theme.pink, "导入词库", "恢复生词本")
             }
             .buttonStyle(.plain)
             .disabled(transferring)

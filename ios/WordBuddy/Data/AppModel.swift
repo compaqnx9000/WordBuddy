@@ -1,6 +1,19 @@
 import Foundation
 import UIKit
 
+struct CatalogCopyProgress: Equatable {
+    var title: String
+    var copied: Int
+    var total: Int
+}
+
+enum EarlierWordsResult {
+    case busy
+    case unchanged
+    /// Words were inserted above [anchorId]. Keep that row on screen, then call finish.
+    case prepended(anchorId: Int64, token: Int)
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var session: UserSession?
@@ -19,10 +32,15 @@ final class AppModel: ObservableObject {
     @Published var pendingScrollWordId: Int64?
     /// Bumps on each window jump so a slower response cannot overwrite a newer seek.
     private var windowSeekGeneration = 0
+    /// Prepending the page above a letter jump. A newer seek invalidates it.
+    private var earlierLoadInFlight = false
+    private var earlierLoadToken = 0
     /// Notebook id → full ordered heads, used to shuffle the whole catalog.
     private var headsCache: [Int64: [WordHead]] = [:]
     @Published var showLogin = false
     @Published var banner: String?
+    /// Whole-notebook favorite. Shown as a live progress card, not the alert banner.
+    @Published var catalogCopyProgress: CatalogCopyProgress?
     @Published var accent: Accent = .us
     @Published var accentStyle: AccentStyle = .cyberNeon
     @Published var hideDefinitions = true
@@ -697,13 +715,18 @@ final class AppModel: ObservableObject {
             showLogin = true
             return nil
         }
-        guard let notebookId = exportNotebookId, let notebook = notebooks.first(where: { $0.id == notebookId }) else {
+        let books = notebooks.filter { !$0.isSystem }
+        guard !books.isEmpty else {
             banner = "还没有可导出的生词本"
             return nil
         }
         do {
-            let entries = try await allWords(token: session.token, notebookId: notebookId)
-            return try VocabTransfer.exportJSON(notebook: notebook, entries: entries)
+            var payload: [VocabBackupNotebook] = []
+            for book in books {
+                let entries = try await allWords(token: session.token, notebookId: book.id)
+                payload.append(VocabBackupNotebook(name: book.name, entries: entries))
+            }
+            return try VocabTransfer.exportLibrary(payload)
         } catch {
             if !noteSessionError(error) {
                 banner = error.localizedDescription
@@ -713,38 +736,42 @@ final class AppModel: ObservableObject {
     }
 
     func importNotebook(data: Data) async {
-        guard session != nil else {
+        guard let token = session?.token else {
             showLogin = true
             return
         }
-        guard let notebookId = saveNotebookId else {
-            banner = "还没有可导入的生词本"
-            return
-        }
-        if notebooks.first(where: { $0.id == notebookId })?.isSystem == true {
-            banner = "系统词书不能导入"
-            return
-        }
         do {
-            let entries = try VocabTransfer.importEntries(from: data)
-            guard !entries.isEmpty else {
-                banner = "备份里没有单词"
+            let books = try VocabTransfer.importLibrary(from: data)
+            guard !books.isEmpty else {
+                banner = "备份中没有生词本"
                 return
             }
-            if activeNotebookId != notebookId {
-                activeNotebookId = notebookId
-                await loadWords()
-            }
-            var known = Set(words.map { $0.text.lowercased() })
+            var restored = 0
             var added = 0
-            for entry in entries {
-                let key = entry.text.lowercased()
-                if known.contains(key) { continue }
-                _ = try await save(entry)
-                known.insert(key)
-                added += 1
+            var firstId: Int64?
+            for book in books {
+                let notebookId = try await notebookId(named: book.name, token: token)
+                if firstId == nil { firstId = notebookId }
+                let existing = try await allWords(token: token, notebookId: notebookId)
+                var known = Set(existing.map { $0.text.lowercased() })
+                for entry in book.entries {
+                    let key = entry.text.lowercased()
+                    if known.contains(key) { continue }
+                    var toSave = entry
+                    toSave.id = 0
+                    toSave.notebookId = notebookId
+                    _ = try await api.createWord(token: token, notebookId: notebookId, entry: toSave)
+                    known.insert(key)
+                    added += 1
+                }
+                restored += 1
             }
-            banner = added == 0 ? "这些单词已经在生词本里" : "已导入 \(added) 个单词"
+            await loadNotebooks()
+            if let firstId, notebooks.contains(where: { $0.id == firstId }) {
+                activeNotebookId = firstId
+            }
+            await loadWords()
+            banner = "已恢复 \(restored) 个生词本，新增 \(added) 个单词"
         } catch {
             if !noteSessionError(error) {
                 banner = error.localizedDescription
@@ -752,9 +779,28 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private var exportNotebookId: Int64? {
-        if let active = activeNotebook, !active.isSystem { return active.id }
-        return saveNotebookId
+    private func notebookId(named name: String, token: String) async throws -> Int64 {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let existing = userNotebook(named: trimmed) {
+            return existing.id
+        }
+        do {
+            let created = try await api.createNotebook(token: token, name: trimmed)
+            notebooks.append(created)
+            return created.id
+        } catch {
+            await loadNotebooks()
+            if let existing = userNotebook(named: trimmed) {
+                return existing.id
+            }
+            throw error
+        }
+    }
+
+    private func userNotebook(named name: String) -> Notebook? {
+        notebooks.first {
+            !$0.isSystem && $0.name.compare(name, options: .caseInsensitive) == .orderedSame
+        }
     }
 
     private func allWords(token: String, notebookId: Int64) async throws -> [VocabEntry] {
@@ -904,6 +950,88 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func copyCatalogNotebook(from sourceId: Int64, to notebookId: Int64, excluding: Set<Int64>) async {
+        guard let session else {
+            showLogin = true
+            return
+        }
+        guard let notebook = notebooks.first(where: { $0.id == notebookId && !$0.isSystem }) else {
+            banner = "还没有可用的生词本"
+            return
+        }
+        guard catalogCopyProgress == nil else { return }
+        catalogCopyProgress = CatalogCopyProgress(title: "正在收藏到「\(notebook.name)」", copied: 0, total: 0)
+        do {
+            var copied = 0
+            let excluded = Array(excluding)
+            while true {
+                let page = try await api.copyNotebookWords(
+                    token: session.token,
+                    targetId: notebookId,
+                    sourceId: sourceId,
+                    excludeWordIds: excluded,
+                    limit: 400
+                )
+                copied += page.added
+                let total = max(copied + page.remaining, copied)
+                catalogCopyProgress = CatalogCopyProgress(
+                    title: "正在收藏到「\(notebook.name)」",
+                    copied: copied,
+                    total: total
+                )
+                if page.remaining <= 0 || page.added == 0 { break }
+            }
+            if copied > 0, let index = notebooks.firstIndex(where: { $0.id == notebookId }) {
+                notebooks[index].wordCount += copied
+            }
+            headsCache[notebookId] = nil
+            catalogCopyProgress = nil
+            banner = copied == 0 ? "没有新单词可收藏" : "已收藏 \(copied) 个词到「\(notebook.name)」"
+        } catch {
+            catalogCopyProgress = nil
+            if !noteSessionError(error) {
+                banner = error.localizedDescription
+            }
+        }
+    }
+
+    func favoriteCatalogWords(_ entries: [VocabEntry], to notebookId: Int64) async {
+        if entries.count == 1, let entry = entries.first {
+            _ = await favoriteCatalogWord(entry, to: notebookId)
+            return
+        }
+        guard let session else {
+            showLogin = true
+            return
+        }
+        guard let notebook = notebooks.first(where: { $0.id == notebookId && !$0.isSystem }) else {
+            banner = "还没有可用的生词本"
+            return
+        }
+        var added = 0
+        for entry in entries {
+            let key = entry.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !key.isEmpty else { continue }
+            var toSave = entry
+            toSave.id = 0
+            toSave.notebookId = notebookId
+            do {
+                let created = try await api.createWord(token: session.token, notebookId: notebookId, entry: toSave)
+                if notebookId == favoriteNotebookId {
+                    favoritedByText[key] = created.id
+                }
+                added += 1
+            } catch {
+                if noteSessionError(error) { return }
+            }
+        }
+        if added > 0, let index = notebooks.firstIndex(where: { $0.id == notebookId }) {
+            notebooks[index].wordCount += added
+        }
+        headsCache[notebookId] = nil
+        banner = added == 0 ? "没有新单词可收藏" : "已收藏 \(added) 个词到「\(notebook.name)」"
+    }
+
     func save(_ entry: VocabEntry) async throws -> VocabEntry {
         guard let session else {
             showLogin = true
@@ -952,6 +1080,19 @@ final class AppModel: ObservableObject {
         assignVocabNotebook(fallback.id)
     }
 
+    /// Drop the in-memory IELTS head list once after the catalog was reordered and again after blank meanings were filled.
+    private func invalidateIeltsOrderCacheIfNeeded() {
+        let key = "hotwords_ielts_alpha_revision"
+        guard UserDefaults.standard.integer(forKey: key) < 2 else { return }
+        for book in notebooks where book.slug == "ielts" {
+            headsCache[book.id] = nil
+            if activeNotebookId == book.id {
+                alphabetLetterIndex = [:]
+            }
+        }
+        UserDefaults.standard.set(2, forKey: key)
+    }
+
     func loadNotebooks() async {
         do {
             let items: [Notebook]
@@ -961,6 +1102,7 @@ final class AppModel: ObservableObject {
                 items = try await api.listCatalogs()
             }
             notebooks = items
+            invalidateIeltsOrderCacheIfNeeded()
             let preferred = session?.vocabNotebookId ?? 0
             if let current = activeNotebookId, items.contains(where: { $0.id == current }) {
                 // keep current selection
@@ -1151,6 +1293,90 @@ final class AppModel: ObservableObject {
         await loadSeekWindow(notebookId: notebookId, token: session?.token, fromIndex: target)
     }
 
+    func deleteEntireNotebook(excluding: Set<Int64>) async {
+        guard let session, let notebookId = activeNotebookId, let notebook = activeNotebook, !notebook.isSystem else {
+            return
+        }
+        guard catalogCopyProgress == nil else { return }
+        catalogCopyProgress = CatalogCopyProgress(title: "正在删除「\(notebook.name)」", copied: 0, total: 0)
+        do {
+            let deleted = try await api.deleteNotebookWords(
+                token: session.token,
+                notebookId: notebookId,
+                excludeWordIds: Array(excluding)
+            )
+            catalogCopyProgress = nil
+            headsCache[notebookId] = nil
+            if let index = notebooks.firstIndex(where: { $0.id == notebookId }) {
+                notebooks[index].wordCount = max(0, notebooks[index].wordCount - deleted)
+            }
+            await loadWords()
+            banner = deleted == 0 ? "没有可删除的单词" : "已删除 \(deleted) 个单词"
+        } catch {
+            catalogCopyProgress = nil
+            if !noteSessionError(error) {
+                banner = error.localizedDescription
+            }
+        }
+    }
+
+    func moveEntireNotebook(to targetId: Int64, excluding: Set<Int64>) async {
+        guard let sourceId = activeNotebookId, let source = activeNotebook, !source.isSystem else { return }
+        guard let target = notebooks.first(where: { $0.id == targetId && !$0.isSystem }) else {
+            banner = "不能移动到系统词书"
+            return
+        }
+        guard catalogCopyProgress == nil else { return }
+        catalogCopyProgress = CatalogCopyProgress(title: "正在移动到「\(target.name)」", copied: 0, total: 0)
+        do {
+            var copied = 0
+            let excluded = Array(excluding)
+            guard let session else {
+                catalogCopyProgress = nil
+                showLogin = true
+                return
+            }
+            while true {
+                let page = try await api.copyNotebookWords(
+                    token: session.token,
+                    targetId: targetId,
+                    sourceId: sourceId,
+                    excludeWordIds: excluded,
+                    limit: 400
+                )
+                copied += page.added
+                let total = max(copied + page.remaining, copied)
+                catalogCopyProgress = CatalogCopyProgress(
+                    title: "正在移动到「\(target.name)」",
+                    copied: copied,
+                    total: total
+                )
+                if page.remaining <= 0 || page.added == 0 { break }
+            }
+            let deleted = try await api.deleteNotebookWords(
+                token: session.token,
+                notebookId: sourceId,
+                excludeWordIds: excluded
+            )
+            headsCache[sourceId] = nil
+            headsCache[targetId] = nil
+            if let index = notebooks.firstIndex(where: { $0.id == sourceId }) {
+                notebooks[index].wordCount = max(0, notebooks[index].wordCount - deleted)
+            }
+            if let index = notebooks.firstIndex(where: { $0.id == targetId }) {
+                notebooks[index].wordCount += deleted
+            }
+            catalogCopyProgress = nil
+            await loadWords()
+            banner = deleted == 0 ? "没有可移动的单词" : "已移动 \(deleted) 个单词"
+        } catch {
+            catalogCopyProgress = nil
+            if !noteSessionError(error) {
+                banner = error.localizedDescription
+            }
+        }
+    }
+
     func deleteWord(_ id: Int64) async {
         guard let session, activeNotebook?.isSystem != true else { return }
         do {
@@ -1196,11 +1422,13 @@ final class AppModel: ObservableObject {
         defer { wordsLoading = false }
         do {
             let page = try await api.listWords(token: session?.token, notebookId: notebookId, cursor: nil)
-            words = page.items
-            wordTotal = page.total
-            nextCursor = page.nextCursor
-            listWindowStart = 0
-            if alphabetLetterIndex.isEmpty {
+        words = page.items
+        wordTotal = page.total
+        nextCursor = page.nextCursor
+        listWindowStart = 0
+        earlierLoadToken += 1
+        earlierLoadInFlight = false
+        if alphabetLetterIndex.isEmpty {
                 await refreshLetterIndex()
             }
         } catch {
@@ -1217,11 +1445,66 @@ final class AppModel: ObservableObject {
             let page = try await api.listWords(token: session?.token, notebookId: notebookId, cursor: cursor)
             let existing = Set(words.map(\.id))
             words.append(contentsOf: page.items.filter { !existing.contains($0.id) })
-            wordTotal = page.total
+            if page.total > 0 { wordTotal = page.total }
             nextCursor = page.nextCursor
         } catch {
             handle(error, fallback: "加载更多失败")
         }
+    }
+
+    /// Pull the page above a letter-jump window so scrolling up reaches earlier letters.
+    /// The returned anchor is the word that was at the top; keep it on screen after prepending.
+    func loadEarlierWords() async -> EarlierWordsResult {
+        guard !earlierLoadInFlight, listWindowStart > 0 else { return .busy }
+        guard let notebookId = activeNotebookId, canReadNotebook(notebookId) else { return .unchanged }
+        earlierLoadInFlight = true
+        earlierLoadToken += 1
+        let token = earlierLoadToken
+        let generation = windowSeekGeneration
+        let pageSize = 100
+        let start = max(0, listWindowStart - pageSize)
+        let limit = listWindowStart - start
+        let anchorId = words.first?.id
+        guard limit > 0, let anchorId else {
+            earlierLoadInFlight = false
+            return .unchanged
+        }
+        do {
+            let page = try await api.listWords(
+                token: session?.token,
+                notebookId: notebookId,
+                cursor: nil,
+                limit: limit,
+                fromIndex: start
+            )
+            guard token == earlierLoadToken, generation == windowSeekGeneration, activeNotebookId == notebookId else {
+                if token == earlierLoadToken { earlierLoadInFlight = false }
+                return .unchanged
+            }
+            let existing = Set(words.map(\.id))
+            let fresh = page.items.filter { !existing.contains($0.id) }
+            guard !fresh.isEmpty else {
+                if start == 0 { listWindowStart = 0 }
+                earlierLoadInFlight = false
+                return .unchanged
+            }
+            if page.total > 0 { wordTotal = page.total }
+            words.insert(contentsOf: fresh, at: 0)
+            listWindowStart = start
+            return .prepended(anchorId: anchorId, token: token)
+        } catch {
+            if token == earlierLoadToken { earlierLoadInFlight = false }
+            if Self.isCancellation(error) || Task.isCancelled { return .unchanged }
+            if !noteSessionError(error) {
+                banner = error.localizedDescription
+            }
+            return .unchanged
+        }
+    }
+
+    func finishEarlierLoad(token: Int) {
+        guard token == earlierLoadToken else { return }
+        earlierLoadInFlight = false
     }
 
     func refreshLetterIndex() async {
@@ -1271,6 +1554,8 @@ final class AppModel: ObservableObject {
 
     private func loadSeekWindow(notebookId: Int64, token: String?, fromIndex: Int) async {
         windowSeekGeneration += 1
+        earlierLoadToken += 1
+        earlierLoadInFlight = false
         let generation = windowSeekGeneration
         do {
             let page = try await api.listWords(

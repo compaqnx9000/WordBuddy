@@ -11,8 +11,6 @@ import {
   createDefaultNotebookIfEmpty,
   hashPassword,
   isLockedUserNotebook,
-  SYSTEM_VOCAB_NAME,
-  LEGACY_VOCAB_NAMES,
   normalizePassword,
   normalizePhone,
   recordLoginEvent,
@@ -1613,10 +1611,6 @@ router.post('/notebooks', authRequired, async (req, res) => {
     res.status(400).json({ error: '请输入生词本名称' })
     return
   }
-  if (name === SYSTEM_VOCAB_NAME || LEGACY_VOCAB_NAMES.includes(name)) {
-    res.status(400).json({ error: '不能使用默认生词本名称' })
-    return
-  }
   if (name.length > 20) {
     res.status(400).json({ error: '名称最多 20 个字' })
     return
@@ -1817,6 +1811,72 @@ router.get('/notebooks/:id/words', optionalAuth, async (req, res) => {
   })
 })
 
+router.post('/notebooks/:id/copy-from', authRequired, async (req, res) => {
+  const targetId = Number(req.params.id)
+  const sourceId = Number(req.body?.sourceNotebookId)
+  const target = await loadNotebook(targetId)
+  const source = await loadNotebook(sourceId)
+  if (!canWriteNotebook(target, req.user.id)) {
+    res.status(403).json({ error: '系统词书不能修改' })
+    return
+  }
+  if (!source || !canReadNotebook(source, req.user.id)) {
+    res.status(404).json({ error: '词本不存在' })
+    return
+  }
+  if (targetId === sourceId) {
+    res.status(400).json({ error: '不能收藏到当前词本' })
+    return
+  }
+  const exclude = Array.isArray(req.body?.excludeWordIds)
+    ? req.body.excludeWordIds.map(Number).filter((id) => Number.isFinite(id) && id > 0)
+    : []
+  const limitRaw = Number(req.body?.limit)
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0
+    ? Math.min(500, Math.floor(limitRaw))
+    : 1000000
+  const result = await query(
+    `WITH candidates AS (
+       SELECT s.id, s.word, s.is_phrase, s.ipa_uk, s.ipa_us,
+              s.definitions, s.examples, s.near_words, s.synonyms, s.antonyms, s.sort_order
+       FROM words s
+       WHERE s.notebook_id = $2
+         AND NOT EXISTS (
+           SELECT 1 FROM words t
+           WHERE t.notebook_id = $1 AND lower(t.word) = lower(s.word)
+         )
+         AND NOT (s.id = ANY($3::bigint[]))
+     ),
+     picked AS (
+       SELECT * FROM candidates
+       ORDER BY sort_order ASC, id ASC
+       LIMIT $4
+     ),
+     base AS (
+       SELECT coalesce(min(sort_order), 0)::int AS n
+       FROM words WHERE notebook_id = $1
+     ),
+     inserted AS (
+       INSERT INTO words (
+         notebook_id, word, is_phrase, ipa_uk, ipa_us,
+         definitions, examples, near_words, synonyms, antonyms, sort_order
+       )
+       SELECT $1, p.word, p.is_phrase, p.ipa_uk, p.ipa_us,
+              p.definitions, p.examples, p.near_words, p.synonyms, p.antonyms,
+              base.n - row_number() OVER (ORDER BY p.sort_order ASC, p.id ASC)
+       FROM picked p
+       CROSS JOIN base
+       RETURNING id
+     )
+     SELECT
+       (SELECT count(*)::int FROM inserted) AS added,
+       (SELECT count(*)::int FROM candidates) - (SELECT count(*)::int FROM inserted) AS remaining`,
+    [targetId, sourceId, exclude, limit],
+  )
+  const row = result.rows[0] || { added: 0, remaining: 0 }
+  res.json({ added: row.added, remaining: row.remaining })
+})
+
 router.post('/notebooks/:id/words', authRequired, async (req, res) => {
   const notebookId = Number(req.params.id)
   const notebook = await loadNotebook(notebookId)
@@ -1920,6 +1980,29 @@ router.patch('/words/:id', authRequired, async (req, res) => {
     ],
   )
   res.json({ item: mapWord(updated.rows[0]) })
+})
+
+router.post('/notebooks/:id/words/bulk-delete', authRequired, async (req, res) => {
+  const notebookId = Number(req.params.id)
+  const notebook = await loadNotebook(notebookId)
+  if (!canWriteNotebook(notebook, req.user.id)) {
+    res.status(403).json({ error: '系统词书不能删除词条' })
+    return
+  }
+  const exclude = Array.isArray(req.body?.excludeWordIds)
+    ? req.body.excludeWordIds.map(Number).filter((id) => Number.isFinite(id) && id > 0)
+    : []
+  const result = await query(
+    `WITH deleted AS (
+       DELETE FROM words
+       WHERE notebook_id = $1
+         AND NOT (id = ANY($2::bigint[]))
+       RETURNING id
+     )
+     SELECT count(*)::int AS deleted FROM deleted`,
+    [notebookId, exclude],
+  )
+  res.json({ deleted: result.rows[0]?.deleted ?? 0 })
 })
 
 router.delete('/words/:id', authRequired, async (req, res) => {

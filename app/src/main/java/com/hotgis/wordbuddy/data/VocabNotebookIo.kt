@@ -3,27 +3,30 @@ package com.hotgis.wordbuddy.data
 import org.json.JSONArray
 import org.json.JSONObject
 
-private const val EXPORT_VERSION = 1
+data class VocabBackupNotebook(
+    val name: String,
+    val entries: List<VocabEntry>,
+)
 
 object VocabNotebookExporter {
-    fun toJson(entries: List<VocabEntry>, notebook: Notebook? = null): String {
-        val root = JSONObject()
-            .put("version", EXPORT_VERSION)
-            .put("exportedAt", System.currentTimeMillis())
-        if (notebook != null) {
-            root.put(
-                "notebook",
+    fun toJson(books: List<VocabBackupNotebook>): String {
+        val notebooks = JSONArray()
+        books.forEach { book ->
+            notebooks.put(
                 JSONObject()
-                    .put("id", notebook.id)
-                    .put("name", notebook.name),
+                    .put("name", book.name)
+                    .put("entries", JSONArray().apply { book.entries.forEach { put(entryToJson(it)) } }),
             )
         }
-        root.put("entries", JSONArray().apply { entries.forEach { put(entryToJson(it)) } })
-        return root.toString(2)
+        return JSONObject()
+            .put("version", 2)
+            .put("exportedAt", System.currentTimeMillis())
+            .put("notebooks", notebooks)
+            .toString(2)
     }
 
     private fun entryToJson(entry: VocabEntry): JSONObject {
-        return JSONObject()
+        val json = JSONObject()
             .put("word", entry.text)
             .put("isPhrase", entry.isPhrase)
             .put("definitions", definitionsToJson(entry.definitions))
@@ -33,6 +36,9 @@ object VocabNotebookExporter {
             .put("antonyms", stringListToJson(entry.antonyms))
             .put("sortOrder", entry.sortOrder)
             .put("addedAt", entry.addedAtMillis)
+        if (!entry.ipaUk.isNullOrBlank()) json.put("ipaUk", entry.ipaUk)
+        if (!entry.ipaUs.isNullOrBlank()) json.put("ipaUs", entry.ipaUs)
+        return json
     }
 
     private fun definitionsToJson(definitions: List<Definition>): JSONArray {
@@ -68,13 +74,32 @@ object VocabNotebookExporter {
 }
 
 object VocabNotebookImporter {
-    fun fromJson(raw: String): List<VocabEntry> {
+    fun fromBackup(raw: String): List<VocabBackupNotebook> {
         val root = JSONObject(raw)
-        val version = root.optInt("version", 0)
-        if (version != EXPORT_VERSION) {
-            throw IllegalArgumentException("不支持的备份版本")
+        when (val version = root.optInt("version", 0)) {
+            2 -> {
+                val array = root.optJSONArray("notebooks") ?: throw IllegalArgumentException("备份文件格式无效")
+                if (array.length() == 0) throw IllegalArgumentException("备份文件格式无效")
+                return buildList {
+                    for (i in 0 until array.length()) {
+                        val obj = array.optJSONObject(i) ?: continue
+                        val name = obj.optString("name").trim()
+                        if (name.isBlank()) continue
+                        add(VocabBackupNotebook(name, parseEntries(obj.optJSONArray("entries"))))
+                    }
+                }
+            }
+            1 -> {
+                val notebook = root.optJSONObject("notebook")
+                val name = notebook?.optString("name")?.trim().orEmpty().ifBlank { "导入的生词本" }
+                return listOf(VocabBackupNotebook(name, parseEntries(root.optJSONArray("entries"))))
+            }
+            else -> throw IllegalArgumentException("不支持的备份版本")
         }
-        val array = root.optJSONArray("entries") ?: throw IllegalArgumentException("备份文件格式无效")
+    }
+
+    private fun parseEntries(array: JSONArray?): List<VocabEntry> {
+        if (array == null) return emptyList()
         return buildList {
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
@@ -84,6 +109,8 @@ object VocabNotebookImporter {
                     VocabEntry(
                         text = word,
                         isPhrase = obj.optBoolean("isPhrase", false),
+                        ipaUk = obj.optString("ipaUk").trim().ifBlank { null },
+                        ipaUs = obj.optString("ipaUs").trim().ifBlank { null },
                         definitions = parseDefinitions(obj.optJSONArray("definitions")),
                         examples = parseExamples(obj.optJSONArray("examples")),
                         nearWords = parseStringList(obj.optJSONArray("nearWords")),

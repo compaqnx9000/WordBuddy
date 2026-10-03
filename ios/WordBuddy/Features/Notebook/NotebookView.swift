@@ -18,6 +18,11 @@ struct NotebookView: View {
     @State private var showStats = false
     @State private var selectionMode = false
     @State private var selectedIds: Set<Int64> = []
+    /// Kept across alphabet jumps. The list window drops words that are no longer on screen.
+    @State private var selectedEntries: [Int64: VocabEntry] = [:]
+    /// Catalog 全选 covers every word in the book, including ones not loaded in the list window.
+    @State private var selectedEntireNotebook = false
+    @State private var excludedIds: Set<Int64> = []
     @State private var showDeleteSelected = false
     @State private var showMove = false
     @State private var showFavoriteTo = false
@@ -27,6 +32,8 @@ struct NotebookView: View {
     /// Last word the user spoke, revealed, or swiped in the list.
     @State private var lastTouchedId: Int64?
     @State private var alphabetSeekTask: Task<Void, Never>?
+    /// True while the bottom「加载更多」row is on screen, so a drag-release can fetch the next page.
+    @State private var loadMoreRowVisible = false
 
     /// Same fixed row height for every notebook (user + catalog), matching Android 3-line meaning block.
     private static let wordRowHeight: CGFloat = 88
@@ -74,12 +81,12 @@ struct NotebookView: View {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("取消") {
                             selectionMode = false
-                            selectedIds = []
+                            clearSelection()
                         }
                         .foregroundStyle(Theme.onSurfaceVariant)
                     }
                     ToolbarItem(placement: .principal) {
-                        Text("已选 \(selectedIds.count)")
+                        Text("已选 \(selectedCount)")
                             .font(.headline.weight(.bold))
                             .foregroundStyle(Theme.cyanSoft)
                     }
@@ -142,32 +149,35 @@ struct NotebookView: View {
                     model.showLogin = true
                     return
                 }
-                let canEdit = model.activeNotebook?.isSystem != true && !visibleWords.isEmpty
-                if canEdit {
-                    selectionMode = true
-                    selectedIds = []
-                    openSwipeId = nil
-                } else {
-                    model.banner = model.activeNotebook?.isSystem == true
-                        ? "系统词书不可编辑"
-                        : "当前词本没有单词"
+                guard !visibleWords.isEmpty else {
+                    model.banner = "当前词本没有单词"
+                    return
                 }
+                selectionMode = true
+                clearSelection()
+                openSwipeId = nil
             }
             Button("统计") { showStats = true }
             Button("取消", role: .cancel) {}
         }
         .confirmationDialog(
-            "删除选中的 \(selectedIds.count) 个单词？",
+            "删除选中的 \(selectedCount) 个单词？",
             isPresented: $showDeleteSelected,
             titleVisibility: .visible
         ) {
             Button("删除", role: .destructive) {
+                let entire = selectedEntireNotebook
+                let excluded = excludedIds
                 let ids = selectedIds
-                selectedIds = []
+                clearSelection()
                 selectionMode = false
                 Task {
-                    for id in ids {
-                        await model.deleteWord(id)
+                    if entire {
+                        await model.deleteEntireNotebook(excluding: excluded)
+                    } else {
+                        for id in ids {
+                            await model.deleteWord(id)
+                        }
                     }
                 }
             }
@@ -177,32 +187,61 @@ struct NotebookView: View {
             if showMove {
                 NotebookTargetPickerDialog(
                     title: "移动到生词本",
-                    subtitle: moveTargets.isEmpty ? "没有其他生词本" : "已选择 \(selectedIds.count) 个词条",
+                    subtitle: moveTargets.isEmpty ? "没有其他生词本" : "已选择 \(selectedCount) 个词条",
                     notebooks: moveTargets,
                     onSelect: { notebook in
+                        let entire = selectedEntireNotebook
+                        let excluded = excludedIds
                         let ids = selectedIds
-                        selectedIds = []
+                        clearSelection()
                         selectionMode = false
                         showMove = false
-                        Task { await model.moveWords(ids: ids, to: notebook.id) }
+                        Task {
+                            if entire {
+                                await model.moveEntireNotebook(to: notebook.id, excluding: excluded)
+                            } else {
+                                await model.moveWords(ids: ids, to: notebook.id)
+                            }
+                        }
                     },
                     onDismiss: { showMove = false }
                 )
             } else if showFavoriteTo {
+                let batchFavorite = selectionMode && model.activeNotebook?.isSystem == true
+                let favoriteCount = batchFavorite ? selectedCount : 1
                 NotebookTargetPickerDialog(
                     title: "收藏到生词本",
-                    subtitle: favoriteTargets.isEmpty ? "还没有生词本" : "已选择 1 个词条",
+                    subtitle: favoriteTargets.isEmpty ? "还没有生词本" : "已选择 \(favoriteCount) 个词条",
                     notebooks: favoriteTargets,
                     onSelect: { notebook in
-                        let entry = pendingFavorite
-                        pendingFavorite = nil
-                        showFavoriteTo = false
-                        guard let entry else { return }
-                        Task { _ = await model.favoriteCatalogWord(entry, to: notebook.id) }
+                        if batchFavorite {
+                            let entire = selectedEntireNotebook
+                            let sourceId = model.activeNotebookId
+                            let excluded = excludedIds
+                            let chosen = selectedIds.compactMap { selectedEntries[$0] }
+                            clearSelection()
+                            selectionMode = false
+                            showFavoriteTo = false
+                            Task {
+                                if entire, let sourceId {
+                                    await model.copyCatalogNotebook(from: sourceId, to: notebook.id, excluding: excluded)
+                                } else {
+                                    await model.favoriteCatalogWords(chosen, to: notebook.id)
+                                }
+                            }
+                        } else {
+                            let entry = pendingFavorite
+                            pendingFavorite = nil
+                            showFavoriteTo = false
+                            guard let entry else { return }
+                            Task { _ = await model.favoriteCatalogWord(entry, to: notebook.id) }
+                        }
                     },
                     onDismiss: {
                         showFavoriteTo = false
-                        pendingFavorite = nil
+                        if !batchFavorite {
+                            pendingFavorite = nil
+                        }
                     }
                 )
             }
@@ -378,16 +417,12 @@ struct NotebookView: View {
                             ForEach(visibleWords) { word in
                                 let catalog = model.activeNotebook?.isSystem == true
                                 let favorited = model.isFavorited(word.text)
-                                let selected = selectedIds.contains(word.id)
+                                let selected = isWordSelected(word)
                                 Group {
                                     if selectionMode {
                                         Button {
                                             noteTouch(word.id)
-                                            if selected {
-                                                selectedIds.remove(word.id)
-                                            } else {
-                                                selectedIds.insert(word.id)
-                                            }
+                                            toggleListedWord(word)
                                         } label: {
                                             HStack(spacing: 10) {
                                                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
@@ -470,6 +505,23 @@ struct NotebookView: View {
                                     }
                                 }
                                 .id(word.id)
+                                .onAppear {
+                                    guard word.id == visibleWords.first?.id, model.listWindowStart > 0 else { return }
+                                    let anchor = word.id
+                                    Task { @MainActor in
+                                        let result = await model.loadEarlierWords()
+                                        guard case .prepended(let kept, let token) = result else { return }
+                                        defer { model.finishEarlierLoad(token: token) }
+                                        guard kept == anchor else { return }
+                                        await Task.yield()
+                                        var transaction = Transaction()
+                                        transaction.disablesAnimations = true
+                                        withTransaction(transaction) {
+                                            proxy.scrollTo(anchor, anchor: .top)
+                                        }
+                                        try? await Task.sleep(nanoseconds: 300_000_000)
+                                    }
+                                }
                                 .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 22))
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(selected && selectionMode ? Theme.cyan.opacity(0.12) : Color.clear)
@@ -544,6 +596,16 @@ struct NotebookView: View {
                                         }
                                         Spacer()
                                     }
+                                    .frame(maxWidth: .infinity, minHeight: 44)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .onAppear { loadMoreRowVisible = true }
+                                .onDisappear { loadMoreRowVisible = false }
+                                .background {
+                                    LoadMoreDragRelay {
+                                        Task { await model.loadMoreWords() }
+                                    }
                                 }
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
@@ -551,6 +613,17 @@ struct NotebookView: View {
                         }
                         .listStyle(.plain)
                         .scrollContentBackground(.hidden)
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 8)
+                                .onEnded { value in
+                                    guard abs(value.translation.height) >= 8, abs(value.translation.height) > abs(value.translation.width) else { return }
+                                    guard loadMoreRowVisible, model.nextCursor != nil else { return }
+                                    Task { await model.loadMoreWords() }
+                                }
+                        )
+                        .modifier(ReleaseToLoadMore(ready: loadMoreRowVisible && model.nextCursor != nil) {
+                            Task { await model.loadMoreWords() }
+                        })
                         .refreshable { await model.loadWords() }
                         .onChange(of: scrollTarget) { _, target in
                             guard let target else { return }
@@ -568,7 +641,8 @@ struct NotebookView: View {
                             openSwipeId = nil
                             lastTouchedId = nil
                             selectionMode = false
-                            selectedIds = []
+                            clearSelection()
+                            loadMoreRowVisible = false
                             alphabetSeekTask?.cancel()
                             alphabetSeekTask = nil
                         }
@@ -712,32 +786,39 @@ struct NotebookView: View {
             if selectionMode {
                 HStack(spacing: 8) {
                     selectionPill(
-                        title: selectedIds.count == visibleWords.count && !visibleWords.isEmpty ? "取消全选" : "全选",
+                        title: selectAllLabel,
                         fill: Theme.cyanSoft,
                         foreground: Theme.onPrimary,
-                        enabled: !visibleWords.isEmpty
+                        enabled: notebookWordTotal > 0
                     ) {
-                        if selectedIds.count == visibleWords.count {
-                            selectedIds = []
-                        } else {
-                            selectedIds = Set(visibleWords.map(\.id))
+                        toggleSelectAllVisible()
+                    }
+                    if model.activeNotebook?.isSystem == true {
+                        selectionPill(
+                            title: "收藏到…",
+                            fill: Theme.cyanSoft,
+                            foreground: Theme.onPrimary,
+                            enabled: selectedCount > 0 && !favoriteTargets.isEmpty
+                        ) {
+                            showFavoriteTo = true
                         }
-                    }
-                    selectionPill(
-                        title: "移动到…",
-                        fill: Theme.cyanSoft,
-                        foreground: Theme.onPrimary,
-                        enabled: !selectedIds.isEmpty && !moveTargets.isEmpty
-                    ) {
-                        showMove = true
-                    }
-                    selectionPill(
-                        title: "删除",
-                        fill: Theme.pink,
-                        foreground: .white,
-                        enabled: !selectedIds.isEmpty
-                    ) {
-                        showDeleteSelected = true
+                    } else {
+                        selectionPill(
+                            title: "移动到…",
+                            fill: Theme.cyanSoft,
+                            foreground: Theme.onPrimary,
+                            enabled: selectedCount > 0 && !moveTargets.isEmpty
+                        ) {
+                            showMove = true
+                        }
+                        selectionPill(
+                            title: "删除",
+                            fill: Theme.pink,
+                            foreground: .white,
+                            enabled: selectedCount > 0
+                        ) {
+                            showDeleteSelected = true
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -772,6 +853,68 @@ struct NotebookView: View {
                 }
                 .ignoresSafeArea(edges: .bottom)
         }
+    }
+
+    private var notebookWordTotal: Int {
+        max(model.activeNotebook?.wordCount ?? 0, model.wordTotal, visibleWords.count)
+    }
+
+    private var selectedCount: Int {
+        if selectedEntireNotebook {
+            return max(0, notebookWordTotal - excludedIds.count)
+        }
+        return selectedIds.count
+    }
+
+    private var selectAllLabel: String {
+        selectedEntireNotebook && excludedIds.isEmpty ? "取消全选" : "全选"
+    }
+
+    private func isWordSelected(_ word: VocabEntry) -> Bool {
+        if selectedEntireNotebook {
+            return !excludedIds.contains(word.id)
+        }
+        return selectedIds.contains(word.id)
+    }
+
+    private func toggleListedWord(_ word: VocabEntry) {
+        if selectedEntireNotebook {
+            if excludedIds.contains(word.id) {
+                excludedIds.remove(word.id)
+            } else {
+                excludedIds.insert(word.id)
+            }
+            return
+        }
+        toggleSelection(word)
+    }
+
+    private func toggleSelection(_ word: VocabEntry) {
+        if selectedIds.contains(word.id) {
+            selectedIds.remove(word.id)
+            selectedEntries.removeValue(forKey: word.id)
+        } else {
+            selectedIds.insert(word.id)
+            selectedEntries[word.id] = word
+        }
+    }
+
+    private func toggleSelectAllVisible() {
+        if selectedEntireNotebook && excludedIds.isEmpty {
+            clearSelection()
+        } else {
+            selectedEntireNotebook = true
+            excludedIds = []
+            selectedIds = []
+            selectedEntries = [:]
+        }
+    }
+
+    private func clearSelection() {
+        selectedIds = []
+        selectedEntries = [:]
+        selectedEntireNotebook = false
+        excludedIds = []
     }
 
     private var moveTargets: [Notebook] {
@@ -1287,6 +1430,176 @@ private final class AlphabetRailView: UIView {
             label.textColor = UIColor(Theme.onSurfaceVariant)
             label.backgroundColor = .clear
         }
+    }
+}
+
+/// Loads the next page when a drag ends on the「加载更多」row.
+private struct LoadMoreDragRelay: UIViewRepresentable {
+    var onRelease: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onRelease: onRelease)
+    }
+
+    func makeUIView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        let coordinator = context.coordinator
+        view.onReady = { [weak coordinator] probe in
+            coordinator?.attach(from: probe)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: ProbeView, context: Context) {
+        context.coordinator.onRelease = onRelease
+        let coordinator = context.coordinator
+        uiView.onReady = { [weak coordinator] probe in
+            coordinator?.attach(from: probe)
+        }
+        context.coordinator.attach(from: uiView)
+    }
+
+    final class Coordinator: NSObject {
+        var onRelease: () -> Void
+        private weak var scroll: UIScrollView?
+        private weak var host: UIView?
+        private var decelObservation: NSKeyValueObservation?
+        private var pendingRelease = false
+        private var peakPull: CGFloat = 0
+
+        init(onRelease: @escaping () -> Void) {
+            self.onRelease = onRelease
+        }
+
+        func attach(from view: UIView) {
+            host = view
+            guard let found = view.listScrollView(), scroll !== found else { return }
+            if let old = scroll {
+                old.panGestureRecognizer.removeTarget(self, action: #selector(handlePan(_:)))
+            }
+            scroll = found
+            found.panGestureRecognizer.addTarget(self, action: #selector(handlePan(_:)))
+            decelObservation = found.observe(\.isDecelerating, options: [.new]) { [weak self] scroll, _ in
+                guard let self, self.pendingRelease, !scroll.isDecelerating, !scroll.isDragging else { return }
+                self.pendingRelease = false
+                self.fireIfFooterVisible()
+            }
+        }
+
+        @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+            switch gesture.state {
+            case .began:
+                peakPull = 0
+            case .changed:
+                peakPull = max(peakPull, abs(gesture.translation(in: gesture.view).y))
+            case .ended, .cancelled, .failed:
+                let distance = max(peakPull, abs(gesture.translation(in: gesture.view).y))
+                guard distance >= 8 else { return }
+                if scroll?.isDecelerating == true {
+                    pendingRelease = true
+                } else {
+                    fireIfFooterVisible()
+                }
+            default:
+                break
+            }
+        }
+
+        private func fireIfFooterVisible() {
+            guard let scroll, let host, host.window != nil else { return }
+            let point = host.convert(CGPoint(x: host.bounds.midX, y: host.bounds.midY), to: scroll)
+            let visible = scroll.bounds.insetBy(dx: 0, dy: -80)
+            guard visible.contains(point) else { return }
+            let release = onRelease
+            DispatchQueue.main.async { release() }
+        }
+    }
+}
+
+private final class ProbeView: UIView {
+    var onReady: ((UIView) -> Void)?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        onReady?(self)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard window != nil else { return }
+        onReady?(self)
+    }
+}
+
+/// iOS 18+ reports when the finger leaves the list. One release at the bottom loads one page.
+private struct ReleaseToLoadMore: ViewModifier {
+    var ready: Bool
+    var onRelease: () -> Void
+    @State private var box = ReleaseBox()
+
+    func body(content: Content) -> some View {
+        phaseContent(content)
+            .onAppear {
+                box.ready = ready
+                box.onRelease = onRelease
+            }
+            .onChange(of: ready) { _, newValue in
+                box.ready = newValue
+                box.onRelease = onRelease
+            }
+    }
+
+    @ViewBuilder
+    private func phaseContent(_ content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollPhaseChange { oldPhase, newPhase in
+                guard box.ready, newPhase == .idle else { return }
+                guard oldPhase == .interacting || oldPhase == .decelerating else { return }
+                box.onRelease()
+            }
+        } else {
+            content
+        }
+    }
+}
+
+private final class ReleaseBox {
+    var ready = false
+    var onRelease: () -> Void = {}
+}
+
+private extension UIView {
+    /// The word list, not the short horizontal notebook scroller above it.
+    func listScrollView() -> UIScrollView? {
+        var current: UIView? = self
+        while let view = current {
+            if let scroll = view as? UIScrollView, scroll.bounds.height > 160 {
+                return scroll
+            }
+            current = view.superview
+        }
+        guard let window else { return nil }
+        let anchor = convert(center, to: window)
+        var match: UIScrollView?
+        var matchArea = CGFloat.greatestFiniteMagnitude
+        func walk(_ node: UIView) {
+            if let scroll = node as? UIScrollView, scroll.bounds.height > 160 {
+                let frame = scroll.convert(scroll.bounds, to: window)
+                if frame.contains(anchor) {
+                    let area = frame.width * frame.height
+                    if area < matchArea {
+                        match = scroll
+                        matchArea = area
+                    }
+                }
+            }
+            node.subviews.forEach(walk)
+        }
+        walk(window)
+        return match
     }
 }
 

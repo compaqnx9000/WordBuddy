@@ -86,6 +86,12 @@ struct RootView: View {
             }
         }
         .overlay {
+            if let progress = model.catalogCopyProgress {
+                CatalogCopyProgressCover(progress: progress)
+                    .ignoresSafeArea()
+            }
+        }
+        .overlay {
             if needsBiometricLock {
                 BiometricLockCover {
                     Task {
@@ -112,6 +118,42 @@ struct RootView: View {
             get: { model.banner != nil },
             set: { if !$0 { model.banner = nil } }
         )
+    }
+}
+
+private struct CatalogCopyProgressCover: View {
+    var progress: CatalogCopyProgress
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+            VStack(spacing: 16) {
+                Text(progress.title)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(Theme.cyanSoft)
+                    .multilineTextAlignment(.center)
+                if progress.total > 0 {
+                    ProgressView(value: Double(progress.copied), total: Double(progress.total))
+                        .tint(Theme.cyan)
+                    Text("\(progress.copied) / \(progress.total)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.onSurface)
+                } else {
+                    ProgressView()
+                        .tint(Theme.cyan)
+                    Text("准备中")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.onSurfaceVariant)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 280)
+            .background(Theme.surfaceContainer, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(Theme.cyan.opacity(0.45), lineWidth: 1)
+            }
+        }
     }
 }
 

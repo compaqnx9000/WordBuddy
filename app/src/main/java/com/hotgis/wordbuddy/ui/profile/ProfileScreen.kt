@@ -117,7 +117,7 @@ fun ProfileScreen(
     userName: String,
     exportFileName: String,
     onOpenSettings: () -> Unit,
-    onExportContent: () -> String,
+    onExportContent: suspend () -> String,
     onImportContent: suspend (String) -> NotebookImportResult,
     phone: String? = null,
     level: Int = 1,
@@ -427,7 +427,7 @@ fun ProfileScreen(
                 val result = onImportContent(json)
                 Toast.makeText(
                     context,
-                    "导入完成：新增 ${result.added} 个，更新 ${result.updated} 个",
+                    "已恢复 ${result.notebooks} 个生词本，新增 ${result.added} 个单词",
                     Toast.LENGTH_LONG,
                 ).show()
             }.onFailure {
@@ -648,7 +648,7 @@ fun ProfileScreen(
                     icon = Icons.Outlined.FileUpload,
                     iconTint = Stellar.Cyan,
                     title = "导出词库",
-                    trailing = "不含图片和发音",
+                    trailing = "全部生词本，不含图片",
                     onClick = { exportLauncher.launch(exportFileName) },
                 )
                 ProfileMenuDivider()
@@ -656,7 +656,7 @@ fun ProfileScreen(
                     icon = Icons.Outlined.FileDownload,
                     iconTint = Stellar.Pink,
                     title = "导入词库",
-                    trailing = "合并导入",
+                    trailing = "恢复生词本",
                     onClick = { importLauncher.launch(arrayOf("application/json", "text/*")) },
                 )
                 ProfileMenuDivider()
