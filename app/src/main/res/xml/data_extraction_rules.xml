@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+. Settings may be backed up; login tokens may not. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude
+            domain="sharedpref"
+            path="hotwords_session.xml" />
+        <exclude
+            domain="sharedpref"
+            path="hotwords_accounts.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude
+            domain="sharedpref"
+            path="hotwords_session.xml" />
+        <exclude
+            domain="sharedpref"
+            path="hotwords_accounts.xml" />
+    </device-transfer>
+</data-extraction-rules>

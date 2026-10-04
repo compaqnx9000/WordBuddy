@@ -339,13 +339,19 @@ export function adminRequired(req, res, next) {
 
 export async function ensureSuperAdmin() {
   const username = (process.env.ADMIN_USERNAME || 'admin').trim()
-  const password = process.env.ADMIN_PASSWORD || 'changeme123'
+  const password = process.env.ADMIN_PASSWORD || ''
   const existing = await query('SELECT id FROM admins WHERE username = $1', [username])
-  if (existing.rowCount === 0) {
-    await query('INSERT INTO admins (username, password_hash) VALUES ($1, $2)', [
-      username,
-      hashPassword(password),
-    ])
-    console.log(`[admin] seeded super admin "${username}"`)
+  if (existing.rowCount > 0) return
+  // Never seed a guessable password: an unseeded console is safer than admin/changeme123.
+  if (password.length < 10) {
+    console.error(
+      `[admin] super admin "${username}" not seeded: set ADMIN_PASSWORD to at least 10 characters`,
+    )
+    return
   }
+  await query('INSERT INTO admins (username, password_hash) VALUES ($1, $2)', [
+    username,
+    hashPassword(password),
+  ])
+  console.log(`[admin] seeded super admin "${username}"`)
 }

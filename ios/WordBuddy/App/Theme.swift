@@ -320,6 +320,16 @@ enum Theme {
         return cyanSoft
     }
 
+    static func applyInterfaceStyle(_ style: AccentStyle) {
+        let uiStyle: UIUserInterfaceStyle = style.isLight ? .light : .dark
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows {
+                window.overrideUserInterfaceStyle = uiStyle
+            }
+        }
+    }
+
     static func applyTabBar() {
         let palette = palette
         let appearance = UITabBarAppearance()
@@ -387,14 +397,16 @@ extension Color {
 }
 
 struct GlassPanel: ViewModifier {
+    @EnvironmentObject private var model: AppModel
     var neon: Bool = false
 
     func body(content: Content) -> some View {
+        let palette = StellarPalettes.palette(for: model.accentStyle)
         content
-            .background(Theme.glass, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .background(palette.glass, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(neon ? Theme.neonBorder : Theme.glassBorder, lineWidth: 1)
+                    .stroke(neon ? palette.neonBorder : palette.glassBorder, lineWidth: 1)
             )
     }
 }

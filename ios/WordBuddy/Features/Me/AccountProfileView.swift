@@ -1258,6 +1258,28 @@ private struct ShippingDialog: View {
     }
 }
 
+private enum BuddyQr {
+    /// Same payload on Android: wordbuddy://buddy/{搭子号}
+    static func payload(_ buddyId: String) -> String? {
+        guard let id = normalize(buddyId) else { return nil }
+        return "wordbuddy://buddy/\(id)"
+    }
+
+    static func buddyId(from payload: String) -> String? {
+        let text = payload.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let prefix = "wordbuddy://buddy/"
+        guard text.hasPrefix(prefix) else { return nil }
+        let id = text.dropFirst(prefix.count).prefix { $0 != "?" && $0 != "#" }
+        return normalize(String(id))
+    }
+
+    static func normalize(_ buddyId: String) -> String? {
+        let id = buddyId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard id.count >= 4, id.count <= 32, id.allSatisfy({ $0.isLetter || $0.isNumber }) else { return nil }
+        return id
+    }
+}
+
 private struct BuddyQRDialog: View {
     var buddyId: String
     var onDismiss: () -> Void
@@ -1269,14 +1291,14 @@ private struct BuddyQRDialog: View {
                 Text("我的二维码")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(Theme.cyanSoft)
-                Text("搭子号  \(buddyId)")
+                Text("搭子号  \(BuddyQr.normalize(buddyId) ?? buddyId)")
                     .font(.subheadline)
                     .foregroundStyle(Theme.onSurfaceVariant)
-                Text("扫码打开邀请页，注册时填写邀请码")
+                Text("与搭子号一一对应，之后可扫码加搭子")
                     .font(.caption)
                     .foregroundStyle(Theme.onSurfaceVariant.opacity(0.75))
                     .multilineTextAlignment(.center)
-                if let image = Self.makeQR(url: "\(WordBuddyAPI.primaryBase)/i/\(buddyId)") {
+                if let payload = BuddyQr.payload(buddyId), let image = Self.makeQR(payload: payload) {
                     Image(uiImage: image)
                         .interpolation(.none)
                         .resizable()
@@ -1301,9 +1323,9 @@ private struct BuddyQRDialog: View {
         }
     }
 
-    private static func makeQR(url: String) -> UIImage? {
+    private static func makeQR(payload: String) -> UIImage? {
         let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(url.utf8)
+        filter.message = Data(payload.utf8)
         filter.correctionLevel = "M"
         guard let output = filter.outputImage else { return nil }
         let scaled = output.transformed(by: CGAffineTransform(scaleX: 12, y: 12))

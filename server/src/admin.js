@@ -7,6 +7,7 @@ import {
   normalizePassword,
   normalizePhone,
   recordPasswordEvent,
+  rotateSessionVersion,
   signAdminToken,
   verifyPassword,
 } from './auth.js'
@@ -703,6 +704,8 @@ adminRouter.patch('/users/:id', adminRequired, async (req, res) => {
   if (nextPassword) {
     await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashPassword(nextPassword), id])
     await recordPasswordEvent(req, id, 'admin_reset')
+    // A reset is usually a response to a compromise: drop the old sessions too.
+    await rotateSessionVersion(id)
   }
   if (hasLevel) {
     await query('UPDATE users SET user_level = $1 WHERE id = $2', [nextLevel, id])
@@ -1379,10 +1382,10 @@ adminRouter.post(
         res.status(400).json({ error: '图片过大（上限 12MB）' })
         return
       }
-      const rawName = String(req.query.filename || req.get('x-filename') || 'gift.jpg')
+      const rawName = path.basename(String(req.query.filename || req.get('x-filename') || 'gift.jpg'))
       const lower = rawName.toLowerCase()
       const ext = ['.jpg', '.jpeg', '.png', '.webp', '.gif'].find((e) => lower.endsWith(e)) || '.jpg'
-      const safeBase = rawName.replace(/[^\w.\u4e00-\u9fff-]+/g, '_').replace(/\.[^.]+$/, '').slice(0, 60) || 'gift'
+      const safeBase = sanitizeUploadBase(rawName, 60) || 'gift'
       const name = `${Date.now()}-${safeBase}${ext}`
       const dest = path.join(giftsUploadRoot, name)
       fs.writeFileSync(dest, buf)
@@ -1566,6 +1569,15 @@ const giftsUploadRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 fs.mkdirSync(giftsUploadRoot, { recursive: true })
 fs.mkdirSync(shortsUploadRoot, { recursive: true })
 
+/** Strips the extension and anything that could escape the upload directory. */
+function sanitizeUploadBase(rawName, maxLength) {
+  return rawName
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^\w\u4e00-\u9fff-]+/g, '_')
+    .replace(/^[-_.]+/, '')
+    .slice(0, maxLength)
+}
+
 function formatWatchMs(ms) {
   const n = Math.max(0, Number(ms) || 0)
   const totalSec = Math.floor(n / 1000)
@@ -1710,9 +1722,9 @@ adminRouter.post(
         res.status(400).json({ error: '文件过大（上限 40MB）' })
         return
       }
-      const rawName = String(req.query.filename || req.get('x-filename') || 'video.mp4')
-      const safe = rawName.replace(/[^\w.\u4e00-\u9fff-]+/g, '_').slice(0, 80) || 'video.mp4'
-      const name = `${Date.now()}-${safe.endsWith('.mp4') ? safe : `${safe}.mp4`}`
+      const rawName = path.basename(String(req.query.filename || req.get('x-filename') || 'video.mp4'))
+      const safe = sanitizeUploadBase(rawName, 80) || 'video'
+      const name = `${Date.now()}-${safe}.mp4`
       const dest = path.join(shortsUploadRoot, name)
       fs.writeFileSync(dest, buf)
       const url = `/uploads/videos/${name}`

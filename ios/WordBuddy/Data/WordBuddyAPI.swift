@@ -595,13 +595,16 @@ actor WordBuddyAPI {
         return parseUserSession(token: token, root: root, user: user)
     }
 
-    func changePassword(token: String, oldPassword: String, newPassword: String) async throws {
-        _ = try await request(
+    /// Returns the replacement token, since the server invalidates every old one.
+    func changePassword(token: String, oldPassword: String, newPassword: String) async throws -> String? {
+        let root = try await request(
             method: "POST",
             path: "/auth/change-password",
             auth: token,
             body: ["oldPassword": oldPassword, "newPassword": newPassword]
         )
+        let fresh = (root["token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (fresh?.isEmpty ?? true) ? nil : fresh
     }
 
     func fetchCheckIn(token: String) async throws -> CheckInState {

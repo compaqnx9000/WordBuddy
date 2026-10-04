@@ -214,7 +214,7 @@ struct MeView: View {
                 }
 
                 HStack(spacing: 8) {
-                    Text(loggedIn ? model.session!.displayNickname : "未登录")
+                    Text(model.session?.displayNickname ?? "未登录")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(Theme.onSurface)
                         .lineLimit(1)
@@ -1282,7 +1282,6 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .themeNavigationBar()
         .tint(Theme.cyan)
-        .id(model.accentStyle)
         .task { await refreshSideInfo() }
         .alert("修改密码", isPresented: $showPassword) {
             SecureField("当前密码", text: $oldPassword)

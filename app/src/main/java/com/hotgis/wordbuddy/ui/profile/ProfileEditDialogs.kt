@@ -693,7 +693,7 @@ fun BuddyQrDialog(
             )
             Spacer(Modifier.height(4.sdp()))
             Text(
-                text = "扫码打开邀请页，注册时填写邀请码",
+                text = "与搭子号一一对应，之后可扫码加搭子",
                 color = Stellar.OnSurfaceVariant.copy(alpha = 0.75f),
                 fontSize = 12.ssp(),
                 textAlign = TextAlign.Center,

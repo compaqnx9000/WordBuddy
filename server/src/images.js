@@ -297,14 +297,17 @@ async function createMnemonicImage({ word, meaningHint, provider, userId = null 
 
 export function getOrCreateMnemonicImage(input) {
   const provider = normalizeImageProvider(input.provider)
-  const key = `${provider}:${wordKey(input.word)}:${meaningKey(input.meaningHint)}`
+  const userId = input.userId ?? null
+  // Keyed per user: sharing a job across users would hand the second one a paid
+  // image for free and report the first user's point balance back to them.
+  const key = `${userId ?? 'anon'}:${provider}:${wordKey(input.word)}:${meaningKey(input.meaningHint)}`
   const pending = inflight.get(key)
   if (pending) return pending
   const job = createMnemonicImage({
     word: input.word,
     meaningHint: input.meaningHint,
     provider,
-    userId: input.userId ?? null,
+    userId,
   }).finally(() => {
     inflight.delete(key)
   })

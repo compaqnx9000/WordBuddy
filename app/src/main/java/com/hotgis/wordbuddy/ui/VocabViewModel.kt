@@ -3554,7 +3554,16 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             runCatching { api.changePassword(token, oldPassword, newPassword) }
-                .onSuccess { onResult(Result.success(Unit)) }
+                .onSuccess { root ->
+                    // The server invalidates every old token on change; keep this device signed in.
+                    root.optString("token").takeIf { it.isNotBlank() }?.let { fresh ->
+                        _session.value?.copy(token = fresh)?.let { updated ->
+                            sessionStore.save(updated)
+                            _session.value = updated
+                        }
+                    }
+                    onResult(Result.success(Unit))
+                }
                 .onFailure { onResult(Result.failure(it)) }
         }
     }

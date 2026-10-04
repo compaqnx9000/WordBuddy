@@ -62,7 +62,6 @@ struct RootView: View {
             }
         }
         .stellarScreenBackground()
-        .id(model.accentStyle)
         .environmentObject(model.podcast)
         .fullScreenCover(isPresented: $model.showLogin) {
             LoginView()
@@ -152,6 +151,7 @@ private struct CatalogCopyProgressCover: View {
 }
 
 private struct StellarTabBar: View {
+    @EnvironmentObject private var model: AppModel
     @Binding var selection: MainTab
 
     private struct Item: Identifiable {
@@ -171,6 +171,7 @@ private struct StellarTabBar: View {
     ]
 
     var body: some View {
+        let palette = StellarPalettes.palette(for: model.accentStyle)
         HStack(spacing: 0) {
             ForEach(items) { item in
                 let selected = selection == item.tab
@@ -184,7 +185,7 @@ private struct StellarTabBar: View {
                         Text(item.title)
                             .font(.system(size: 12, weight: selected ? .bold : .medium))
                     }
-                    .foregroundStyle(selected ? Theme.cyan : Theme.tabInactive)
+                    .foregroundStyle(selected ? palette.cyan : palette.tabInactive)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
                     .contentShape(Rectangle())
@@ -198,7 +199,7 @@ private struct StellarTabBar: View {
             panel
                 .overlay(alignment: .top) {
                     Rectangle()
-                        .fill(Theme.cyan.opacity(0.20))
+                        .fill(palette.cyan.opacity(0.20))
                         .frame(height: 1)
                 }
                 .ignoresSafeArea(edges: .bottom)
@@ -206,9 +207,10 @@ private struct StellarTabBar: View {
     }
 
     private var panel: Color {
-        if Theme.hasWallpaper {
-            return Color(uiColor: UIColor(Theme.surfaceContainer).withAlphaComponent(0.72))
+        let palette = StellarPalettes.palette(for: model.accentStyle)
+        if palette.hasWallpaper {
+            return Color(uiColor: UIColor(palette.surfaceContainer).withAlphaComponent(0.72))
         }
-        return Color(uiColor: UIColor(Theme.background).withAlphaComponent(0.80))
+        return Color(uiColor: UIColor(palette.background).withAlphaComponent(0.80))
     }
 }

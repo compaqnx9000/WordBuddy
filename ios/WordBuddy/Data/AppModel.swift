@@ -285,6 +285,7 @@ final class AppModel: ObservableObject {
     func setAccentStyle(_ value: AccentStyle) {
         SettingsStore.accentStyle = value
         accentStyle = value
+        Theme.applyInterfaceStyle(value)
         Theme.applyTabBar()
     }
 
@@ -588,7 +589,18 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            try await api.changePassword(token: session.token, oldPassword: oldPassword, newPassword: newPassword)
+            let fresh = try await api.changePassword(
+                token: session.token,
+                oldPassword: oldPassword,
+                newPassword: newPassword
+            )
+            // The server invalidates every old token on change; keep this device signed in.
+            if let fresh, var updated = self.session {
+                updated.token = fresh
+                self.session = updated
+                SessionStore.save(updated)
+                AccountStore.upsert(updated)
+            }
             banner = "密码已更新"
         } catch {
             if !noteSessionError(error) {
@@ -932,9 +944,14 @@ final class AppModel: ObservableObject {
         await ensureFavoriteIndex()
         let key = entry.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !key.isEmpty else { return nil }
+        // Re-read after the await above: the session can be gone by now.
+        guard let token = session?.token else {
+            showLogin = true
+            return nil
+        }
         if let existingId = favoritedByText[key] {
             do {
-                try await api.deleteWord(token: session!.token, id: existingId)
+                try await api.deleteWord(token: token, id: existingId)
                 favoritedByText.removeValue(forKey: key)
                 if let notebookId = favoriteNotebookId, let index = notebooks.firstIndex(where: { $0.id == notebookId }) {
                     notebooks[index].wordCount = max(0, notebooks[index].wordCount - 1)

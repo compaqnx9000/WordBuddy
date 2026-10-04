@@ -23,6 +23,7 @@ import {
   clientIp,
 } from './auth.js'
 import { newLoginCode, sendCode, skipVerify } from './sms.js'
+import * as rateLimit from './rateLimit.js'
 import { getUserCheckIn, performUserCheckIn, performMakeupCheckIn } from './checkin.js'
 import { claimRewardVideo, rewardVideoStatus } from './rewardVideo.js'
 import { resolveIpLocation, extractDeviceInfo } from './device.js'
@@ -259,12 +260,44 @@ router.get('/app/version', (_req, res) => {
   res.json(data)
 })
 
+const MINUTE_MS = 60 * 1000
+const HOUR_MS = 60 * MINUTE_MS
+
+/** Each SMS costs real money, so cap per number and per source address. */
+function smsRateLimited(req, res, phone) {
+  if (
+    rateLimit.limited(res, `sms:phone:${phone}`, {
+      limit: 1,
+      windowMs: MINUTE_MS,
+      message: '发送太频繁，请稍后再试',
+    })
+  ) {
+    return true
+  }
+  if (
+    rateLimit.limited(res, `sms:phone-day:${phone}`, {
+      limit: 10,
+      windowMs: 24 * HOUR_MS,
+      message: '今日验证码次数已达上限，请明天再试',
+    })
+  ) {
+    return true
+  }
+  const ip = clientIp(req) || 'unknown'
+  return rateLimit.limited(res, `sms:ip:${ip}`, {
+    limit: 20,
+    windowMs: HOUR_MS,
+    message: '发送太频繁，请稍后再试',
+  })
+}
+
 router.post('/auth/send-code', async (req, res) => {
   const phone = normalizePhone(req.body?.phone)
   if (!phone) {
     res.status(400).json({ error: '请输入正确的手机号' })
     return
   }
+  if (smsRateLimited(req, res, phone)) return
   const code = newLoginCode()
   try {
     await query(
@@ -387,6 +420,17 @@ router.post('/auth/login', async (req, res) => {
     res.status(400).json({ error: '请输入正确的手机号' })
     return
   }
+  // Slow down password guessing and SMS-code brute force against one number.
+  const loginQuotaKey = `login:${phone}`
+  if (
+    rateLimit.limited(res, loginQuotaKey, {
+      limit: 10,
+      windowMs: 10 * MINUTE_MS,
+      message: '尝试次数过多，请稍后再试',
+    })
+  ) {
+    return
+  }
   await finalizeDueAccountByPhone(phone)
 
   const password = String(req.body?.password || '')
@@ -417,6 +461,7 @@ router.post('/auth/login', async (req, res) => {
       res.status(400).json({ error: '手机号或密码错误' })
       return
     }
+    rateLimit.reset(loginQuotaKey)
     await finishLogin(req, res, user, 'password')
     return
   }
@@ -437,6 +482,7 @@ router.post('/auth/login', async (req, res) => {
     return
   }
   await consumeSms(checked.smsId)
+  rateLimit.reset(loginQuotaKey)
   await finishLogin(req, res, user, 'sms')
 })
 
@@ -1460,7 +1506,9 @@ router.post('/auth/change-password', authRequired, async (req, res) => {
     user.id,
   ])
   await recordPasswordEvent(req, user.id, 'change')
-  res.json({ ok: true })
+  // Any token stolen before the change must stop working; hand this device a fresh one.
+  const sessionVersion = await rotateSessionVersion(user.id)
+  res.json({ ok: true, token: signToken(user, sessionVersion) })
 })
 
 /** Re-check login password without rotating the session (used before change-phone). */
@@ -2367,6 +2415,7 @@ router.post('/me/deletion/send-code', authRequired, async (req, res) => {
       res.status(400).json({ error: '暂不满足注销条件，请先处理未完成事项，或勾选强行注销' })
       return
     }
+    if (smsRateLimited(req, res, user.phone)) return
     const code = newLoginCode()
     await query(
       `INSERT INTO sms_codes (phone, code, expires_at)

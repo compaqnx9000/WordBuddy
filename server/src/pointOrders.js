@@ -172,6 +172,7 @@ export async function fulfillPaidOrder({
   outTradeNo,
   providerTradeNo = null,
   alipayTradeNo = null,
+  paidAmountFen = null,
 } = {}) {
   const tradeNo = providerTradeNo || alipayTradeNo || null
   const client = await pool.connect()
@@ -186,6 +187,14 @@ export async function fulfillPaidOrder({
     if (!row) {
       await client.query('ROLLBACK')
       return { ok: false, error: '订单不存在' }
+    }
+    // Underpaying must not credit the points the order was priced at.
+    if (paidAmountFen != null && Number(paidAmountFen) < Number(row.amount_fen)) {
+      await client.query('ROLLBACK')
+      console.error(
+        `[pay] amount mismatch for ${outTradeNo}: paid ${paidAmountFen} < expected ${row.amount_fen}`,
+      )
+      return { ok: false, error: '支付金额与订单不符' }
     }
     if (row.status === 'paid') {
       await client.query('COMMIT')
@@ -259,10 +268,12 @@ export async function handleAlipayNotify(params) {
   }
   const outTradeNo = String(params.out_trade_no || '')
   const tradeNo = String(params.trade_no || '')
+  const paidYuan = Number(params.total_amount)
   const result = await fulfillPaidOrder({
     outTradeNo,
     alipayTradeNo: tradeNo,
     providerTradeNo: tradeNo,
+    paidAmountFen: Number.isFinite(paidYuan) ? Math.round(paidYuan * 100) : null,
   })
   return { ok: result.ok, reply: result.ok ? 'success' : 'failure' }
 }
@@ -284,6 +295,7 @@ export async function handleWechatPayNotify(body) {
   const result = await fulfillPaidOrder({
     outTradeNo: parsed.outTradeNo,
     providerTradeNo: parsed.transactionId,
+    paidAmountFen: parsed.amountFen || null,
   })
   if (!result.ok) {
     return { ok: false, httpStatus: 500, reply: { code: 'FAIL', message: result.error || '入账失败' } }

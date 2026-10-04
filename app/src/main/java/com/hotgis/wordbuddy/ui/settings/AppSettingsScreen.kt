@@ -83,17 +83,10 @@ import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.stellarGlass
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.hotgis.wordbuddy.BuildConfig
-import com.hotgis.wordbuddy.ads.AdDiagStore
-import com.hotgis.wordbuddy.ads.DrawFeedController
-import com.hotgis.wordbuddy.ads.RewardVideoController
-import com.hotgis.wordbuddy.ads.findActivity
 import com.hotgis.wordbuddy.media.MediaDiskCaches
 import androidx.media3.common.util.UnstableApi
 import androidx.annotation.OptIn as AndroidXOptIn
@@ -307,7 +300,7 @@ fun AppSettingsScreen(
                     onClear = { showClearCacheConfirm = true },
                 )
 
-                AdDiagCard()
+                // AdDiagCard()
 
                 if (loggedIn) {
                     AccountSecurityCard(
@@ -732,6 +725,7 @@ private fun StorageCacheCard(
     }
 }
 
+/*
 @Composable
 private fun AdDiagCard() {
     val context = LocalContext.current
@@ -822,6 +816,7 @@ private fun AdDiagRow(title: String, slotId: String, status: String) {
         }
     }
 }
+*/
 
 @Composable
 private fun AccountSecurityCard(

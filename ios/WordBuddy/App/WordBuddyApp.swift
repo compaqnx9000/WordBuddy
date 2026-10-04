@@ -13,9 +13,14 @@ struct WordBuddyApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(model)
-                .preferredColorScheme(model.accentStyle.isLight ? .light : .dark)
-                .onAppear { Theme.applyTabBar() }
-                .onChange(of: model.accentStyle) { _, _ in Theme.applyTabBar() }
+                .onAppear {
+                    Theme.applyInterfaceStyle(model.accentStyle)
+                    Theme.applyTabBar()
+                }
+                .onChange(of: model.accentStyle) { _, style in
+                    Theme.applyInterfaceStyle(style)
+                    Theme.applyTabBar()
+                }
                 .onOpenURL { url in
                     SocialAuth.shared.handleOpen(url: url)
                 }

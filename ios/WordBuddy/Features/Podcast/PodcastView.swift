@@ -2,15 +2,17 @@ import SwiftUI
 
 struct PodcastView: View {
     @EnvironmentObject private var player: PodcastPlayer
+    @EnvironmentObject private var model: AppModel
     @State private var selected: PodcastShow?
 
     var body: some View {
+        let palette = StellarPalettes.palette(for: model.accentStyle)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("播客唱片架")
                         .font(.title2.weight(.bold))
-                        .foregroundStyle(Theme.cyanSoft)
+                        .foregroundStyle(palette.cyanSoft)
                     Text("英文电台直播 + 播客唱片，沉浸听力")
                         .font(.subheadline)
                         .foregroundStyle(Theme.onSurfaceVariant)

@@ -90,6 +90,20 @@ export function newLoginCode() {
   return String(Math.floor(100000 + Math.random() * 900000))
 }
 
+/**
+ * Dev-only bypass that accepts any 6-digit code. Must stay off unless explicitly
+ * requested, and is never honoured in production even if the env says otherwise.
+ */
 export function skipVerify() {
-  return (process.env.SMS_SKIP_VERIFY || 'true') === 'true'
+  if (process.env.SMS_SKIP_VERIFY !== 'true') return false
+  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    if (!warnedProductionSkip) {
+      warnedProductionSkip = true
+      console.error('[sms] SMS_SKIP_VERIFY=true ignored because NODE_ENV=production')
+    }
+    return false
+  }
+  return true
 }
+
+let warnedProductionSkip = false

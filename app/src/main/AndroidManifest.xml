@@ -84,6 +84,8 @@
     <application
         android:name=".WordBuddyApp"
         android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -129,7 +131,11 @@
         </activity>
 
         <receiver
-            android:name=".reminder.StudyReminderReceiver"
+            android:name=".reminder.StudyReminderAlarmReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".reminder.StudyReminderBootReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

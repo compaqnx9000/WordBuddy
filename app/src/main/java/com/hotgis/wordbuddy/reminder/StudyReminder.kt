@@ -21,7 +21,7 @@ import java.util.Calendar
  * One exact alarm; the receiver shows the notification and schedules the next day.
  */
 object StudyReminder {
-    const val ACTION_FIRE = "com.hotgis.wordbuddy.action.DAILY_REMINDER"
+    private const val ACTION_FIRE = "com.hotgis.wordbuddy.action.DAILY_REMINDER"
     private const val CHANNEL_ID = "wordbuddy.daily.reminder"
     private const val NOTIFICATION_ID = 2001
     private const val REQUEST_CODE = 2001
@@ -71,7 +71,7 @@ object StudyReminder {
     }
 
     private fun firePendingIntent(context: Context): PendingIntent {
-        val intent = Intent(context, StudyReminderReceiver::class.java).apply {
+        val intent = Intent(context, StudyReminderAlarmReceiver::class.java).apply {
             action = ACTION_FIRE
         }
         return PendingIntent.getBroadcast(
@@ -139,14 +139,20 @@ object StudyReminder {
     }
 }
 
-class StudyReminderReceiver : BroadcastReceiver() {
+/**
+ * Receives our own alarm only. Declared non-exported so other apps cannot broadcast
+ * the fire action and spam notifications.
+ */
+class StudyReminderAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        when (intent?.action) {
-            Intent.ACTION_BOOT_COMPLETED -> {
-                val enabled = SettingsStore(context).loadSettings().dailyReminder
-                StudyReminder.sync(context, enabled)
-            }
-            StudyReminder.ACTION_FIRE -> StudyReminder.showAndReschedule(context)
-        }
+        StudyReminder.showAndReschedule(context)
+    }
+}
+
+/** Exported for the system-only BOOT_COMPLETED broadcast, which re-arms the alarm. */
+class StudyReminderBootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
+        StudyReminder.sync(context, SettingsStore(context).loadSettings().dailyReminder)
     }
 }

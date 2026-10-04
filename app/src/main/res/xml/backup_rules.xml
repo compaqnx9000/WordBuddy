@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and below. Settings may be backed up; login tokens may not. -->
+<full-backup-content>
+    <exclude
+        domain="sharedpref"
+        path="hotwords_session.xml" />
+    <exclude
+        domain="sharedpref"
+        path="hotwords_accounts.xml" />
+</full-backup-content>

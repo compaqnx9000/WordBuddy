@@ -615,10 +615,13 @@ fun AccountProfileScreen(
             },
         )
     }
-    val qrBitmap = remember(resolvedBuddyId) { generateBuddyQrBitmap(resolvedBuddyId) }
+    val qrBuddyId = remember(resolvedBuddyId) {
+        buddyQrPayload(resolvedBuddyId)?.let(::buddyIdFromQrPayload).orEmpty()
+    }
+    val qrBitmap = remember(qrBuddyId) { generateBuddyQrBitmap(qrBuddyId) }
     if (showQr) {
         BuddyQrDialog(
-            buddyId = resolvedBuddyId.ifBlank { "未设置" },
+            buddyId = qrBuddyId.ifBlank { resolvedBuddyId.ifBlank { "未设置" } },
             qrBitmap = qrBitmap,
             onDismiss = { showQr = false },
         )
@@ -1118,8 +1121,28 @@ internal fun GenderLabelText(
     }
 }
 
+internal fun buddyQrPayload(buddyId: String): String? {
+    val id = normalizeBuddyQrId(buddyId) ?: return null
+    return "wordbuddy://buddy/$id"
+}
+
+/** Reads a profile QR back to the unique 搭子号. Reserved for a later in-app scanner. */
+internal fun buddyIdFromQrPayload(payload: String): String? {
+    val text = payload.trim().lowercase()
+    val prefix = "wordbuddy://buddy/"
+    if (!text.startsWith(prefix)) return null
+    val id = text.removePrefix(prefix).substringBefore('?').substringBefore('#')
+    return normalizeBuddyQrId(id)
+}
+
+private fun normalizeBuddyQrId(buddyId: String): String? {
+    val id = buddyId.trim().lowercase()
+    if (id.length !in 4..32 || !id.all { it.isLetterOrDigit() }) return null
+    return id
+}
+
 internal fun generateBuddyQrBitmap(buddyId: String, size: Int = 640): Bitmap? {
-    val content = InviteStore.inviteUrl(buddyId).ifBlank { return null }
+    val content = buddyQrPayload(buddyId) ?: return null
     return runCatching {
         val hints = mapOf(
             EncodeHintType.CHARACTER_SET to "UTF-8",
