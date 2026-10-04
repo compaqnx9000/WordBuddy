@@ -153,6 +153,7 @@ enum class AccentStyle(val label: String, val swatchArgb: Long) {
     Ember("余烬珊瑚", 0xFFFF6B6B),
     Frost("霜蓝", 0xFF0E8A96),
     ForestStar("星野翠绿", 0xFF8CC63F),
+    SpongeBob("海绵宝宝", 0xFF8A3E08),
 }
 
 enum class FontSizeOption(val label: String, val scale: Float) {

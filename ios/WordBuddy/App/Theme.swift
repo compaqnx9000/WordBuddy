@@ -10,6 +10,7 @@ enum AccentStyle: String, CaseIterable, Identifiable {
     case ember
     case frost
     case forestStar
+    case spongeBob
 
     var id: String { rawValue }
 
@@ -23,6 +24,7 @@ enum AccentStyle: String, CaseIterable, Identifiable {
         case .ember: "余烬珊瑚"
         case .frost: "霜蓝"
         case .forestStar: "星野翠绿"
+        case .spongeBob: "海绵宝宝"
         }
     }
 
@@ -36,10 +38,11 @@ enum AccentStyle: String, CaseIterable, Identifiable {
         case .ember: Color(argb: 0xFFFF6B6B)
         case .frost: Color(argb: 0xFF0E8A96)
         case .forestStar: Color(argb: 0xFF8CC63F)
+        case .spongeBob: Color(argb: 0xFF8A3E08)
         }
     }
 
-    var isLight: Bool { self == .frost }
+    var isLight: Bool { self == .frost || self == .spongeBob }
 }
 
 struct StellarPalette {
@@ -246,6 +249,29 @@ enum StellarPalettes {
         wallpaperImageName: "BgForestStar"
     )
 
+    static let spongeBob = StellarPalette(
+        background: Color(argb: 0xFFF6B429),
+        surface: Color(argb: 0xF2FFF6D4),
+        surfaceHigh: Color(argb: 0xFFFFE7A0),
+        surfaceContainer: Color(argb: 0xFFFFF8E7),
+        onSurface: Color(argb: 0xFF2C1608),
+        onSurfaceVariant: Color(argb: 0xFF5E3B1C),
+        outline: Color(argb: 0xFFD7A441),
+        cyan: Color(argb: 0xFF0B3A8C),
+        cyanBright: Color(argb: 0xFF0E4A9E),
+        cyanSoft: Color(argb: 0xFF0B3A8C),
+        headword: Color(argb: 0xFF0B3A8C),
+        pink: Color(argb: 0xFFC62828),
+        gold: Color(argb: 0xFFC2410C),
+        glass: Color(argb: 0xF2FFF6D4),
+        glassBorder: Color(argb: 0x805E3B1C),
+        neonBorder: Color(argb: 0x990B3A8C),
+        tabInactive: Color(argb: 0xCC5E3B1C),
+        onPrimary: Color(argb: 0xFFFFFFFF),
+        isLight: true,
+        wallpaperImageName: "BgSpongeBob"
+    )
+
     static func palette(for style: AccentStyle) -> StellarPalette {
         switch style {
         case .cyberNeon: cyberNeon
@@ -256,6 +282,7 @@ enum StellarPalettes {
         case .ember: ember
         case .frost: frost
         case .forestStar: forestStar
+        case .spongeBob: spongeBob
         }
     }
 }

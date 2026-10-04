@@ -1,8 +1,8 @@
 {
-  "versionCode": 151,
-  "versionName": "1.60",
+  "versionCode": 152,
+  "versionName": "1.61",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "每天 20:00 本地提醒；密码解锁时显示当前账号。",
-  "releasedAt": "2026-10-04T07:13:00.000Z"
+  "notes": "设置里新增海绵宝宝外观主题。",
+  "releasedAt": "2026-10-04T10:30:00.000Z"
 }

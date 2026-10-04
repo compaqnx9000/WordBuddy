@@ -259,7 +259,11 @@ fun AppSettingsScreen(
                         onChange {
                             it.copy(
                                 accentStyle = style,
-                                appTheme = if (style == AccentStyle.Frost) AppTheme.Light else AppTheme.Dark,
+                                appTheme = if (style == AccentStyle.Frost || style == AccentStyle.SpongeBob) {
+                                    AppTheme.Light
+                                } else {
+                                    AppTheme.Dark
+                                },
                             )
                         }
                     },

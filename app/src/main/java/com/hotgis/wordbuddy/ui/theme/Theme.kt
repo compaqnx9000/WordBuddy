@@ -108,6 +108,29 @@ val ForestStarHwColors = HwColorPalette(
     userNoteHighlight = Color(0xFF1A4D30),
 )
 
+val SpongeBobHwColors = HwColorPalette(
+    background = Color(0xFFFFF8E7),
+    surfaceGray = Color(0xFFFFEFC2),
+    textPrimary = Color(0xFF2C1608),
+    textSecondary = Color(0xFF6B4524),
+    textTertiary = Color(0xFFA07848),
+    divider = Color(0xFFE4C57A),
+    maskBlue = Color(0xFFD6E6FA),
+    maskStripe = Color(0xFFC5D9F5),
+    accentBlue = Color(0xFF0B3A8C),
+    iconGray = Color(0xFF8A6844),
+    nearWord = Color(0xFFC2410C),
+    listAccent = Color(0xFF0B3A8C),
+    synonym = Color(0xFF0B3A8C),
+    antonym = Color(0xFFC62828),
+    deleteRed = Color(0xFFD32F2F),
+    playFill = Color(0xFF0B3A8C),
+    onPlayFill = Color.White,
+    clearButton = Color(0xFFE4C57A),
+    starFilled = Color(0xFFC2410C),
+    userNoteHighlight = Color(0xFFFFE7A0),
+)
+
 val LocalHwColors = staticCompositionLocalOf { LightHwColors }
 
 /** @deprecated Use [hwColors] inside composables. Kept for gradual migration. */
@@ -150,6 +173,7 @@ fun HotWordsTheme(
 ) {
     val palette = when {
         accentStyle == AccentStyle.ForestStar -> ForestStarHwColors
+        accentStyle == AccentStyle.SpongeBob -> SpongeBobHwColors
         appTheme == AppTheme.Light -> LightHwColors
         else -> DarkHwColors
     }
@@ -157,6 +181,15 @@ fun HotWordsTheme(
         accentStyle == AccentStyle.ForestStar -> darkColorScheme(
             primary = palette.accentBlue,
             onPrimary = Color(0xFF1B4D2E),
+            background = palette.background,
+            onBackground = palette.textPrimary,
+            surface = palette.background,
+            onSurface = palette.textPrimary,
+            outline = palette.divider,
+        )
+        accentStyle == AccentStyle.SpongeBob -> lightColorScheme(
+            primary = palette.accentBlue,
+            onPrimary = Color.White,
             background = palette.background,
             onBackground = palette.textPrimary,
             surface = palette.background,

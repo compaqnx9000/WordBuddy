@@ -251,6 +251,33 @@ object StellarPalettes {
         backgroundImageRes = R.drawable.bg_forest_star,
     )
 
+    /**
+     * Bright yellow SpongeBob wallpaper. Text stays deep brown, buttons stay
+     * sea-blue with white labels so they stay readable on the gold background.
+     */
+    val SpongeBob = StellarPalette(
+        Background = Color(0xFFF6B429),
+        Surface = Color(0xF2FFF6D4),
+        SurfaceHigh = Color(0xFFFFE7A0),
+        SurfaceContainer = Color(0xFFFFF8E7),
+        OnSurface = Color(0xFF2C1608),
+        OnSurfaceVariant = Color(0xFF5E3B1C),
+        Outline = Color(0xFFD7A441),
+        Cyan = Color(0xFF0B3A8C),
+        CyanBright = Color(0xFF0E4A9E),
+        CyanSoft = Color(0xFF0B3A8C),
+        Headword = Color(0xFF0B3A8C),
+        Pink = Color(0xFFC62828),
+        Gold = Color(0xFFC2410C),
+        Glass = Color(0xF2FFF6D4),
+        GlassBorder = Color(0x805E3B1C),
+        NeonBorder = Color(0x990B3A8C),
+        TabInactive = Color(0xCC5E3B1C),
+        OnPrimary = Color(0xFFFFFFFF),
+        isLight = true,
+        backgroundImageRes = R.drawable.bg_spongebob,
+    )
+
     fun forStyle(style: AccentStyle): StellarPalette = when (style) {
         AccentStyle.CyberNeon -> CyberNeon
         AccentStyle.Emerald -> Emerald
@@ -260,6 +287,7 @@ object StellarPalettes {
         AccentStyle.Ember -> Ember
         AccentStyle.Frost -> Frost
         AccentStyle.ForestStar -> ForestStar
+        AccentStyle.SpongeBob -> SpongeBob
     }
 }
 
