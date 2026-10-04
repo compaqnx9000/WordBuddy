@@ -43,6 +43,7 @@ import androidx.compose.material.icons.outlined.CardGiftcard
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.EventAvailable
+import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.PlayCircle
 import java.time.LocalDate
@@ -134,6 +135,7 @@ fun ProfileScreen(
         cb(Result.failure(IllegalStateException("未实现")))
     },
     onOpenPointsMall: () -> Unit = {},
+    onOpenWithdraw: () -> Unit = {},
     onOpenBuyPoints: () -> Unit = {},
     onOpenShortFavorites: () -> Unit = {},
     onOpenTools: () -> Unit = {},
@@ -605,6 +607,16 @@ fun ProfileScreen(
                     title = "积分兑礼",
                     trailing = "可用 ${checkIn.totalPoints} 分",
                     onClick = onOpenPointsMall,
+                )
+                ProfileMenuDivider()
+                ProfileMenuRow(
+                    icon = Icons.Outlined.Payments,
+                    iconTint = Stellar.Pink,
+                    title = "支付宝提现",
+                    trailing = "可用 ${checkIn.totalPoints} 分",
+                    onClick = {
+                        if (loggedIn) onOpenWithdraw() else onLogin()
+                    },
                 )
                 ProfileMenuDivider()
                 ProfileMenuRow(

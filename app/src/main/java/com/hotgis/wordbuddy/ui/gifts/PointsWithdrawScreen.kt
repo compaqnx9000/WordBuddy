@@ -69,6 +69,7 @@ import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -95,7 +96,7 @@ fun PointsWithdrawScreen(
     var loading by remember { mutableStateOf(true) }
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var channel by remember { mutableStateOf("wechat") }
+    var channel by remember { mutableStateOf("alipay") }
     var confirmOpen by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
 
@@ -115,12 +116,7 @@ fun PointsWithdrawScreen(
             }.onSuccess { (cfg, items) ->
                 config = cfg
                 history = items
-                if (cfg.channels.none { it.id == channel }) {
-                    channel = cfg.channels.firstOrNull()?.id ?: "alipay"
-                }
-                if (channel == "wechat" && !cfg.sandbox && !cfg.wechatReady && cfg.alipayReady) {
-                    channel = "alipay"
-                }
+                channel = "alipay"
             }.onFailure {
                 error = it.message ?: "加载失败"
             }
@@ -138,7 +134,7 @@ fun PointsWithdrawScreen(
     val alipayReady = selectedAccount.isNotBlank() &&
         (isAlipayAuthIdentity(selectedAccount) || !alipayName.isNullOrBlank())
     val payoutReady = if (channel == "alipay") alipayReady else selectedAccount.isNotBlank()
-    val selected = cfg?.channels?.firstOrNull { it.id == channel }
+    val payoutChannels = cfg?.channels.orEmpty().filter { it.id == "alipay" }
 
     Column(
         modifier
@@ -245,7 +241,7 @@ fun PointsWithdrawScreen(
                 Text("提现方式", color = Stellar.OnSurface, fontSize = 15.ssp(), fontWeight = FontWeight.SemiBold)
             }
 
-            items(cfg?.channels.orEmpty(), key = { it.id }) { item ->
+            items(payoutChannels, key = { it.id }) { item ->
                 val selectedNow = item.id == channel
                 Row(
                     Modifier
@@ -341,6 +337,9 @@ fun PointsWithdrawScreen(
                         )
                         .clickable(enabled = !submitting && cfg != null) {
                             when {
+                                withdrewAlipayToday(history) -> {
+                                    Toast.makeText(context, "今天已经提现过一次，请明天再试", Toast.LENGTH_SHORT).show()
+                                }
                                 selectedAccount.length < 3 -> {
                                     Toast.makeText(
                                         context,
@@ -626,6 +625,18 @@ private fun maskPayoutAccount(raw: String?): String {
         if (digits.length >= 7) return digits.take(3) + "****" + digits.takeLast(4)
     }
     return value.take(2) + "***" + value.takeLast(2)
+}
+
+private fun withdrewAlipayToday(items: List<WithdrawalItem>): Boolean {
+    val today = LocalDate.now(ZoneId.of("Asia/Shanghai"))
+    return items.any { item ->
+        if (item.channel != "alipay") return@any false
+        if (item.status != "pending" && item.status != "success") return@any false
+        val created = item.createdAt ?: return@any false
+        runCatching {
+            Instant.parse(created).atZone(ZoneId.of("Asia/Shanghai")).toLocalDate() == today
+        }.getOrDefault(false)
+    }
 }
 
 private fun formatWithdrawTime(iso: String?): String {

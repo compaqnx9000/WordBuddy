@@ -1,8 +1,8 @@
 {
-  "versionCode": 155,
-  "versionName": "1.64",
+  "versionCode": 158,
+  "versionName": "1.67",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "安全加固：账号与支付相关修复，修改密码后旧登录态失效。",
-  "releasedAt": "2026-10-04T13:30:00.000Z"
+  "notes": "支付宝提现每天限一次，当天已提现会直接提示。",
+  "releasedAt": "2026-10-04T14:35:00.000Z"
 }

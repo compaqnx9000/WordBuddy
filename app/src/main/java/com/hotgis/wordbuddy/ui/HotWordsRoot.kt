@@ -965,9 +965,7 @@ fun HotWordsRoot(
                         initialShippingName = session?.shippingName.orEmpty(),
                         initialShippingPhone = session?.shippingPhone.orEmpty(),
                         initialShippingDetail = session?.shippingDetail.orEmpty(),
-                        onSaveShipping = { name, phone, detail ->
-                            viewModel.updateShippingAddress(name, phone, detail) { }
-                        },
+                        onOpenProfile = { showAccountProfile = true },
                         onBack = { giftDetailId = null },
                         onRedeemed = {
                             viewModel.refreshCheckIn()
@@ -1046,6 +1044,7 @@ fun HotWordsRoot(
                         onBack = { showPointsMall = false },
                         onOpenOrders = { showGiftOrders = true },
                         onOpenGift = { giftDetailId = it },
+                        onOpenWithdraw = { showPointsWithdraw = true },
                         streakDays = checkIn.streakDays,
                         checkedInToday = checkIn.checkedInToday,
                         onLogin = {
@@ -1477,6 +1476,7 @@ fun HotWordsRoot(
                             rewardVideo = rewardVideo,
                             onClaimRewardVideo = viewModel::claimRewardVideo,
                             onOpenPointsMall = { showPointsMall = true },
+                            onOpenWithdraw = { showPointsWithdraw = true },
                             onOpenBuyPoints = { openBuyPoints() },
                             onOpenShortFavorites = {
                                 if (session == null) {

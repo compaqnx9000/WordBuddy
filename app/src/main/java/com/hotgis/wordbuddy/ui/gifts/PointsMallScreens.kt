@@ -33,7 +33,6 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBackIos
@@ -53,11 +52,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -95,6 +92,7 @@ fun PointsMallScreen(
     onBack: () -> Unit,
     onOpenOrders: () -> Unit,
     onOpenGift: (Long) -> Unit,
+    onOpenWithdraw: () -> Unit = {},
     onLogin: () -> Unit,
     streakDays: Int = 0,
     checkedInToday: Boolean = false,
@@ -153,6 +151,9 @@ fun PointsMallScreen(
                     checkedInToday = checkedInToday,
                     onOpenOrders = {
                         if (loggedIn) onOpenOrders() else onLogin()
+                    },
+                    onOpenWithdraw = {
+                        if (loggedIn) onOpenWithdraw() else onLogin()
                     },
                 )
             }
@@ -228,6 +229,7 @@ private fun MallHeader(
     streakDays: Int,
     checkedInToday: Boolean,
     onOpenOrders: () -> Unit,
+    onOpenWithdraw: () -> Unit,
 ) {
     Column(
         Modifier
@@ -269,6 +271,18 @@ private fun MallHeader(
                 modifier = Modifier.clickable(onClick = onOpenOrders),
             )
         }
+        Spacer(Modifier.height(12.sdp()))
+        Text(
+            text = "支付宝提现",
+            color = Stellar.OnPrimary,
+            fontSize = 13.ssp(),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(Stellar.Cyan)
+                .clickable(onClick = onOpenWithdraw)
+                .padding(horizontal = 14.sdp(), vertical = 8.sdp()),
+        )
         Spacer(Modifier.height(14.sdp()))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             MallStat(value = if (loggedIn) "${streakDays}天" else "—", caption = "连续签到")
@@ -433,7 +447,7 @@ fun GiftDetailScreen(
     initialShippingName: String = "",
     initialShippingPhone: String = "",
     initialShippingDetail: String = "",
-    onSaveShipping: (name: String, phone: String, detail: String) -> Unit = { _, _, _ -> },
+    onOpenProfile: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val api = remember { WordBuddyApi() }
@@ -442,17 +456,12 @@ fun GiftDetailScreen(
     var gift by remember { mutableStateOf<GiftItem?>(null) }
     var loading by remember { mutableStateOf(true) }
     var busy by remember { mutableStateOf(false) }
-    var showAddress by remember { mutableStateOf(false) }
+    var missingAddress by remember { mutableStateOf(false) }
     var confirmRedeem by remember { mutableStateOf(false) }
-    var name by remember { mutableStateOf(initialShippingName) }
-    var phone by remember { mutableStateOf(initialShippingPhone) }
-    var detail by remember { mutableStateOf(initialShippingDetail) }
-
-    LaunchedEffect(giftId, initialShippingName, initialShippingPhone, initialShippingDetail) {
-        if (name.isBlank() && initialShippingName.isNotBlank()) name = initialShippingName
-        if (phone.isBlank() && initialShippingPhone.isNotBlank()) phone = initialShippingPhone
-        if (detail.isBlank() && initialShippingDetail.isNotBlank()) detail = initialShippingDetail
-    }
+    val savedName = initialShippingName.trim()
+    val savedPhone = initialShippingPhone.trim()
+    val savedDetail = initialShippingDetail.trim()
+    val hasShipping = savedName.isNotEmpty() && savedPhone.isNotEmpty() && savedDetail.isNotEmpty()
 
     LaunchedEffect(giftId) {
         loading = true
@@ -471,18 +480,14 @@ fun GiftDetailScreen(
             onLogin()
             return
         }
-        if (g.needAddress && (name.isBlank() || phone.isBlank() || detail.isBlank())) {
-            showAddress = true
-            return
-        }
         busy = true
         scope.launch {
+            val shipName = if (g.needAddress) savedName else null
+            val shipPhone = if (g.needAddress) savedPhone else null
+            val shipDetail = if (g.needAddress) savedDetail else null
             runCatching {
-                api.redeemGift(t, g.id, name.ifBlank { null }, phone.ifBlank { null }, detail.ifBlank { null })
+                api.redeemGift(t, g.id, shipName, shipPhone, shipDetail)
             }.onSuccess { result ->
-                if (g.needAddress && name.isNotBlank() && phone.isNotBlank() && detail.isNotBlank()) {
-                    onSaveShipping(name, phone, detail)
-                }
                 Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
                 onRedeemed()
             }.onFailure {
@@ -490,8 +495,20 @@ fun GiftDetailScreen(
             }
             busy = false
             confirmRedeem = false
-            showAddress = false
         }
+    }
+
+    fun beginRedeem() {
+        val g = gift ?: return
+        if (token.isNullOrBlank()) {
+            onLogin()
+            return
+        }
+        if (g.needAddress && !hasShipping) {
+            missingAddress = true
+            return
+        }
+        confirmRedeem = true
     }
 
     val g = gift
@@ -661,11 +678,7 @@ fun GiftDetailScreen(
                         modifier = Modifier
                             .clip(RoundedCornerShape(999.dp))
                             .background(if (busy) Stellar.SurfaceHigh else Stellar.Pink)
-                            .clickable(enabled = !busy) {
-                                if (token.isNullOrBlank()) onLogin()
-                                else if (g.needAddress) showAddress = true
-                                else confirmRedeem = true
-                            }
+                            .clickable(enabled = !busy) { beginRedeem() }
                             .padding(horizontal = 18.sdp(), vertical = 12.sdp()),
                     )
                 }
@@ -683,112 +696,18 @@ fun GiftDetailScreen(
             onConfirm = { doRedeem() },
         )
     }
-    if (showAddress && g != null) {
-        AddressDialog(
-            name = name,
-            phone = phone,
-            detail = detail,
-            onName = { name = it },
-            onPhone = { phone = it },
-            onDetail = { detail = it },
-            onDismiss = { showAddress = false },
+    if (missingAddress) {
+        StellarConfirmDialog(
+            title = "请先填写收货地址",
+            message = "兑换需要收货地址。请先到个人资料中填写收件人、电话和地址，再回来兑换。",
+            confirmText = "去填写",
+            dismissText = "取消",
+            onDismiss = { missingAddress = false },
             onConfirm = {
-                showAddress = false
-                confirmRedeem = true
+                missingAddress = false
+                onOpenProfile()
             },
         )
-    }
-}
-
-@Composable
-private fun AddressDialog(
-    name: String,
-    phone: String,
-    detail: String,
-    onName: (String) -> Unit,
-    onPhone: (String) -> Unit,
-    onDetail: (String) -> Unit,
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit,
-) {
-    val shape = RoundedCornerShape(24.sdp())
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.sdp())
-                .clip(shape)
-                .background(Stellar.SurfaceContainer)
-                .border(1.dp, Stellar.Cyan.copy(alpha = 0.4f), shape)
-                .padding(20.sdp()),
-        ) {
-            Text("收货地址", color = Stellar.CyanSoft, fontSize = 20.ssp(), fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(12.sdp()))
-            Field(label = "收件人", placeholder = "请填写收件人姓名", value = name, onChange = onName)
-            Spacer(Modifier.height(8.sdp()))
-            Field(label = "电话", placeholder = "请填写联系电话", value = phone, onChange = onPhone)
-            Spacer(Modifier.height(8.sdp()))
-            Field(label = "地址", placeholder = "省市区 + 详细地址", value = detail, onChange = onDetail)
-            Spacer(Modifier.height(16.sdp()))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                Text(
-                    "取消",
-                    color = Stellar.OnSurfaceVariant,
-                    modifier = Modifier
-                        .clickable(onClick = onDismiss)
-                        .padding(10.sdp()),
-                )
-                Text(
-                    "下一步",
-                    color = Stellar.OnPrimary,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Stellar.Cyan)
-                        .clickable(onClick = onConfirm)
-                        .padding(horizontal = 16.sdp(), vertical = 10.sdp()),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun Field(
-    label: String,
-    placeholder: String,
-    value: String,
-    onChange: (String) -> Unit,
-) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(
-            text = label,
-            color = Stellar.OnSurfaceVariant,
-            fontSize = 13.ssp(),
-            fontWeight = FontWeight.Medium,
-        )
-        Spacer(Modifier.height(6.sdp()))
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.sdp()))
-                .background(Stellar.SurfaceHigh)
-                .padding(12.sdp()),
-        ) {
-            BasicTextField(
-                value = value,
-                onValueChange = onChange,
-                textStyle = TextStyle(color = Stellar.OnSurface, fontSize = 14.ssp()),
-                cursorBrush = SolidColor(Stellar.Cyan),
-                decorationBox = { inner ->
-                    if (value.isEmpty()) {
-                        Text(placeholder, color = Stellar.OnSurfaceVariant, fontSize = 14.ssp())
-                    }
-                    inner()
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
     }
 }
 

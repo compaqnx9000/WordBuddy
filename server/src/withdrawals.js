@@ -39,7 +39,7 @@ export function withdrawConfig() {
   const amountText = `单笔提现 ¥${(amountFen / 100).toFixed(2)}，消耗 ${pointsCost} 积分`
   let note
   if (sandbox) {
-    note = '当前为沙箱模式：仅模拟打款成功，不会真实转账。'
+    note = '当前为沙箱模式：仅模拟打款成功，不会真实转账。支付宝每天可提现 1 次。'
   } else {
     const parts = [amountText]
     parts.push(
@@ -49,8 +49,8 @@ export function withdrawConfig() {
     )
     parts.push(
       alipayReady
-        ? '支付宝请先在个人资料中绑定支付宝。'
-        : '支付宝应用还在审核/未上线，暂可能无法打款。',
+        ? '支付宝请先在个人资料中绑定支付宝。每天可提现 1 次。'
+        : '支付宝应用还在审核/未上线，暂可能无法打款。每天可提现 1 次。',
     )
     note = parts.join('')
   }
@@ -212,17 +212,24 @@ export async function createWithdrawal(userId, { channel, account, realName } = 
       return { ok: false, error: `积分不足，还差 ${pointsCost - balance} 分` }
     }
 
+    const dailyLimit = ch === 'alipay' ? 1 : 20
     const todayCount = (
       await client.query(
         `SELECT count(*)::int AS n FROM withdrawals
-         WHERE user_id = $1 AND created_at >= date_trunc('day', now())
-           AND status IN ('pending', 'success')`,
-        [userId],
+         WHERE user_id = $1
+           AND channel = $2
+           AND status IN ('pending', 'success')
+           AND (created_at AT TIME ZONE 'Asia/Shanghai')::date
+             = (now() AT TIME ZONE 'Asia/Shanghai')::date`,
+        [userId, ch],
       )
     ).rows[0].n
-    if (todayCount >= 20) {
+    if (todayCount >= dailyLimit) {
       await client.query('ROLLBACK')
-      return { ok: false, error: '今日提现次数已达上限，请明天再试' }
+      return {
+        ok: false,
+        error: ch === 'alipay' ? '今天已经提现过一次，请明天再试' : '今日提现次数已达上限，请明天再试',
+      }
     }
 
     nextBalance = balance - pointsCost

@@ -3,12 +3,22 @@ package com.hotgis.wordbuddy.audio
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioAttributes
-import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import android.widget.Toast
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import com.hotgis.wordbuddy.data.Accent
 import java.io.File
 import java.net.HttpURLConnection
@@ -18,24 +28,37 @@ import java.nio.charset.StandardCharsets
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 
 /**
- * Free word audio: Youdao dict voice (no API key) with Android TTS as fallback.
+ * Word and sentence audio.
+ *
+ * Youdao dict voice first (words are MPEG-1 48 kHz). Example sentences from the same
+ * endpoint are MPEG-2 24 kHz, which Redmi's MediaPlayer rejects while Samsung plays
+ * them. ExoPlayer decodes both. If Youdao has no clip, Baidu sentence synthesis is
+ * next. The system engine is only the last resort: Xiaomi's Chinese TTS silently
+ * drops English that Samsung TTS speaks.
  */
 class TtsPlayer(context: Context) {
     private val app = context.applicationContext
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val playMutex = Mutex()
-    private var mediaPlayer: MediaPlayer? = null
+    private val stopGeneration = AtomicInteger()
+    private var exoPlayer: ExoPlayer? = null
     private var tts: TextToSpeech? = null
     @Volatile private var ttsReady = false
+    private var lastVoiceNoticeAt = 0L
 
     init {
         val preferredEngine = preferredEnglishTtsEngine()
@@ -43,7 +66,7 @@ class TtsPlayer(context: Context) {
             ttsReady = status == TextToSpeech.SUCCESS
             val engine = tts
             if (ttsReady && engine != null) {
-                engine.setSpeechRate(0.9f)
+                engine.setSpeechRate(DEFAULT_SPEECH_RATE)
                 engine.setPitch(1.0f)
             } else if (!ttsReady) {
                 Log.w(TAG, "System TTS init failed: $status engine=$preferredEngine")
@@ -62,32 +85,22 @@ class TtsPlayer(context: Context) {
         if (word.isEmpty()) return
         playMutex.withLock {
             stopInternal()
-            if (!slow) {
-                val file = withContext(Dispatchers.IO) { downloadDictVoice(word, accent) }
-                if (file != null) {
-                    try {
-                        playFile(file)
-                        return@withLock
-                    } catch (error: Exception) {
-                        Log.w(TAG, "Online audio playback failed, falling back to TTS", error)
-                    } finally {
-                        file.delete()
-                    }
-                }
+            when (playOnline(word, accent, slow)) {
+                OnlinePlay.Played, OnlinePlay.Stopped -> return@withLock
+                OnlinePlay.Failed -> Unit
             }
-            speakWithSystemTts(
+            val spoken = speakWithSystemTts(
                 word,
                 accent,
                 speechRate = if (slow) SLOW_SPEECH_RATE else DEFAULT_SPEECH_RATE,
             )
+            if (!spoken) notifyVoiceUnavailable()
         }
     }
 
     /**
      * Speak syllable/parts with a short pause between each (for natural phonics).
-     *
-     * Prefer Youdao clips for each part: many OEM defaults (e.g. Xiaomi Chinese TTS)
-     * silently skip short English fragments, while Samsung/Google TTS speak them fine.
+     * Online clips first: Xiaomi's Chinese TTS silently skips short English fragments.
      */
     suspend fun speakSequence(
         parts: List<String>,
@@ -102,9 +115,10 @@ class TtsPlayer(context: Context) {
         }
         playMutex.withLock {
             stopInternal()
+            val generation = stopGeneration.get()
             cleaned.forEachIndexed { index, part ->
-                val playedOnline = playDictVoiceOrNull(part, accent)
-                if (!playedOnline) {
+                if (stopGeneration.get() != generation) return@withLock
+                if (playOnline(part, accent, slow = false) == OnlinePlay.Failed) {
                     speakWithSystemTts(part, accent)
                 }
                 if (index < cleaned.lastIndex) {
@@ -126,38 +140,69 @@ class TtsPlayer(context: Context) {
     }
 
     private fun stopInternal() {
-        try {
-            mediaPlayer?.setOnCompletionListener(null)
-            mediaPlayer?.setOnErrorListener(null)
-            if (mediaPlayer?.isPlaying == true) mediaPlayer?.stop()
-            mediaPlayer?.reset()
-            mediaPlayer?.release()
-        } catch (_: Exception) {
+        stopGeneration.incrementAndGet()
+        val player = exoPlayer
+        exoPlayer = null
+        if (player != null) {
+            val release = {
+                try {
+                    player.release()
+                } catch (_: Exception) {
+                }
+            }
+            if (Looper.myLooper() == Looper.getMainLooper()) release() else mainHandler.post(release)
         }
-        mediaPlayer = null
         try {
             tts?.stop()
         } catch (_: Exception) {
         }
     }
 
-    private suspend fun playDictVoiceOrNull(word: String, accent: Accent): Boolean {
-        val file = withContext(Dispatchers.IO) { downloadDictVoice(word, accent) } ?: return false
-        return try {
-            playFile(file)
-            true
-        } catch (error: Exception) {
-            Log.w(TAG, "Online audio playback failed for part=$word", error)
-            false
-        } finally {
-            file.delete()
+    /** Youdao, then Baidu sentence synthesis. [OnlinePlay.Stopped] means the user interrupted. */
+    private suspend fun playOnline(text: String, accent: Accent, slow: Boolean): OnlinePlay {
+        val generation = stopGeneration.get()
+        for (source in voiceSources(text, accent)) {
+            if (stopGeneration.get() != generation) return OnlinePlay.Stopped
+            val file = withContext(Dispatchers.IO) { downloadVoice(source.url, source.name) } ?: continue
+            if (stopGeneration.get() != generation) {
+                file.delete()
+                return OnlinePlay.Stopped
+            }
+            try {
+                playFile(file, slow)
+                return OnlinePlay.Played
+            } catch (error: TimeoutCancellationException) {
+                if (stopGeneration.get() != generation) return OnlinePlay.Stopped
+                Log.w(TAG, "${source.name} playback timed out, trying next", error)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (stopGeneration.get() != generation) return OnlinePlay.Stopped
+                Log.w(TAG, "${source.name} playback failed, trying next", error)
+            } finally {
+                file.delete()
+            }
         }
+        return if (stopGeneration.get() != generation) OnlinePlay.Stopped else OnlinePlay.Failed
     }
 
-    private fun downloadDictVoice(word: String, accent: Accent): File? {
-        val encoded = URLEncoder.encode(word, StandardCharsets.UTF_8.name())
-        val type = if (accent == Accent.UK) 1 else 2
-        val url = "https://dict.youdao.com/dictvoice?audio=$encoded&type=$type"
+    private fun voiceSources(text: String, accent: Accent): List<VoiceSource> {
+        val encoded = URLEncoder.encode(text, StandardCharsets.UTF_8.name())
+        val youdaoType = if (accent == Accent.UK) 1 else 2
+        val baiduLan = if (accent == Accent.UK) "uk" else "en"
+        return listOf(
+            VoiceSource(
+                "youdao",
+                "https://dict.youdao.com/dictvoice?audio=$encoded&type=$youdaoType",
+            ),
+            VoiceSource(
+                "baidu",
+                "https://fanyi.baidu.com/gettts?lan=$baiduLan&text=$encoded&spd=3&source=web",
+            ),
+        )
+    }
+
+    private fun downloadVoice(url: String, label: String): File? {
         return try {
             val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = true
@@ -171,7 +216,7 @@ class TtsPlayer(context: Context) {
             val contentType = connection.contentType.orEmpty()
             if (code !in 200..299 || contentType.contains("text/html", ignoreCase = true)) {
                 connection.disconnect()
-                Log.w(TAG, "Dict voice HTTP $code type=$contentType")
+                Log.w(TAG, "$label HTTP $code type=$contentType")
                 return null
             }
             val file = File(app.cacheDir, "hotwords_${UUID.randomUUID()}.mp3")
@@ -186,109 +231,147 @@ class TtsPlayer(context: Context) {
                 file
             }
         } catch (error: Exception) {
-            Log.w(TAG, "Dict voice download failed", error)
+            Log.w(TAG, "$label download failed", error)
             null
         }
     }
 
-    private suspend fun playFile(file: File) = suspendCancellableCoroutine { continuation ->
-        val player = MediaPlayer()
-        mediaPlayer = player
-        val finished = AtomicBoolean(false)
-        val finish = {
-            if (finished.compareAndSet(false, true) && continuation.isActive) {
-                continuation.resume(Unit)
+    private suspend fun playFile(file: File, slow: Boolean) {
+        val timeoutMs = if (slow) 45_000L else 25_000L
+        withContext(Dispatchers.Main.immediate) {
+            withTimeout(timeoutMs) {
+                suspendCancellableCoroutine { continuation ->
+                    val player = ExoPlayer.Builder(app).build()
+                    exoPlayer = player
+                    val finished = AtomicBoolean(false)
+                    val finish: (Throwable?) -> Unit = { error ->
+                        if (finished.compareAndSet(false, true)) {
+                            releasePlayer(player)
+                            if (continuation.isActive) {
+                                if (error == null) continuation.resume(Unit)
+                                else continuation.resumeWithException(error)
+                            }
+                        }
+                    }
+                    player.setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(C.USAGE_MEDIA)
+                            .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+                            .build(),
+                        true,
+                    )
+                    if (slow) player.playbackParameters = PlaybackParameters(SLOW_PLAYBACK_SPEED)
+                    player.addListener(object : Player.Listener {
+                        override fun onPlaybackStateChanged(state: Int) {
+                            if (state == Player.STATE_ENDED) finish(null)
+                        }
+
+                        override fun onPlayerError(error: PlaybackException) {
+                            Log.w(TAG, "ExoPlayer error ${error.errorCodeName}", error)
+                            finish(error)
+                        }
+                    })
+                    continuation.invokeOnCancellation { releasePlayer(player) }
+                    try {
+                        player.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+                        player.prepare()
+                        player.play()
+                    } catch (error: Exception) {
+                        finish(error)
+                    }
+                }
             }
-            releasePlayer(player)
-        }
-        player.setAudioAttributes(
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                .build(),
-        )
-        player.setOnCompletionListener { finish() }
-        player.setOnErrorListener { _, what, extra ->
-            Log.w(TAG, "MediaPlayer error what=$what extra=$extra")
-            finish()
-            true
-        }
-        continuation.invokeOnCancellation { releasePlayer(player) }
-        try {
-            player.setDataSource(file.absolutePath)
-            player.prepare()
-            player.start()
-        } catch (error: Exception) {
-            Log.w(TAG, "MediaPlayer start failed", error)
-            finish()
         }
     }
 
-    private fun releasePlayer(player: MediaPlayer) {
-        try {
-            player.setOnCompletionListener(null)
-            player.setOnErrorListener(null)
-            if (player.isPlaying) player.stop()
-            player.reset()
-            player.release()
-        } catch (_: Exception) {
+    private fun releasePlayer(player: ExoPlayer) {
+        val release = {
+            try {
+                player.release()
+            } catch (_: Exception) {
+            }
+            if (exoPlayer === player) exoPlayer = null
         }
-        if (mediaPlayer === player) mediaPlayer = null
+        if (Looper.myLooper() == Looper.getMainLooper()) release() else mainHandler.post(release)
     }
 
+    /** @return false when this device's engine cannot speak the text. */
     private suspend fun speakWithSystemTts(
         word: String,
         accent: Accent,
         speechRate: Float = DEFAULT_SPEECH_RATE,
-    ) {
+    ): Boolean {
         val engine = tts
         if (engine == null || !ttsReady) {
             Log.w(TAG, "System TTS not ready")
-            return
+            return false
         }
         if (!applyAccent(engine, accent)) {
             Log.w(TAG, "No English TTS voice installed")
-            return
+            return false
         }
         engine.setSpeechRate(speechRate)
-        val maxWaitMs = (word.length * 420L + 1_800L).coerceIn(1_800L, 8_000L)
-        // Some OEM engines (Xiaomi) fire onDone too early, never, or only onStop.
-        withTimeoutOrNull(maxWaitMs) {
-            suspendCancellableCoroutine { continuation ->
-                val utteranceId = UUID.randomUUID().toString()
-                val finished = AtomicBoolean(false)
-                val finish = {
-                    if (finished.compareAndSet(false, true) && continuation.isActive) {
-                        continuation.resume(Unit)
-                    }
-                }
-                engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(id: String?) = Unit
-                    override fun onDone(id: String?) {
-                        if (id == utteranceId) finish()
-                    }
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(id: String?) {
-                        if (id == utteranceId) finish()
-                    }
-                    override fun onError(id: String?, errorCode: Int) {
-                        if (id == utteranceId) finish()
-                    }
-                    override fun onStop(id: String?, interrupted: Boolean) {
-                        if (id == utteranceId) finish()
-                    }
-                })
-                continuation.invokeOnCancellation { engine.stop() }
-                val spoken = engine.speak(word, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
-                if (spoken == TextToSpeech.ERROR) finish()
+        val startedAt = SystemClock.elapsedRealtime()
+        val started = AtomicBoolean(false)
+        val ended = AtomicBoolean(false)
+        val skipped = AtomicBoolean(false)
+        val utteranceId = UUID.randomUUID().toString()
+        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(id: String?) {
+                if (id == utteranceId) started.set(true)
             }
+
+            override fun onDone(id: String?) {
+                if (id != utteranceId) return
+                // Xiaomi reports done immediately and never speaks longer English.
+                if (word.length > 12 && SystemClock.elapsedRealtime() - startedAt < 120) {
+                    skipped.set(true)
+                }
+                ended.set(true)
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun onError(id: String?) {
+                if (id == utteranceId) ended.set(true)
+            }
+
+            override fun onError(id: String?, errorCode: Int) {
+                if (id == utteranceId) ended.set(true)
+            }
+
+            override fun onStop(id: String?, interrupted: Boolean) {
+                if (id == utteranceId) ended.set(true)
+            }
+        })
+        val spoken = engine.speak(word, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        if (spoken == TextToSpeech.ERROR) {
+            engine.setSpeechRate(DEFAULT_SPEECH_RATE)
+            return false
         }
-        // Wait out engines that report done before audio actually finishes.
-        var spins = 0
-        while (engine.isSpeaking && spins++ < 80) {
+        // Do not stop the engine on a timer: OEM engines often never fire onDone,
+        // and cancelling the wait used to cut the sentence off.
+        val generation = stopGeneration.get()
+        val deadline = startedAt + (word.length * 90L + 1_500L).coerceIn(2_500L, 30_000L)
+        while (!ended.get() && SystemClock.elapsedRealtime() < deadline) {
+            if (stopGeneration.get() != generation) return true
+            if (started.get() && !engine.isSpeaking) break
             delay(40)
         }
         engine.setSpeechRate(DEFAULT_SPEECH_RATE)
+        return !skipped.get()
+    }
+
+    private fun notifyVoiceUnavailable() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastVoiceNoticeAt < 4_000) return
+        lastVoiceNoticeAt = now
+        mainHandler.post {
+            Toast.makeText(
+                app,
+                "这台手机没有英文语音，请在系统设置中安装英文语音包",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
     }
 
     private fun applyAccent(engine: TextToSpeech, accent: Accent): Boolean {
@@ -324,10 +407,15 @@ class TtsPlayer(context: Context) {
             }
     }
 
+    private data class VoiceSource(val name: String, val url: String)
+
+    private enum class OnlinePlay { Played, Failed, Stopped }
+
     private companion object {
         const val TAG = "HotWordsTts"
         const val DEFAULT_SPEECH_RATE = 0.9f
         const val SLOW_SPEECH_RATE = 0.55f
+        const val SLOW_PLAYBACK_SPEED = 0.55f
         const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/122.0.0.0 Mobile Safari/537.36"
     }
