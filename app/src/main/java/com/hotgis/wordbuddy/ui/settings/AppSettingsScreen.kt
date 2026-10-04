@@ -533,31 +533,32 @@ private fun DefaultNotebookPicker(
     onSelect: (Long) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.sdp()),
-        ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 Icons.Filled.MenuBook,
                 contentDescription = null,
-                tint = Stellar.Cyan,
+                tint = Stellar.OnSurfaceVariant.copy(alpha = 0.65f),
                 modifier = Modifier.size(22.sdp()),
             )
-            Text(
-                text = "默认收藏生词本",
-                color = Stellar.OnSurface,
-                fontSize = 18.ssp(),
-                fontWeight = FontWeight.SemiBold,
-            )
+            Spacer(Modifier.width(12.sdp()))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "默认收藏生词本",
+                    color = Stellar.OnSurface,
+                    fontSize = 15.ssp(),
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(2.sdp()))
+                Text(
+                    text = "首页查词点星星时，词条会保存到所选生词本",
+                    color = Stellar.OnSurfaceVariant.copy(alpha = 0.85f),
+                    fontSize = 13.ssp(),
+                )
+            }
         }
-        Spacer(Modifier.height(6.sdp()))
-        Text(
-            text = "首页查词点星星时，词条会保存到所选生词本",
-            color = Stellar.OnSurfaceVariant,
-            fontSize = 13.ssp(),
-        )
-        Spacer(Modifier.height(14.sdp()))
+        Spacer(Modifier.height(12.sdp()))
         FlowRow(
+            modifier = Modifier.padding(start = 34.sdp()),
             horizontalArrangement = Arrangement.spacedBy(8.sdp()),
             verticalArrangement = Arrangement.spacedBy(8.sdp()),
         ) {
@@ -674,7 +675,6 @@ private fun PreferencesCard(
         )
         if (notebooks.isNotEmpty()) {
             PreferenceDivider()
-            Spacer(Modifier.height(18.sdp()))
             DefaultNotebookPicker(
                 notebooks = notebooks,
                 selectedId = selectedNotebookId,

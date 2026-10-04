@@ -1,8 +1,8 @@
 {
-  "versionCode": 146,
-  "versionName": "1.55",
+  "versionCode": 148,
+  "versionName": "1.57",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "补签积分按连续天数单独计算。",
-  "releasedAt": "2026-10-03T12:35:00.000Z"
+  "notes": "默认收藏生词本移到偏好设置最后一项。",
+  "releasedAt": "2026-10-04T02:35:00.000Z"
 }
