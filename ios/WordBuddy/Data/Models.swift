@@ -345,7 +345,20 @@ struct WordHomophone: Identifiable, Equatable {
     var likeCount: Int
     var likedByMe: Bool
     var isMine: Bool
-    var likerLabel: String?
+    /// Nicknames of recent likers. Only filled for the signed-in author's own tips.
+    var likerNames: [String] = []
+
+    /// A few nicknames, then "..." when more people liked this tip.
+    var likerSummary: String {
+        guard isMine, likeCount > 0 else { return "" }
+        let names = likerNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let shown = Array(names.prefix(3))
+        if shown.isEmpty { return "收到 \(likeCount) 人赞" }
+        let more = likeCount > shown.count
+        return shown.joined(separator: "、") + (more ? "..." : "") + " 赞了你"
+    }
 }
 
 struct HomophoneLiker: Identifiable, Equatable {

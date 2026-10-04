@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -15,6 +16,8 @@ struct CardModeView: View {
     @State private var hydrateTask: Task<Void, Never>?
     /// Word to keep visible while the list window catches up after leaving shuffle.
     @State private var pinnedWordId: Int64?
+    /// Word to keep on screen after prepending the previous page.
+    @State private var earlierAnchor: Int64?
     @State private var playing = false
     @State private var playTask: Task<Void, Never>?
     @State private var phonicsTask: Task<Void, Never>?
@@ -26,7 +29,11 @@ struct CardModeView: View {
     @State private var liveSeekTarget: Int?
     @State private var liveSeekTask: Task<Void, Never>?
     @State private var editingEntry: VocabEntry?
+    @State private var cardTips: [WordHomophone] = []
+    @State private var cardNotes: [Definition] = []
+    @State private var aidsWordKey = ""
     @State private var imageEntry: VocabEntry?
+    @State private var imageError: String?
     @State private var imageBusyId: Int64?
     @State private var previewWord: String?
 
@@ -48,19 +55,30 @@ struct CardModeView: View {
                     .foregroundStyle(Theme.onSurfaceVariant)
                 Spacer()
             } else {
-                ScrollView(.horizontal) {
-                    LazyHStack(spacing: 0) {
-                        ForEach(deck) { entry in
-                            card(entry)
-                                .containerRelativeFrame(.horizontal)
-                                .id(entry.id)
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal) {
+                        LazyHStack(spacing: 0) {
+                            ForEach(deck) { entry in
+                                card(entry)
+                                    .containerRelativeFrame(.horizontal)
+                                    .id(entry.id)
+                            }
+                        }
+                        .scrollTargetLayout()
+                    }
+                    .scrollTargetBehavior(.paging)
+                    .scrollPosition(id: $currentId)
+                    .scrollIndicators(.hidden)
+                    .onChange(of: earlierAnchor) { _, anchor in
+                        guard let anchor else { return }
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            proxy.scrollTo(anchor, anchor: .leading)
+                            currentId = anchor
                         }
                     }
-                    .scrollTargetLayout()
                 }
-                .scrollTargetBehavior(.paging)
-                .scrollPosition(id: $currentId)
-                .scrollIndicators(.hidden)
             }
             controlBar
         }
@@ -69,9 +87,16 @@ struct CardModeView: View {
             let index = min(max(0, startIndex), max(0, entries.count - 1))
             currentId = entries.isEmpty ? nil : entries[index].id
             syncSeekValue()
+            if let id = currentId, let entry = entries.first(where: { $0.id == id }) {
+                Task { await loadCardAids(entry) }
+            }
+            prefetchEarlierCards()
         }
         .onChange(of: currentId) { _, id in
             syncSeekValue()
+            if let id, let entry = deck.first(where: { $0.id == id }) {
+                Task { await loadCardAids(entry) }
+            }
             guard !seeking else { return }
             guard let id, let entry = deck.first(where: { $0.id == id }) else { return }
             if model.speakOnPageChange || playing {
@@ -82,6 +107,7 @@ struct CardModeView: View {
             } else if let index = deck.firstIndex(where: { $0.id == id }), index >= deck.count - 2 {
                 Task { await model.loadMoreWords() }
             }
+            prefetchEarlierCards()
             if playing { scheduleAdvance() }
         }
         .onChange(of: entries.map(\.id)) { _, ids in
@@ -99,17 +125,36 @@ struct CardModeView: View {
         .onDisappear { stopPlay() }
         .overlay {
             if let entry = editingEntry {
-                MeaningEditSheet(entry: entry, onClose: { editingEntry = nil })
+                MeaningEditSheet(entry: entry, onClose: { editingEntry = nil }) { updated in
+                    aidsWordKey = updated.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    cardNotes = updated.definitions.filter(\.isUserAdded)
+                    Task { await loadCardAids(updated) }
+                }
             }
         }
-        .confirmationDialog("助记配图", isPresented: imageDialogPresented, titleVisibility: .visible) {
-            Button("生成助记配图（\(model.aiImagePointsCost) 积分）") {
-                guard let entry = imageEntry else { return }
-                Task { await generateImage(for: entry) }
+        .overlay {
+            if let entry = imageEntry {
+                MnemonicImageSheet(
+                    entry: entry,
+                    busy: imageBusyId == entry.id,
+                    error: imageError,
+                    onClose: {
+                        guard imageBusyId == nil else { return }
+                        imageEntry = nil
+                        imageError = nil
+                    },
+                    onGenerate: { meaning in
+                        Task { await generateImage(for: entry, meaning: meaning) }
+                    },
+                    onPickPhoto: { data in
+                        MnemonicImageStore.save(word: entry.text, data: data)
+                        model.mnemonicRevision += 1
+                        imageEntry = nil
+                        imageError = nil
+                    }
+                )
+                .id(entry.id)
             }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text(imageEntry?.text ?? "")
         }
         .overlay {
             if let previewWord {
@@ -118,10 +163,6 @@ struct CardModeView: View {
                 }
             }
         }
-    }
-
-    private var imageDialogPresented: Binding<Bool> {
-        Binding(get: { imageEntry != nil }, set: { if !$0 { imageEntry = nil } })
     }
 
     private var notebookTitle: String {
@@ -177,7 +218,10 @@ struct CardModeView: View {
                             let word = entry.text
                             phonicsTask = Task { await Speech.speakPhonics(parts: parts, word: word, accent: model.accent) }
                         },
-                        onImage: { imageEntry = entry }
+                        onImage: {
+                            imageError = nil
+                            imageEntry = entry
+                        }
                     )
                     definitionCard(entry)
                     relatedBlock(entry)
@@ -193,27 +237,33 @@ struct CardModeView: View {
     }
 
     private func definitionCard(_ entry: VocabEntry) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if entry.definitions.isEmpty {
+        let key = entry.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let showingAids = aidsWordKey == key
+        let originals = entry.definitions.filter { !$0.isUserAdded }
+        let localNotes = entry.definitions.filter(\.isUserAdded)
+        let notes = showingAids && !cardNotes.isEmpty ? cardNotes : localNotes
+        let tips = showingAids ? cardTips : []
+        return VStack(alignment: .leading, spacing: 0) {
+            if originals.isEmpty && notes.isEmpty && tips.isEmpty {
                 Text("暂无释义")
                     .font(.body)
                     .foregroundStyle(Theme.onSurfaceVariant)
             } else {
-                let originals = entry.definitions.filter { !$0.isUserAdded }
-                let notes = entry.definitions.filter(\.isUserAdded)
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(Array(originals.enumerated()), id: \.offset) { _, definition in
-                        DefinitionLine(definition: definition)
+                if !originals.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(Array(originals.enumerated()), id: \.offset) { _, definition in
+                            DefinitionLine(definition: definition)
+                        }
                     }
                 }
                 if !notes.isEmpty {
                     if !originals.isEmpty {
                         ThemeHairline().padding(.vertical, 14)
-                        Text("我的补充")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(Theme.onSurfaceVariant)
-                            .padding(.bottom, 10)
                     }
+                    Text("我的补充")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Theme.onSurfaceVariant)
+                        .padding(.bottom, 10)
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(Array(notes.enumerated()), id: \.offset) { _, definition in
                             DefinitionLine(definition: definition)
@@ -221,9 +271,50 @@ struct CardModeView: View {
                     }
                 }
             }
+            if !tips.isEmpty {
+                ThemeHairline(color: Theme.gold).padding(.top, 14)
+                Text("谐音助记")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Theme.gold)
+                    .padding(.top, 10)
+                    .padding(.bottom, 10)
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(tips.prefix(3)) { tip in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .center, spacing: 8) {
+                                Text(tip.body)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Theme.onSurface)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Button {
+                                    Task { await toggleCardLike(tip) }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: tip.likedByMe ? "hand.thumbsup.fill" : "hand.thumbsup")
+                                            .font(.system(size: 12))
+                                        Text("\(tip.likeCount)")
+                                            .font(.system(size: 12, weight: .semibold))
+                                    }
+                                    .foregroundStyle(tip.likedByMe ? Theme.gold : Theme.onSurfaceVariant)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            if !tip.likerSummary.isEmpty {
+                                Text(tip.likerSummary)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Theme.gold.opacity(0.9))
+                            }
+                        }
+                    }
+                }
+            }
             ThemeHairline().padding(.top, 14)
             Button {
-                editingEntry = entry
+                var copy = entry
+                if showingAids {
+                    copy.definitions = originals + notes
+                }
+                editingEntry = copy
             } label: {
                 HStack(spacing: 4) {
                     Spacer()
@@ -240,6 +331,34 @@ struct CardModeView: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassPanel()
+    }
+
+    private func loadCardAids(_ entry: VocabEntry) async {
+        let key = entry.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !key.isEmpty else { return }
+        if aidsWordKey != key {
+            cardTips = []
+            cardNotes = []
+            aidsWordKey = key
+        }
+        let tips = (try? await model.api.fetchHomophones(token: model.session?.token, word: entry.text)) ?? []
+        var notes: [Definition] = []
+        if let token = model.session?.token {
+            notes = (try? await model.api.fetchWordNotes(token: token, word: entry.text)) ?? []
+        }
+        guard aidsWordKey == key else { return }
+        cardTips = tips
+        cardNotes = notes
+    }
+
+    private func toggleCardLike(_ tip: WordHomophone) async {
+        guard let token = model.session?.token else {
+            model.showLogin = true
+            return
+        }
+        guard let updated = try? await model.api.toggleHomophoneLike(token: token, id: tip.id),
+              let index = cardTips.firstIndex(where: { $0.id == tip.id }) else { return }
+        cardTips[index] = updated
     }
 
     @ViewBuilder
@@ -452,10 +571,30 @@ struct CardModeView: View {
         if delta < 0, model.listWindowStart > 0 {
             let target = max(0, model.listWindowStart - 1)
             await model.jumpToAbsoluteIndex(target)
-            self.currentId = model.words.last?.id
+            let local = target - model.listWindowStart
+            if model.words.indices.contains(local) {
+                self.currentId = model.words[local].id
+            } else {
+                self.currentId = model.words.first?.id
+            }
             return
         }
         if delta > 0 { stopPlay() }
+    }
+
+    /// The number on the card is the place in the whole book. The pager only holds the loaded window, so a word at the front of that window has no previous page until the earlier words are prepended.
+    private func prefetchEarlierCards() {
+        guard !shuffled, earlierAnchor == nil, model.listWindowStart > 0 else { return }
+        guard let currentId, let index = deck.firstIndex(where: { $0.id == currentId }), index < 3 else { return }
+        let keep = currentId
+        Task { @MainActor in
+            let result = await model.loadEarlierWords()
+            guard case .prepended(_, let token) = result else { return }
+            defer { model.finishEarlierLoad(token: token) }
+            earlierAnchor = keep
+            await Task.yield()
+            earlierAnchor = nil
+        }
     }
 
     private func clampedSeekIndex(_ value: Double) -> Int {
@@ -655,13 +794,172 @@ struct CardModeView: View {
         }
     }
 
-    private func generateImage(for entry: VocabEntry) async {
+    private func generateImage(for entry: VocabEntry, meaning: String) async {
+        imageError = nil
         imageBusyId = entry.id
         defer { imageBusyId = nil }
-        _ = await model.generateMnemonicImage(
+        let message = await model.generateMnemonicImage(
             word: entry.text,
-            meaningHint: entry.definitions.first?.meaning ?? ""
+            meaningHint: meaning,
+            announceFailure: false
         )
+        if let message {
+            imageError = message
+        } else {
+            imageEntry = nil
+        }
+    }
+}
+
+private struct MnemonicImageSheet: View {
+    var entry: VocabEntry
+    var busy: Bool
+    var error: String?
+    var onClose: () -> Void
+    var onGenerate: (String) -> Void
+    var onPickPhoto: (Data) -> Void
+
+    @State private var selectedIndex = 0
+    @State private var showPicker = false
+    @State private var photoItem: PhotosPickerItem?
+
+    private var definitions: [Definition] {
+        entry.definitions.filter { !$0.meaning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+                .onTapGesture { if !busy { onClose() } }
+            VStack(alignment: .leading, spacing: 0) {
+                Text("记忆图")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(Theme.cyanSoft)
+                Text("可以从相册选图，或用 AI 生成。AI 生图前请选择要表达的词义。")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.85))
+                    .padding(.top, 8)
+                if !definitions.isEmpty {
+                    Text(definitions.count > 1 ? "选择词义" : "词义")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Theme.onSurface)
+                        .padding(.top, 20)
+                    ScrollView {
+                        VStack(spacing: 8) {
+                            ForEach(Array(definitions.enumerated()), id: \.offset) { index, definition in
+                                meaningOption(definition.label, selected: index == selectedIndex) {
+                                    selectedIndex = index
+                                }
+                            }
+                        }
+                        .padding(.top, 12)
+                    }
+                    .frame(maxHeight: 280)
+                }
+                if busy {
+                    HStack(spacing: 10) {
+                        ProgressView().tint(Theme.cyan)
+                        Text("AI 生图中…")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Theme.onSurface)
+                    }
+                    .padding(.top, 16)
+                }
+                if let error, !error.isEmpty, !busy {
+                    Text(error)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.pink)
+                        .padding(.top, 10)
+                }
+                HStack(spacing: 10) {
+                    Button {
+                        showPicker = true
+                    } label: {
+                        Text("相册选图")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(Theme.cyanSoft)
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                            .background(Theme.cyan.opacity(0.08), in: Capsule())
+                            .overlay { Capsule().stroke(Theme.cyan.opacity(0.55), lineWidth: 1.5) }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(busy)
+                    Button {
+                        let index = min(max(0, selectedIndex), max(0, definitions.count - 1))
+                        let meaning = definitions.isEmpty ? "" : definitions[index].label
+                        onGenerate(meaning)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "sparkles")
+                            Text("AI 生图")
+                        }
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Theme.onPrimary)
+                        .frame(maxWidth: .infinity, minHeight: 46)
+                        .background(Theme.cyanSoft, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(busy || definitions.isEmpty)
+                }
+                .padding(.top, 20)
+            }
+            .padding(22)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.surfaceContainer.opacity(0.98), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(Theme.cyan.opacity(0.35), lineWidth: 1)
+            }
+            .padding(.horizontal, 20)
+        }
+        .photosPicker(isPresented: $showPicker, selection: $photoItem, matching: .images)
+        .onChange(of: photoItem) { _, item in
+            guard let item else { return }
+            Task { await loadPhoto(item) }
+        }
+    }
+
+    private func meaningOption(_ label: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .stroke(selected ? Theme.cyan : Theme.onSurfaceVariant, lineWidth: 2)
+                        .frame(width: 22, height: 22)
+                    if selected {
+                        Circle()
+                            .fill(Theme.cyan)
+                            .frame(width: 10, height: 10)
+                    }
+                }
+                .padding(.top, 2)
+                Text(label)
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.onSurface)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .background(
+                (selected ? Theme.cyan.opacity(0.12) : Theme.surfaceHigh.opacity(0.85)),
+                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(selected ? Theme.cyan : Theme.outline.opacity(0.55), lineWidth: 1.5)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+    }
+
+    private func loadPhoto(_ item: PhotosPickerItem) async {
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let image = UIImage(data: data),
+              let jpeg = image.jpegData(compressionQuality: 0.85) else { return }
+        onPickPhoto(jpeg)
     }
 }
 
@@ -1059,51 +1357,27 @@ private struct CardExamplePanel: View {
     var word: String
     var examples: [ExampleSentence]
     var accent: Accent
-    @State private var page = 0
-    @State private var dragX: CGFloat = 0
-    @State private var pageWidth: CGFloat = 1
-    @State private var settling = false
-    @State private var dragAnimated = false
+    @State private var page: Int? = 0
 
     var body: some View {
         let example = examples[safePage]
         VStack(spacing: CardMetrics.sdp(16)) {
-            VStack(spacing: CardMetrics.sdp(16)) {
-                Text("例句")
-                    .font(.system(size: CardMetrics.sdp(11), weight: .bold))
-                    .tracking(1.2)
-                    .foregroundStyle(Theme.onSurfaceVariant)
-                sentencePager
-                if examples.count > 1 {
-                    HStack(spacing: CardMetrics.sdp(6)) {
-                        ForEach(examples.indices, id: \.self) { index in
-                            Circle()
-                                .fill(index == safePage ? Theme.cyan : Theme.outline)
-                                .frame(
-                                    width: CardMetrics.sdp(index == safePage ? 7 : 6),
-                                    height: CardMetrics.sdp(index == safePage ? 7 : 6)
-                                )
-                        }
+            Text("例句")
+                .font(.system(size: CardMetrics.sdp(11), weight: .bold))
+                .tracking(1.2)
+                .foregroundStyle(Theme.onSurfaceVariant)
+            sentencePager
+            if examples.count > 1 {
+                HStack(spacing: CardMetrics.sdp(6)) {
+                    ForEach(examples.indices, id: \.self) { index in
+                        Circle()
+                            .fill(index == safePage ? Theme.cyan : Theme.outline)
+                            .frame(
+                                width: CardMetrics.sdp(index == safePage ? 7 : 6),
+                                height: CardMetrics.sdp(index == safePage ? 7 : 6)
+                            )
                     }
                 }
-            }
-            .frame(maxWidth: .infinity)
-            .overlay {
-                ExampleSwipeCatcher(
-                    enabled: examples.count > 1 && !settling,
-                    onMove: { translation in
-                        guard !settling else { return }
-                        dragAnimated = false
-                        var transaction = Transaction()
-                        transaction.disablesAnimations = true
-                        withTransaction(transaction) {
-                            dragX = resisted(translation)
-                        }
-                    },
-                    onFinish: { translation, velocity in
-                        settle(translation: translation, velocity: velocity)
-                    }
-                )
             }
             HStack(spacing: CardMetrics.sdp(16)) {
                 exampleButton {
@@ -1129,33 +1403,23 @@ private struct CardExamplePanel: View {
         .onChange(of: word) { _, _ in page = 0 }
     }
 
+    /// Nested paging scroll view: it owns horizontal drags, so the word pager stays
+    /// put until the sentence has fully settled, the same as Android's inner pager.
     private var sentencePager: some View {
-        sentenceBlock(examples[safePage])
-            .opacity(0)
-            .overlay {
-                GeometryReader { geo in
-                    let width = max(geo.size.width, 1)
-                    let hasPrevious = safePage > 0
-                    HStack(alignment: .top, spacing: 0) {
-                        if hasPrevious {
-                            sentenceBlock(examples[safePage - 1]).frame(width: width)
-                        }
-                        sentenceBlock(examples[safePage]).frame(width: width)
-                        if safePage + 1 < examples.count {
-                            sentenceBlock(examples[safePage + 1]).frame(width: width)
-                        }
-                    }
-                    .offset(x: (hasPrevious ? -width : 0) + dragX)
-                    .animation(dragAnimated ? .easeOut(duration: 0.32) : nil, value: dragX)
+        ScrollView(.horizontal) {
+            LazyHStack(spacing: 0) {
+                ForEach(Array(examples.enumerated()), id: \.offset) { index, example in
+                    sentenceBlock(example)
+                        .containerRelativeFrame(.horizontal)
+                        .id(index)
                 }
             }
-            .clipped()
-            .background {
-                GeometryReader { geo in
-                    Color.clear.preference(key: ExampleWidthKey.self, value: geo.size.width)
-                }
-            }
-            .onPreferenceChange(ExampleWidthKey.self) { pageWidth = $0 }
+            .scrollTargetLayout()
+        }
+        .scrollTargetBehavior(.paging)
+        .scrollPosition(id: $page)
+        .scrollIndicators(.hidden)
+        .scrollDisabled(examples.count < 2)
     }
 
     private func sentenceBlock(_ example: ExampleSentence) -> some View {
@@ -1171,51 +1435,8 @@ private struct CardExamplePanel: View {
         }
     }
 
-    private func resisted(_ translation: CGFloat) -> CGFloat {
-        let atStart = safePage == 0 && translation > 0
-        let atEnd = safePage >= examples.count - 1 && translation < 0
-        if atStart || atEnd { return translation * 0.28 }
-        return translation
-    }
-
-    private func settle(translation: CGFloat, velocity: CGFloat) {
-        guard !settling else { return }
-        let width = max(pageWidth, 1)
-        let forward = safePage + 1 < examples.count && (translation < -width * 0.22 || velocity < -700)
-        let backward = safePage > 0 && (translation > width * 0.22 || velocity > 700)
-        if forward {
-            finishSettle(to: -width) { page += 1 }
-        } else if backward {
-            finishSettle(to: width) { page -= 1 }
-        } else {
-            finishSettle(to: 0, commit: {})
-        }
-    }
-
-    /// Continues from the finger's release point until the outgoing sentence is fully offscreen.
-    private func finishSettle(to target: CGFloat, commit: @escaping () -> Void) {
-        settling = true
-        dragAnimated = true
-        DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.32)) {
-                dragX = target
-            }
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 340_000_000)
-                dragAnimated = false
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) {
-                    commit()
-                    dragX = 0
-                    settling = false
-                }
-            }
-        }
-    }
-
     private var safePage: Int {
-        min(max(0, page), max(0, examples.count - 1))
+        min(max(0, page ?? 0), max(0, examples.count - 1))
     }
 
     private func exampleButton<Label: View>(action: @escaping () -> Void, @ViewBuilder label: () -> Label) -> some View {
@@ -1259,144 +1480,6 @@ private struct CardExamplePanel: View {
             result.append(part)
         }
         return result
-    }
-}
-
-/// Transparent hit target over the example card. Horizontal drags change the example
-/// and are required to fail before the word pager's scroll view can move.
-private struct ExampleWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 1
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-private struct ExampleSwipeCatcher: UIViewRepresentable {
-    var enabled: Bool
-    var onMove: (CGFloat) -> Void
-    var onFinish: (CGFloat, CGFloat) -> Void
-
-    func makeUIView(context: Context) -> ExampleSwipeSurface {
-        let view = ExampleSwipeSurface()
-        view.onMove = onMove
-        view.onFinish = onFinish
-        view.swipeEnabled = enabled
-        return view
-    }
-
-    func updateUIView(_ uiView: ExampleSwipeSurface, context: Context) {
-        uiView.onMove = onMove
-        uiView.onFinish = onFinish
-        uiView.swipeEnabled = enabled
-    }
-}
-
-private final class ExampleSwipeSurface: UIView, UIGestureRecognizerDelegate {
-    var onMove: ((CGFloat) -> Void)?
-    var onFinish: ((CGFloat, CGFloat) -> Void)?
-    var swipeEnabled = true
-    private let pan = UIPanGestureRecognizer()
-    private var locked: [UIScrollView] = []
-    private var axisDecided = false
-    private var horizontal = false
-    private var linkedScrolls = Set<ObjectIdentifier>()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        backgroundColor = .clear
-        isUserInteractionEnabled = true
-        pan.addTarget(self, action: #selector(handlePan(_:)))
-        pan.delegate = self
-        pan.cancelsTouchesInView = false
-        addGestureRecognizer(pan)
-    }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        linkAncestorScrollViews()
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        linkAncestorScrollViews()
-    }
-
-    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        swipeEnabled
-    }
-
-    @objc private func handlePan(_ pan: UIPanGestureRecognizer) {
-        let translation = pan.translation(in: self)
-        switch pan.state {
-        case .began:
-            axisDecided = false
-            horizontal = false
-        case .changed:
-            if !axisDecided {
-                if abs(translation.x) < 10, abs(translation.y) < 10 { return }
-                axisDecided = true
-                horizontal = abs(translation.x) > abs(translation.y)
-                if horizontal {
-                    lockAncestorScrollViews()
-                } else {
-                    pan.isEnabled = false
-                    pan.isEnabled = true
-                    return
-                }
-            }
-            if horizontal {
-                onMove?(translation.x)
-            }
-        case .ended:
-            if horizontal {
-                onFinish?(translation.x, pan.velocity(in: self).x)
-            }
-            unlockAncestorScrollViews()
-        case .cancelled, .failed:
-            if horizontal {
-                onFinish?(0, 0)
-            }
-            unlockAncestorScrollViews()
-        default:
-            break
-        }
-    }
-
-    /// Outer word pager must wait until this pan fails, so a sideways drag stays on the example.
-    private func linkAncestorScrollViews() {
-        var current: UIView? = superview
-        while let view = current {
-            if let scroll = view as? UIScrollView {
-                let key = ObjectIdentifier(scroll)
-                if !linkedScrolls.contains(key) {
-                    scroll.panGestureRecognizer.require(toFail: pan)
-                    linkedScrolls.insert(key)
-                }
-            }
-            current = view.superview
-        }
-    }
-
-    private func lockAncestorScrollViews() {
-        var current: UIView? = superview
-        while let view = current {
-            if let scroll = view as? UIScrollView, scroll.isScrollEnabled {
-                scroll.isScrollEnabled = false
-                locked.append(scroll)
-            }
-            current = view.superview
-        }
-    }
-
-    private func unlockAncestorScrollViews() {
-        for scroll in locked {
-            scroll.isScrollEnabled = true
-        }
-        locked.removeAll()
     }
 }
 
@@ -1530,23 +1613,31 @@ struct MeaningEditSheet: View {
                             if !tips.isEmpty {
                                 VStack(alignment: .leading, spacing: 10) {
                                     ForEach(tips.prefix(3)) { tip in
-                                        HStack(alignment: .center, spacing: 8) {
-                                            Text(tip.body)
-                                                .font(.system(size: 14))
-                                                .foregroundStyle(Theme.onSurface)
-                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                            Button {
-                                                Task { await toggleLike(tip) }
-                                            } label: {
-                                                HStack(spacing: 4) {
-                                                    Image(systemName: "hand.thumbsup")
-                                                        .font(.system(size: 12))
-                                                    Text("\(tip.likeCount)")
-                                                        .font(.system(size: 12, weight: .semibold))
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            HStack(alignment: .center, spacing: 8) {
+                                                Text(tip.body)
+                                                    .font(.system(size: 14))
+                                                    .foregroundStyle(Theme.onSurface)
+                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                                Button {
+                                                    Task { await toggleLike(tip) }
+                                                } label: {
+                                                    HStack(spacing: 4) {
+                                                        Image(systemName: "hand.thumbsup")
+                                                            .font(.system(size: 12))
+                                                        Text("\(tip.likeCount)")
+                                                            .font(.system(size: 12, weight: .semibold))
+                                                    }
+                                                    .foregroundStyle(tip.likedByMe ? Theme.gold : Theme.onSurfaceVariant)
                                                 }
-                                                .foregroundStyle(tip.likedByMe ? Theme.gold : Theme.onSurfaceVariant)
+                                                .buttonStyle(.plain)
                                             }
-                                            .buttonStyle(.plain)
+                                            if !tip.likerSummary.isEmpty {
+                                                Text(tip.likerSummary)
+                                                    .font(.system(size: 12))
+                                                    .foregroundStyle(Theme.gold.opacity(0.9))
+                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                            }
                                         }
                                     }
                                 }
@@ -1664,21 +1755,51 @@ struct MeaningEditSheet: View {
         }
     }
 
+    /// Personal-notebook words can store private notes. Catalog and unsaved lookup words cannot.
+    private var canSyncDefinitions: Bool {
+        guard entry.id > 0 else { return false }
+        if let notebook = model.notebooks.first(where: { $0.id == entry.notebookId }) {
+            return !notebook.isSystem
+        }
+        return entry.notebookId == 0 && model.favoritedByText.values.contains(entry.id)
+    }
+
     private func save() async {
         commitNote()
         saving = true
         defer { saving = false }
         let merged = originals + notes.map { Definition(pos: $0.pos, meaning: $0.meaning, isUserAdded: true) }
-        if entry.id > 0 {
-            let ok = await model.updateDefinitions(id: entry.id, definitions: merged)
-            guard ok else { return }
-        }
         let tip = homophoneText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if canSyncDefinitions {
+            let ok = await model.updateDefinitions(id: entry.id, definitions: merged, silent: !tip.isEmpty || !notes.isEmpty)
+            if !ok, tip.isEmpty, notes.isEmpty { return }
+        }
+        let userNotes = notes.map { Definition(pos: $0.pos, meaning: $0.meaning, isUserAdded: true) }
+        if let token = model.session?.token {
+            do {
+                try await model.api.saveWordNotes(token: token, word: entry.text, definitions: userNotes)
+            } catch {
+                if !model.noteSessionError(error) {
+                    model.banner = error.localizedDescription
+                }
+                if tip.isEmpty { return }
+            }
+        } else if !userNotes.isEmpty || !tip.isEmpty {
+            model.showLogin = true
+            return
+        }
         if !tip.isEmpty {
-            if let token = model.session?.token {
-                _ = try? await model.api.submitHomophone(token: token, word: entry.text, body: tip)
-            } else {
+            guard let token = model.session?.token else {
                 model.showLogin = true
+                return
+            }
+            do {
+                _ = try await model.api.submitHomophone(token: token, word: entry.text, body: tip)
+            } catch {
+                if !model.noteSessionError(error) {
+                    model.banner = error.localizedDescription
+                }
+                return
             }
         }
         var updated = entry

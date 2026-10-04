@@ -120,6 +120,7 @@ fun AppSettingsScreen(
     onOpenAccountDeletion: () -> Unit = {},
     notebooks: List<Notebook> = emptyList(),
     onSelectDefaultNotebook: (Long) -> Unit = {},
+    onDailyReminderChange: ((Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier,
     title: String = "设置",
 ) {
@@ -282,7 +283,10 @@ fun AppSettingsScreen(
                     podcastPlayWhenScreenOff = settings.podcastPlayWhenScreenOff,
                     shortsMetaVisibleDefault = settings.shortsMetaVisibleDefault,
                     onAutoPronounce = { enabled -> onChange { it.copy(speakOnPageChange = enabled) } },
-                    onDailyReminder = { enabled -> onChange { it.copy(dailyReminder = enabled) } },
+                    onDailyReminder = { enabled ->
+                        val handler = onDailyReminderChange
+                        if (handler != null) handler(enabled) else onChange { it.copy(dailyReminder = enabled) }
+                    },
                     onAiImageAutoGen = { enabled -> onChange { it.copy(aiImageAutoGen = enabled) } },
                     onImageProvider = { provider -> onChange { it.copy(imageProvider = provider) } },
                     onPodcastPlayWhenScreenOff = { enabled ->
@@ -641,7 +645,7 @@ private fun PreferencesCard(
         PreferenceToggle(
             icon = Icons.Filled.Notifications,
             title = "每日提醒",
-            subtitle = "提醒你坚持背单词",
+            subtitle = "每天 20:00 提醒你坚持背单词",
             checked = dailyReminder,
             accentOnHover = Stellar.Cyan,
             onChecked = onDailyReminder,

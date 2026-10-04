@@ -2,6 +2,7 @@ import { query } from './db.js'
 import { adjustPoints, aiImagePointsCost, getPointsBalance } from './points.js'
 
 const inflight = new Map()
+const IMAGE_BUDGET_MS = 18_000
 
 function fail(status, message) {
   const error = new Error(message)
@@ -31,6 +32,11 @@ function siliconFlowBase() {
   return String(process.env.SILICONFLOW_API_BASE || 'https://api.siliconflow.com/v1').replace(/\/$/, '')
 }
 
+function siliconFlowImageModel() {
+  // FLUX.1-schnell stays listed but its generations call no longer returns.
+  return String(process.env.SILICONFLOW_IMAGE_MODEL || 'Tongyi-MAI/Z-Image-Turbo').trim()
+}
+
 function siliconFlowKey() {
   const apiKey = String(process.env.SILICONFLOW_API_KEY || '').trim()
   if (!apiKey) throw fail(503, '服务器未配置硅基流动密钥')
@@ -45,7 +51,11 @@ function mnemonicPrompt(word, scene) {
   return `simple cute educational mnemonic illustration for English word "${String(word).trim()}", clean white background, no text, no letters, no watermark, everyday life scene`
 }
 
-async function englishScene(word, meaningHint) {
+function timedOut(error, signal) {
+  return Boolean(signal?.aborted) || error?.name === 'TimeoutError' || error?.name === 'AbortError'
+}
+
+async function englishScene(word, meaningHint, signal) {
   const hint = String(meaningHint || '').trim().slice(0, 80)
   if (!hint) return ''
   if (!hasChinese(hint)) return hint
@@ -73,7 +83,7 @@ async function englishScene(word, meaningHint) {
         },
       ],
     }),
-    signal: AbortSignal.timeout(30_000),
+    signal,
   })
   const text = await response.text()
   if (!response.ok) throw fail(502, '没能把词义译成英文画面')
@@ -96,11 +106,21 @@ function isImage(bytes) {
   return head.startsWith('RIFF') && head.includes('WEBP')
 }
 
+function friendlyImageFailure(raw, status) {
+  const text = String(raw || '').replace(/\s+/g, ' ').trim()
+  if (/429|rate limit|rpm exceeded|too many requests|繁忙/i.test(text) || status === 429) {
+    return '生图服务正忙，请稍后再试'
+  }
+  if (!text || text === '{}' || text.startsWith('{') || text.startsWith('<') || text.length > 48) {
+    return '生图失败，请稍后再试'
+  }
+  return text
+}
+
 async function readImageResponse(response) {
   const bytes = Buffer.from(await response.arrayBuffer())
   if (!response.ok) {
-    const message = bytes.toString('utf8').slice(0, 180)
-    throw fail(502, message || `生图失败（${response.status}）`)
+    throw fail(502, friendlyImageFailure(bytes.toString('utf8').slice(0, 400), response.status))
   }
   if (!isImage(bytes) || bytes.length > 2_000_000) {
     throw fail(502, '生图结果不是可用图片')
@@ -108,19 +128,19 @@ async function readImageResponse(response) {
   return bytes
 }
 
-async function fetchPollinations(prompt) {
+async function fetchPollinations(prompt, signal) {
   const seed = Math.floor(Math.random() * 999_999) + 1
   const url =
     `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}` +
     `?width=768&height=768&nologo=true&seed=${seed}`
   const response = await fetch(url, {
     headers: { Accept: 'image/*,*/*', 'User-Agent': 'HotWords/1.0' },
-    signal: AbortSignal.timeout(90_000),
+    signal,
   })
   return readImageResponse(response)
 }
 
-async function fetchSiliconFlow(prompt) {
+async function fetchSiliconFlow(prompt, signal) {
   const apiKey = siliconFlowKey()
   const base = siliconFlowBase()
   const response = await fetch(`${base}/images/generations`, {
@@ -131,11 +151,11 @@ async function fetchSiliconFlow(prompt) {
       Accept: 'application/json',
     },
     body: JSON.stringify({
-      model: 'black-forest-labs/FLUX.1-schnell',
+      model: siliconFlowImageModel(),
       prompt,
       image_size: '1024x1024',
     }),
-    signal: AbortSignal.timeout(90_000),
+    signal,
   })
   const text = await response.text()
   if (!response.ok) {
@@ -148,7 +168,7 @@ async function fetchSiliconFlow(prompt) {
     if (response.status === 401 || response.status === 403) {
       throw fail(502, '硅基流动密钥无效')
     }
-    throw fail(502, message || `硅基流动生图失败（${response.status}）`)
+    throw fail(502, friendlyImageFailure(message || text, response.status))
   }
   let imageUrl = ''
   try {
@@ -159,9 +179,40 @@ async function fetchSiliconFlow(prompt) {
   if (!imageUrl.startsWith('http')) throw fail(502, '硅基流动没有返回图片')
   const image = await fetch(imageUrl, {
     headers: { Accept: 'image/*,*/*', 'User-Agent': 'HotWords/1.0' },
-    signal: AbortSignal.timeout(60_000),
+    signal,
   })
   return readImageResponse(image)
+}
+
+function pollinationsPrompt(word, meaningHint) {
+  const scene = String(meaningHint || '').trim()
+  return `simple cute educational mnemonic illustration for English word "${String(word).trim()}"${scene ? `, specifically meaning: ${scene}` : ''}, clean white background, no text, no letters, no watermark, everyday life scene`
+}
+
+function providerReady(provider) {
+  if (provider === 'siliconflow') return Boolean(String(process.env.SILICONFLOW_API_KEY || '').trim())
+  return true
+}
+
+/** Try the chosen provider, then the other one, within one short budget. */
+async function renderMnemonic(provider, word, meaningHint) {
+  const signal = AbortSignal.timeout(IMAGE_BUDGET_MS)
+  const order = [provider, provider === 'siliconflow' ? 'pollinations' : 'siliconflow'].filter(providerReady)
+  let lastError = null
+  for (const current of order) {
+    if (signal.aborted) throw fail(504, '生图超时，请稍后再试')
+    try {
+      if (current === 'siliconflow') {
+        const scene = await englishScene(word, meaningHint, signal)
+        return await fetchSiliconFlow(mnemonicPrompt(word, scene), signal)
+      }
+      return await fetchPollinations(pollinationsPrompt(word, meaningHint), signal)
+    } catch (error) {
+      if (timedOut(error, signal)) throw fail(504, '生图超时，请稍后再试')
+      lastError = error
+    }
+  }
+  throw lastError || fail(502, '生图失败，请稍后再试')
 }
 
 async function loadCached(key, provider, sense) {
@@ -191,9 +242,23 @@ async function createMnemonicImage({ word, meaningHint, provider, userId = null 
   }
 
   const cost = aiImagePointsCost()
-  let balanceAfter = null
+  if (cost > 0 && !userId) throw fail(401, '请先登录后再生成配图')
   if (cost > 0) {
-    if (!userId) throw fail(401, '请先登录后再生成配图')
+    const balance = await getPointsBalance(userId)
+    if (balance < cost) {
+      const err = fail(402, `积分不足，还差 ${cost - balance} 分`)
+      err.code = 'INSUFFICIENT_POINTS'
+      err.need = cost
+      err.balance = balance
+      err.pointsCost = cost
+      throw err
+    }
+  }
+
+  const bytes = await renderMnemonic(provider, word, meaningHint)
+
+  let balanceAfter = userId ? await getPointsBalance(userId) : null
+  if (cost > 0) {
     const debited = await adjustPoints({
       userId,
       delta: -cost,
@@ -212,40 +277,21 @@ async function createMnemonicImage({ word, meaningHint, provider, userId = null 
     balanceAfter = debited.balance
   }
 
-  try {
-    const scene = provider === 'siliconflow' ? await englishScene(word, meaningHint) : String(meaningHint || '').trim()
-    const prompt = provider === 'siliconflow'
-      ? mnemonicPrompt(word, scene)
-      : `simple cute educational mnemonic illustration for English word "${String(word).trim()}"${scene ? `, specifically meaning: ${scene}` : ''}, clean white background, no text, no letters, no watermark, everyday life scene`
-    const bytes = provider === 'siliconflow'
-      ? await fetchSiliconFlow(prompt)
-      : await fetchPollinations(prompt)
-    await query(
-      `INSERT INTO mnemonic_images (word_key, provider, meaning_key, image, prompt)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (word_key, provider, meaning_key) DO NOTHING`,
-      [key, provider, sense, bytes, prompt],
-    )
-    const stored = await loadCached(key, provider, sense)
-    return {
-      bytes: stored || bytes,
-      provider,
-      cached: false,
-      pointsSpent: cost,
-      pointsCost: cost,
-      balance: balanceAfter,
-    }
-  } catch (error) {
-    if (cost > 0 && userId) {
-      await adjustPoints({
-        userId,
-        delta: cost,
-        reason: 'ai_image_refund',
-        refType: 'mnemonic',
-        refId: `${provider}:${key}`,
-      }).catch(() => {})
-    }
-    throw error
+  const prompt = `${provider}:${key}:${sense}`.slice(0, 500)
+  await query(
+    `INSERT INTO mnemonic_images (word_key, provider, meaning_key, image, prompt)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (word_key, provider, meaning_key) DO NOTHING`,
+    [key, provider, sense, bytes, prompt],
+  ).catch(() => {})
+  const stored = await loadCached(key, provider, sense)
+  return {
+    bytes: stored || bytes,
+    provider,
+    cached: false,
+    pointsSpent: cost,
+    pointsCost: cost,
+    balance: balanceAfter,
   }
 }
 

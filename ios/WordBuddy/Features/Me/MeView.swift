@@ -1863,16 +1863,48 @@ enum BiometricAuth {
     }
 
     static func authenticate(reason: String) async -> Bool {
+        await authenticateAttempt(reason: reason) == .success
+    }
+
+    static func authenticateAttempt(reason: String) async -> BiometricAttempt {
         let context = LAContext()
+        context.localizedFallbackTitle = ""
         guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) else {
-            return false
+            return .failed
         }
-        return (try? await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)) ?? false
+        do {
+            let ok = try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
+            return ok ? .success : .failed
+        } catch let error as LAError {
+            switch error.code {
+            case .userCancel, .appCancel, .systemCancel:
+                return .cancelled
+            case .biometryLockout:
+                return .lockout
+            default:
+                return .failed
+            }
+        } catch {
+            return .failed
+        }
     }
 }
 
+enum BiometricAttempt {
+    case success
+    case failed
+    case cancelled
+    case lockout
+}
+
 struct BiometricLockCover: View {
-    var onUnlock: () -> Void
+    @EnvironmentObject private var model: AppModel
+    @State private var failures = 0
+    @State private var busy = false
+    @State private var askPassword = false
+    @State private var password = ""
+    @State private var passwordError: String?
+    @State private var unlocking = false
 
     var body: some View {
         VStack(spacing: 18) {
@@ -1882,15 +1914,139 @@ struct BiometricLockCover: View {
             Text("验证\(BiometricAuth.methodName)后继续使用")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(Theme.onSurface)
-            Button("验证", action: onUnlock)
+            Button("验证") {
+                Task { await attempt() }
+            }
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(Theme.onPrimary)
                 .padding(.horizontal, 28)
                 .padding(.vertical, 10)
                 .background(Theme.cyan, in: Capsule())
+                .disabled(busy || unlocking)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .stellarScreenBackground()
-        .onAppear(perform: onUnlock)
+        .onAppear {
+            Task { await attempt() }
+        }
+        .overlay {
+            if askPassword {
+                passwordUnlock
+            }
+        }
+    }
+
+    private var passwordUnlock: some View {
+        ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 14) {
+                Text("密码解锁")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(Theme.cyanSoft)
+                Text(passwordError ?? "\(BiometricAuth.methodName)已错误 3 次，请输入登录密码")
+                    .font(.system(size: 14))
+                    .foregroundStyle(passwordError == nil ? Theme.onSurfaceVariant : Theme.pink)
+                if let account = accountLabel {
+                    Text("当前账号")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.onSurfaceVariant)
+                    Text(account)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Theme.cyanSoft)
+                }
+                SecureField("登录密码", text: $password)
+                    .textContentType(.password)
+                    .padding(12)
+                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
+                HStack {
+                    Button("取消") {
+                        askPassword = false
+                        password = ""
+                        passwordError = nil
+                        failures = 0
+                    }
+                    .foregroundStyle(Theme.onSurfaceVariant)
+                    Spacer()
+                    Button(unlocking ? "验证中…" : "解锁") {
+                        Task { await submitPassword() }
+                    }
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Theme.onPrimary)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 8)
+                    .background(Theme.cyan, in: Capsule())
+                    .disabled(unlocking)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 320)
+            .background(Theme.surfaceHigh, in: RoundedRectangle(cornerRadius: 18))
+            .padding(.horizontal, 28)
+        }
+    }
+
+    private var accountLabel: String? {
+        guard let session = model.session else { return nil }
+        let phone = session.phone.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = session.displayNickname
+        if !phone.isEmpty, name != "词搭子" {
+            return "\(name)\n\(phone)"
+        }
+        if !phone.isEmpty { return phone }
+        return name
+    }
+
+    private func attempt() async {
+        guard !busy, !askPassword, !model.biometricUnlocked else { return }
+        busy = true
+        defer { busy = false }
+        while !askPassword && !model.biometricUnlocked {
+            switch await BiometricAuth.authenticateAttempt(reason: "验证\(BiometricAuth.methodName)后继续使用词搭子") {
+            case .success:
+                model.biometricUnlocked = true
+                failures = 0
+                return
+            case .cancelled:
+                return
+            case .failed:
+                failures += 1
+                if failures >= 3 {
+                    password = ""
+                    passwordError = nil
+                    askPassword = true
+                    return
+                }
+            case .lockout:
+                failures = 3
+                password = ""
+                passwordError = "\(BiometricAuth.methodName)已暂时锁定，请输入登录密码"
+                askPassword = true
+                return
+            }
+        }
+    }
+
+    private func submitPassword() async {
+        let phone = model.session?.phone.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard phone.count == 11 else {
+            passwordError = "请退出后重新登录，再用密码解锁"
+            return
+        }
+        guard password.count >= 6 else {
+            passwordError = "密码至少 6 位"
+            return
+        }
+        unlocking = true
+        defer { unlocking = false }
+        do {
+            let result = try await model.loginWithPassword(phone: phone, password: password)
+            guard let session = result.session else {
+                passwordError = "密码不正确"
+                return
+            }
+            await model.enter(session)
+        } catch {
+            passwordError = error.localizedDescription
+        }
     }
 }

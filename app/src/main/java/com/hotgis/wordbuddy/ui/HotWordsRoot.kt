@@ -1,8 +1,13 @@
 package com.hotgis.wordbuddy.ui
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -50,6 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
@@ -58,7 +64,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.hotgis.wordbuddy.ads.DrawFeedController
 import com.hotgis.wordbuddy.auth.BiometricAuth
+import com.hotgis.wordbuddy.reminder.StudyReminder
 import com.hotgis.wordbuddy.data.Accent
+import com.hotgis.wordbuddy.data.Definition
 import com.hotgis.wordbuddy.data.AppTheme
 import com.hotgis.wordbuddy.data.Notebook
 import com.hotgis.wordbuddy.data.VocabEntry
@@ -140,8 +148,30 @@ fun HotWordsRoot(
     var pendingExit by remember { mutableStateOf(false) }
     var biometricUnlocked by remember { mutableStateOf(false) }
     var biometricError by remember { mutableStateOf<String?>(null) }
+    var askPasswordUnlock by remember { mutableStateOf(false) }
+    var unlockPassword by remember { mutableStateOf("") }
+    var passwordUnlockBusy by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val activity = context as? FragmentActivity
+    val reminderPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            viewModel.updateSettings { it.copy(dailyReminder = true) }
+            StudyReminder.sync(context, enabled = true)
+        } else {
+            viewModel.updateSettings { it.copy(dailyReminder = false) }
+            StudyReminder.sync(context, enabled = false)
+            Toast.makeText(context, "请在系统设置中允许通知，才能收到每日提醒", Toast.LENGTH_LONG).show()
+        }
+    }
+    fun notificationsAllowed(): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return true
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val words by viewModel.filteredWords.collectAsStateWithLifecycle()
     val notebooks by viewModel.notebooks.collectAsStateWithLifecycle()
@@ -160,6 +190,7 @@ fun HotWordsRoot(
     val pendingListScrollEntryId by viewModel.pendingListScrollEntryId.collectAsStateWithLifecycle()
     val favoriteRevision by viewModel.favoriteRevision.collectAsStateWithLifecycle()
     val homophones by viewModel.homophones.collectAsStateWithLifecycle()
+    val userNotes by viewModel.userNotes.collectAsStateWithLifecycle()
     val activeNotebookName = viewModel.activeNotebook()?.name ?: Notebook.DEFAULT_NAME
     val activeWordCount = maxOf(viewModel.activeNotebook()?.wordCount ?: 0, words.size)
     val needsBiometricUnlock =
@@ -197,10 +228,42 @@ fun HotWordsRoot(
             onSuccess = {
                 biometricUnlocked = true
                 biometricError = null
+                askPasswordUnlock = false
+                unlockPassword = ""
             },
             onError = { message -> biometricError = message },
             onCancel = {},
+            onPasswordFallback = {
+                biometricError = null
+                unlockPassword = ""
+                askPasswordUnlock = true
+            },
         )
+    }
+
+    fun submitPasswordUnlock() {
+        val phone = session?.phone?.trim().orEmpty()
+        if (phone.length != 11) {
+            biometricError = "请退出后重新登录，再用密码解锁"
+            return
+        }
+        if (unlockPassword.length < 6) {
+            biometricError = "密码至少 6 位"
+            return
+        }
+        passwordUnlockBusy = true
+        biometricError = null
+        viewModel.unlockWithPassword(phone, unlockPassword) { ok, message ->
+            passwordUnlockBusy = false
+            if (ok) {
+                biometricUnlocked = true
+                biometricError = null
+                askPasswordUnlock = false
+                unlockPassword = ""
+            } else {
+                biometricError = message ?: "密码不正确"
+            }
+        }
     }
 
     fun setBiometricLoginEnabled(enabled: Boolean) {
@@ -233,6 +296,28 @@ fun HotWordsRoot(
         )
     }
 
+    fun setDailyReminder(enabled: Boolean) {
+        if (!enabled) {
+            viewModel.updateSettings { it.copy(dailyReminder = false) }
+            StudyReminder.sync(context, enabled = false)
+            return
+        }
+        if (!notificationsAllowed()) {
+            reminderPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        viewModel.updateSettings { it.copy(dailyReminder = true) }
+        StudyReminder.sync(context, enabled = true)
+    }
+
+    var askedDailyReminder by remember { mutableStateOf(false) }
+    LaunchedEffect(ui.settings.dailyReminder) {
+        if (!ui.settings.dailyReminder || notificationsAllowed()) return@LaunchedEffect
+        if (askedDailyReminder) return@LaunchedEffect
+        askedDailyReminder = true
+        reminderPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     LaunchedEffect(session) {
         if (session != null) {
             val cameFromLogin = showLogin
@@ -251,6 +336,8 @@ fun HotWordsRoot(
         } else {
             biometricUnlocked = false
             biometricError = null
+            askPasswordUnlock = false
+            unlockPassword = ""
             showAccountProfile = false
             showAccountDeletion = false
             showAppSettings = false
@@ -609,13 +696,40 @@ fun HotWordsRoot(
             if (needsBiometricUnlock) {
                 BiometricUnlockScreen(
                     modifier = Modifier.fillMaxSize(),
-                    phoneHint = session?.phone,
+                    phoneHint = session?.phone?.trim()?.takeIf { it.isNotEmpty() },
+                    accountLabel = session?.let { current ->
+                        val phone = current.phone.trim()
+                        val name = current.displayNickname
+                        when {
+                            phone.isNotEmpty() && name.isNotBlank() && name != "词搭子" -> "$name\n$phone"
+                            phone.isNotEmpty() -> phone
+                            name.isNotBlank() -> name
+                            else -> null
+                        }
+                    },
                     error = biometricError,
-                    onUnlock = ::promptBiometricUnlock,
+                    onUnlock = {
+                        askPasswordUnlock = false
+                        unlockPassword = ""
+                        biometricError = null
+                        promptBiometricUnlock()
+                    },
                     onLogout = {
                         biometricUnlocked = false
                         biometricError = null
+                        askPasswordUnlock = false
+                        unlockPassword = ""
                         viewModel.logout()
+                    },
+                    askPassword = askPasswordUnlock,
+                    password = unlockPassword,
+                    onPasswordChange = { unlockPassword = it },
+                    passwordBusy = passwordUnlockBusy,
+                    onSubmitPassword = ::submitPasswordUnlock,
+                    onDismissPassword = {
+                        askPasswordUnlock = false
+                        unlockPassword = ""
+                        biometricError = null
                     },
                 )
                 return@HotWordsTheme
@@ -733,7 +847,10 @@ fun HotWordsRoot(
                         onClearImageError = viewModel::clearImageError,
                         onUpdateDefinitions = viewModel::updateDefinitions,
                         homophones = homophones,
+                        userNotes = userNotes,
                         onLoadHomophones = viewModel::loadHomophones,
+                        onLoadUserNotes = viewModel::loadUserNotes,
+                        onSaveUserNotes = viewModel::saveUserNotes,
                         onSubmitHomophone = viewModel::submitHomophone,
                         onToggleHomophoneLike = viewModel::toggleHomophoneLike,
                         onLoadHomophoneLikers = { id, offset ->
@@ -1010,6 +1127,7 @@ fun HotWordsRoot(
                     onOpenAccountDeletion = { showAccountDeletion = true },
                     notebooks = notebooks,
                     onSelectDefaultNotebook = viewModel::setDefaultNotebook,
+                    onDailyReminderChange = ::setDailyReminder,
                     onLogout = {
                         showAppSettings = false
                         viewModel.logout()
@@ -1031,6 +1149,7 @@ fun HotWordsRoot(
                         ui = ui,
                         words = words,
                         homophones = homophones,
+                        userNotes = userNotes,
                         activeNotebookName = activeNotebookName,
                         onBack = {
                             viewModel.prepareReturnToList()
@@ -1055,6 +1174,7 @@ fun HotWordsRoot(
                         onOpenAccountDeletion = { showAccountDeletion = true },
                         notebooks = notebooks,
                         onSelectDefaultNotebook = viewModel::setDefaultNotebook,
+                        onDailyReminderChange = ::setDailyReminder,
                         onLogout = {
                             overlay = Overlay.None
                             viewModel.logout()
@@ -1111,7 +1231,10 @@ fun HotWordsRoot(
                             onClearImageError = viewModel::clearImageError,
                             onUpdateDefinitions = viewModel::updateDefinitions,
                             homophones = homophones,
+                            userNotes = userNotes,
                             onLoadHomophones = viewModel::loadHomophones,
+                            onLoadUserNotes = viewModel::loadUserNotes,
+                            onSaveUserNotes = viewModel::saveUserNotes,
                             onSubmitHomophone = viewModel::submitHomophone,
                             onToggleHomophoneLike = viewModel::toggleHomophoneLike,
                             onLoadHomophoneLikers = { id, offset ->
@@ -1311,6 +1434,7 @@ fun HotWordsRoot(
                                                 ui = ui,
                                                 words = words,
                                                 homophones = homophones,
+                                                userNotes = userNotes,
                                                 activeNotebookName = activeNotebookName,
                                                 onBack = { viewModel.prepareReturnToList() },
                                                 onOpenBuyPoints = { openBuyPoints() },
@@ -1451,6 +1575,7 @@ private fun HotWordsStudyCard(
     ui: VocabUiState,
     words: List<VocabEntry>,
     homophones: List<WordHomophone>,
+    userNotes: List<Definition>,
     activeNotebookName: String,
     onBack: () -> Unit,
     onOpenBuyPoints: () -> Unit = {},
@@ -1502,7 +1627,10 @@ private fun HotWordsStudyCard(
         onToggleRelatedStar = viewModel::toggleSaveRelatedWord,
         isRelatedWordSaved = viewModel::isWordSaved,
         homophones = homophones,
+        userNotes = userNotes,
         onLoadHomophones = viewModel::loadHomophones,
+        onLoadUserNotes = viewModel::loadUserNotes,
+        onSaveUserNotes = viewModel::saveUserNotes,
         onSubmitHomophone = viewModel::submitHomophone,
         onToggleHomophoneLike = viewModel::toggleHomophoneLike,
         onLoadHomophoneLikers = { id, offset -> viewModel.loadHomophoneLikers(id, offset) },

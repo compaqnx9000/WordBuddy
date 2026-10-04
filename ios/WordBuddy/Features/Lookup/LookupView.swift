@@ -14,6 +14,8 @@ struct LookupView: View {
     @State private var mnemonicImage: UIImage?
     @State private var imageBusy = false
     @State private var tips: [WordHomophone] = []
+    @State private var syncedNotes: [Definition] = []
+    @State private var notesWordKey = ""
 
     var body: some View {
         NavigationStack {
@@ -61,6 +63,8 @@ struct LookupView: View {
                             current.definitions = updated.definitions
                             entry = current
                         }
+                        notesWordKey = updated.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        syncedNotes = updated.definitions.filter(\.isUserAdded)
                         Task { await loadTips(item.text) }
                     }
                 }
@@ -211,10 +215,12 @@ struct LookupView: View {
     }
 
     private func definitionCard(_ entry: VocabEntry) -> some View {
+        let key = entry.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let originals = entry.definitions.filter { !$0.isUserAdded }
-        let notes = entry.definitions.filter(\.isUserAdded)
+        let remote = notesWordKey == key ? syncedNotes : []
+        let notes = remote.isEmpty ? entry.definitions.filter(\.isUserAdded) : remote
         return VStack(alignment: .leading, spacing: 0) {
-            if entry.definitions.isEmpty {
+            if originals.isEmpty && notes.isEmpty {
                 Text("暂无释义")
                     .font(.system(size: 16))
                     .foregroundStyle(Theme.onSurfaceVariant)
@@ -244,10 +250,17 @@ struct LookupView: View {
                     .foregroundStyle(Theme.gold)
                     .padding(.bottom, 8)
                 ForEach(tips.prefix(3)) { tip in
-                    Text(tip.body)
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.onSurface)
-                        .padding(.bottom, 6)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(tip.body)
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.onSurface)
+                        if !tip.likerSummary.isEmpty {
+                            Text(tip.likerSummary)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.gold.opacity(0.9))
+                        }
+                    }
+                    .padding(.bottom, 6)
                 }
             }
             ThemeHairline().padding(.top, 14)
@@ -442,6 +455,10 @@ struct LookupView: View {
         if let id = model.favoritedByText[key], id > 0 {
             copy.id = id
         }
+        if notesWordKey == key, !syncedNotes.isEmpty {
+            let originals = copy.definitions.filter { !$0.isUserAdded }
+            copy.definitions = originals + syncedNotes
+        }
         editingEntry = copy
     }
 
@@ -467,6 +484,14 @@ struct LookupView: View {
     }
 
     private func loadTips(_ word: String) async {
+        let key = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         tips = (try? await model.api.fetchHomophones(token: model.session?.token, word: word)) ?? []
+        var notes: [Definition] = []
+        if let token = model.session?.token {
+            notes = (try? await model.api.fetchWordNotes(token: token, word: word)) ?? []
+        }
+        guard notesWordKey == key || notesWordKey.isEmpty || entry?.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == key else { return }
+        notesWordKey = key
+        syncedNotes = notes
     }
 }

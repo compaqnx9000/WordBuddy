@@ -1,8 +1,8 @@
 {
-  "versionCode": 148,
-  "versionName": "1.57",
+  "versionCode": 151,
+  "versionName": "1.60",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "默认收藏生词本移到偏好设置最后一项。",
-  "releasedAt": "2026-10-04T02:35:00.000Z"
+  "notes": "每天 20:00 本地提醒；密码解锁时显示当前账号。",
+  "releasedAt": "2026-10-04T07:13:00.000Z"
 }

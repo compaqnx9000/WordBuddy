@@ -6,13 +6,18 @@ enum MnemonicImageStore {
         return try? Data(contentsOf: url)
     }
 
-    static func save(word: String, data: Data) {
+    static func save(word: String, data: Data) -> Bool {
         let url = fileURL(word: word)
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
     }
 
     private static func fileURL(word: String) -> URL {

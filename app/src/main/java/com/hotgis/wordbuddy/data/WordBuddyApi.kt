@@ -1056,8 +1056,8 @@ class WordBuddyApi {
                 .put("word", word)
                 .put("meaningHint", meaningHint.orEmpty())
                 .put("provider", provider),
-            connectTimeoutMs = 20_000,
-            readTimeoutMs = 90_000,
+            connectTimeoutMs = 8_000,
+            readTimeoutMs = 20_000,
         )
         val encoded = root.optString("imageBase64")
         if (encoded.isBlank()) throw ApiException("服务器没有返回图片")
@@ -1232,6 +1232,45 @@ class WordBuddyApi {
             readTimeoutMs = 60_000,
         )
         root.optInt("deleted")
+    }
+
+    suspend fun fetchWordNotes(token: String, word: String): List<Definition> =
+        withContext(Dispatchers.IO) {
+            val encoded = java.net.URLEncoder.encode(word.trim(), StandardCharsets.UTF_8.name())
+            val root = request("GET", "/word-notes?word=$encoded", token)
+            decodeNoteDefinitions(root.optJSONArray("definitions"))
+        }
+
+    suspend fun saveWordNotes(token: String, word: String, definitions: List<Definition>) =
+        withContext(Dispatchers.IO) {
+            val notes = JSONArray()
+            definitions.filter { it.isUserAdded && it.meaning.isNotBlank() }.take(20).forEach { def ->
+                notes.put(
+                    JSONObject()
+                        .put("pos", def.pos)
+                        .put("meaning", def.meaning)
+                        .put("user", true),
+                )
+            }
+            request(
+                "PUT",
+                "/word-notes",
+                token,
+                body = JSONObject().put("word", word).put("definitions", notes),
+            )
+            Unit
+        }
+
+    private fun decodeNoteDefinitions(array: org.json.JSONArray?): List<Definition> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (i in 0 until array.length()) {
+                val obj = array.optJSONObject(i) ?: continue
+                val meaning = obj.optString("meaning").trim()
+                if (meaning.isEmpty()) continue
+                add(Definition(pos = obj.optString("pos"), meaning = meaning, isUserAdded = true))
+            }
+        }
     }
 
     suspend fun fetchHomophones(token: String?, word: String, limit: Int = 3): List<WordHomophone> =

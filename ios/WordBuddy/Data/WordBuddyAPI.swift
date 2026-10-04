@@ -1041,6 +1041,27 @@ actor WordBuddyAPI {
         return parseHomophone(item)
     }
 
+    func fetchWordNotes(token: String, word: String) async throws -> [Definition] {
+        let encoded = word.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? word
+        let root = try await request(method: "GET", path: "/word-notes?word=\(encoded)", auth: token, body: nil)
+        return parseDefinitions(root["definitions"]).map {
+            Definition(pos: $0.pos, meaning: $0.meaning, isUserAdded: true)
+        }
+    }
+
+    func saveWordNotes(token: String, word: String, definitions: [Definition]) async throws {
+        let notes: [[String: Any]] = definitions
+            .filter { $0.isUserAdded && !$0.meaning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .prefix(20)
+            .map { ["pos": $0.pos, "meaning": $0.meaning, "user": true] }
+        _ = try await request(
+            method: "PUT",
+            path: "/word-notes",
+            auth: token,
+            body: ["word": word, "definitions": notes]
+        )
+    }
+
     func toggleHomophoneLike(token: String, id: Int64) async throws -> WordHomophone {
         let root = try await request(method: "POST", path: "/homophones/\(id)/like", auth: token, body: nil)
         guard let item = root["item"] as? [String: Any] else {
@@ -1082,7 +1103,7 @@ actor WordBuddyAPI {
                 "meaningHint": meaningHint,
                 "provider": provider.rawValue,
             ],
-            long: true
+            timeout: 20
         )
         guard let encoded = JSONValue.string(root, key: "imageBase64"),
               let data = Data(base64Encoded: encoded, options: .ignoreUnknownCharacters),
@@ -1136,8 +1157,11 @@ actor WordBuddyAPI {
     }
 
     private func parseHomophone(_ object: [String: Any]) -> WordHomophone {
-        let likers = JSONValue.array(object, key: "likers")
-        let first = (likers.first as? [String: Any]).flatMap { JSONValue.string($0, key: "label") }
+        let names = JSONValue.array(object, key: "likers").compactMap { item -> String? in
+            guard let row = item as? [String: Any] else { return nil }
+            let label = JSONValue.string(row, key: "label")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return label.isEmpty ? nil : label
+        }
         return WordHomophone(
             id: JSONValue.int64(object, key: "id"),
             word: JSONValue.string(object, key: "word") ?? "",
@@ -1145,7 +1169,7 @@ actor WordBuddyAPI {
             likeCount: JSONValue.int(object, key: "likeCount"),
             likedByMe: JSONValue.bool(object, key: "likedByMe"),
             isMine: JSONValue.bool(object, key: "isMine"),
-            likerLabel: first
+            likerNames: names
         )
     }
 
@@ -1154,7 +1178,8 @@ actor WordBuddyAPI {
         path: String,
         auth: String?,
         body: [String: Any]?,
-        long: Bool = false
+        long: Bool = false,
+        timeout: TimeInterval? = nil
     ) async throws -> [String: Any] {
         var lastError: Error?
         let order = [baseURL] + bases.filter { $0 != baseURL }
@@ -1166,13 +1191,17 @@ actor WordBuddyAPI {
                     path: path,
                     auth: auth,
                     body: body,
-                    long: long
+                    long: long,
+                    timeout: timeout
                 )
                 baseURL = base
                 return json
             } catch let error as APIError {
                 throw error
             } catch {
+                if timeout != nil, let urlError = error as? URLError, urlError.code == .timedOut {
+                    throw friendlyNetworkError(error)
+                }
                 lastError = error
             }
         }
@@ -1185,13 +1214,17 @@ actor WordBuddyAPI {
         path: String,
         auth: String?,
         body: [String: Any]?,
-        long: Bool = false
+        long: Bool = false,
+        timeout: TimeInterval? = nil
     ) async throws -> [String: Any] {
         guard let url = URL(string: base + path) else {
             throw APIError(message: "请求地址无效")
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
+        if let timeout {
+            request.timeoutInterval = timeout
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         applyDeviceHeaders(&request)
         if let auth, !auth.isEmpty {

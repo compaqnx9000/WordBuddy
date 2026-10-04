@@ -369,13 +369,16 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func generateMnemonicImage(word: String, meaningHint: String) async -> Bool {
+    /// `nil` means the picture was saved. A string is the error to show in place.
+    /// The global alert is optional because presenting it dismisses the card cover.
+    @discardableResult
+    func generateMnemonicImage(word: String, meaningHint: String, announceFailure: Bool = true) async -> String? {
         guard let session else {
             showLogin = true
-            return false
+            return "请先登录"
         }
         let text = word.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return false }
+        guard !text.isEmpty else { return "请填写单词" }
         do {
             let result = try await api.generateMnemonicImage(
                 token: session.token,
@@ -383,25 +386,47 @@ final class AppModel: ObservableObject {
                 meaningHint: meaningHint,
                 provider: imageProvider
             )
-            MnemonicImageStore.save(word: text, data: result.image)
+            guard MnemonicImageStore.save(word: text, data: result.image),
+                  UIImage(data: result.image) != nil else {
+                return "图片已返回，但没有显示出来，请再试一次"
+            }
             if let balance = result.balance {
                 applyPoints(balance)
             }
             mnemonicRevision += 1
-            banner = result.pointsSpent > 0 ? "配图已生成，消耗 \(result.pointsSpent) 积分" : "配图已生成"
-            return true
+            return nil
         } catch {
-            if !noteSessionError(error) {
-                let apiError = error as? APIError
-                if apiError?.httpCode == 402 || apiError?.code == "INSUFFICIENT_POINTS" {
-                    let message = apiError?.message ?? "积分不足"
-                    banner = message.contains("购买") ? message : message + "，请先购买积分"
-                } else {
-                    banner = error.localizedDescription
-                }
+            if noteSessionError(error) { return "请先登录" }
+            let apiError = error as? APIError
+            let message: String
+            if apiError?.httpCode == 402 || apiError?.code == "INSUFFICIENT_POINTS" {
+                let raw = apiError?.message ?? "积分不足"
+                message = raw.contains("购买") ? raw : raw + "，请先购买积分"
+            } else {
+                message = friendlyImageMessage(apiError?.message ?? error.localizedDescription)
             }
-            return false
+            if announceFailure {
+                banner = message
+            }
+            return message
         }
+    }
+
+    private func friendlyImageMessage(_ raw: String) -> String {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = text.lowercased()
+        if lower.contains("timeout") || lower.contains("timed out") || text.contains("超时") {
+            return "生图超时，请稍后再试"
+        }
+        if text.isEmpty || text == "{}" || text.hasPrefix("{") || text.hasPrefix("<")
+            || lower.contains("429") || lower.contains("internal server error")
+            || lower.contains("rpm") || lower.contains("rate limit") {
+            return "生图服务正忙，请稍后再试"
+        }
+        if text.count > 48 {
+            return "生图失败，请稍后再试"
+        }
+        return text
     }
 
     func switchAccount(_ remembered: RememberedAccount) async {
@@ -1261,14 +1286,14 @@ final class AppModel: ObservableObject {
         banner = moved == 0 ? "没有可移动的单词" : "已移动 \(moved) 个单词"
     }
 
-    func updateDefinitions(id: Int64, definitions: [Definition]) async -> Bool {
+    func updateDefinitions(id: Int64, definitions: [Definition], silent: Bool = false) async -> Bool {
         guard let session else {
-            showLogin = true
+            if !silent { showLogin = true }
             return false
         }
         let cleaned = definitions.filter { !$0.meaning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard !cleaned.isEmpty else {
-            banner = "请至少保留一条释义"
+            if !silent { banner = "请至少保留一条释义" }
             return false
         }
         do {
@@ -1278,7 +1303,7 @@ final class AppModel: ObservableObject {
             }
             return true
         } catch {
-            if !noteSessionError(error) {
+            if !silent, !noteSessionError(error) {
                 banner = error.localizedDescription
             }
             return false

@@ -88,7 +88,10 @@ fun LookupScreen(
     onClearImageError: () -> Unit,
     onUpdateDefinitions: (Long, List<Definition>) -> Unit,
     homophones: List<WordHomophone> = emptyList(),
+    userNotes: List<Definition> = emptyList(),
     onLoadHomophones: (String) -> Unit = {},
+    onLoadUserNotes: (String, List<Definition>) -> Unit = { _, _ -> },
+    onSaveUserNotes: (String, List<Definition>) -> Unit = { _, _ -> },
     onSubmitHomophone: (String, String) -> Unit = { _, _ -> },
     onToggleHomophoneLike: (Long) -> Unit = {},
     onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
@@ -104,8 +107,12 @@ fun LookupScreen(
         },
     )
     val lookupWord = ui.lookupResult?.entry?.text
+    val lookupDefinitions = ui.lookupResult?.entry?.definitions.orEmpty()
     LaunchedEffect(lookupWord) {
-        lookupWord?.let(onLoadHomophones)
+        lookupWord?.let { word ->
+            onLoadHomophones(word)
+            onLoadUserNotes(word, lookupDefinitions)
+        }
     }
 
     Box(
@@ -168,6 +175,7 @@ fun LookupScreen(
                     onEditMeaning = { showMeaningDialog = true },
                     imageBusy = ui.imageBusy,
                     homophones = homophones,
+                    userNotes = userNotes,
                     onToggleHomophoneLike = onToggleHomophoneLike,
                     onLoadHomophoneLikers = onLoadHomophoneLikers,
                 )
@@ -199,19 +207,30 @@ fun LookupScreen(
     if (showMeaningDialog && lookupEntry != null) {
         EditMeaningDialog(
             word = lookupEntry.text,
-            definitions = lookupEntry.definitions,
+            definitions = mergedLookupDefinitions(lookupEntry.definitions, userNotes),
             stellar = true,
             homophones = homophones,
             onToggleHomophoneLike = onToggleHomophoneLike,
             onDismiss = { showMeaningDialog = false },
             onSave = { definitions, tip ->
                 onUpdateDefinitions(lookupEntry.id, definitions)
+                onSaveUserNotes(lookupEntry.text, definitions)
                 tip?.let { onSubmitHomophone(lookupEntry.text, it) }
                 showMeaningDialog = false
             },
             onLoadHomophoneLikers = onLoadHomophoneLikers,
         )
     }
+}
+
+private fun mergedLookupDefinitions(
+    definitions: List<Definition>,
+    syncedNotes: List<Definition>,
+): List<Definition> {
+    val originals = definitions.filter { !it.isUserAdded }
+    val remote = syncedNotes.filter { it.isUserAdded && it.meaning.isNotBlank() }
+    val notes = if (remote.isNotEmpty()) remote else definitions.filter { it.isUserAdded }
+    return originals + notes
 }
 
 @Composable
@@ -228,6 +247,7 @@ private fun LookupContent(
     onEditMeaning: () -> Unit,
     imageBusy: Boolean,
     homophones: List<WordHomophone> = emptyList(),
+    userNotes: List<Definition> = emptyList(),
     onToggleHomophoneLike: (Long) -> Unit = {},
     onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
 ) {
@@ -261,6 +281,7 @@ private fun LookupContent(
                 onOpenImageChooser = onOpenImageChooser,
                 onEditMeaning = onEditMeaning,
                 homophones = homophones,
+                userNotes = userNotes,
                 onToggleHomophoneLike = onToggleHomophoneLike,
                 onLoadHomophoneLikers = onLoadHomophoneLikers,
             )
@@ -291,6 +312,7 @@ private fun LookupResultBlock(
     onOpenImageChooser: () -> Unit,
     onEditMeaning: () -> Unit,
     homophones: List<WordHomophone> = emptyList(),
+    userNotes: List<Definition> = emptyList(),
     onToggleHomophoneLike: (Long) -> Unit = {},
     onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
 ) {
@@ -304,6 +326,7 @@ private fun LookupResultBlock(
     )
     DefinitionCard(
         definitions = entry.definitions,
+        syncedNotes = userNotes,
         onEditMeaning = onEditMeaning,
         homophones = homophones,
         onToggleHomophoneLike = onToggleHomophoneLike,
@@ -457,13 +480,18 @@ private fun AccentChip(label: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun DefinitionCard(
     definitions: List<Definition>,
+    syncedNotes: List<Definition> = emptyList(),
     onEditMeaning: () -> Unit,
     homophones: List<WordHomophone> = emptyList(),
     onToggleHomophoneLike: (Long) -> Unit = {},
     onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
 ) {
     val originals = remember(definitions) { definitions.filter { !it.isUserAdded } }
-    val userNotes = remember(definitions) { definitions.filter { it.isUserAdded } }
+    val userNotes = remember(definitions, syncedNotes) {
+        val remote = syncedNotes.filter { it.isUserAdded && it.meaning.isNotBlank() }
+        if (remote.isNotEmpty()) remote else definitions.filter { it.isUserAdded }
+    }
+    val showEmpty = originals.isEmpty() && userNotes.isEmpty()
 
     Column(
         Modifier
@@ -471,7 +499,7 @@ private fun DefinitionCard(
             .stellarGlass()
             .padding(18.sdp()),
     ) {
-        if (definitions.isEmpty()) {
+        if (showEmpty) {
             Text("暂无释义", color = Stellar.OnSurfaceVariant, fontSize = 16.ssp())
         } else {
             originals.forEachIndexed { index, def ->

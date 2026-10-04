@@ -123,23 +123,17 @@ struct HomophoneSection: View {
                 }
                 .buttonStyle(.plain)
             }
-            if tip.isMine, tip.likeCount > 0 {
+            if !tip.likerSummary.isEmpty {
                 Button {
                     likersTip = tip
                 } label: {
-                    Text(likerSummary(tip))
+                    Text(tip.likerSummary)
                         .font(.caption)
                         .foregroundStyle(Theme.gold)
                 }
                 .buttonStyle(.plain)
             }
         }
-    }
-
-    private func likerSummary(_ tip: WordHomophone) -> String {
-        if let name = tip.likerLabel, tip.likeCount == 1 { return "\(name) 赞了你" }
-        if let name = tip.likerLabel { return "\(name) 等 \(tip.likeCount) 人赞了你 · 点查看" }
-        return "收到 \(tip.likeCount) 人赞 · 点查看"
     }
 
     private func reload() async {

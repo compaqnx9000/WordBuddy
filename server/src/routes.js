@@ -2084,10 +2084,16 @@ function maskPhone(phone) {
   return '用户'
 }
 
+function likerDisplayName(row) {
+  const nick = String(row.nickname || '').trim()
+  if (nick) return nick.slice(0, 24)
+  return maskPhone(row.phone)
+}
+
 async function likersForHomophones(homophoneIds, authorUserId, perTipLimit = 3) {
   if (!authorUserId || !homophoneIds.length) return new Map()
   const rows = await query(
-    `SELECT l.homophone_id, u.id AS user_id, u.phone, u.avatar_url, l.created_at
+    `SELECT l.homophone_id, u.id AS user_id, u.phone, u.nickname, u.avatar_url, l.created_at
      FROM word_homophone_likes l
      JOIN users u ON u.id = l.user_id
      WHERE l.homophone_id = ANY($1::bigint[])
@@ -2101,13 +2107,66 @@ async function likersForHomophones(homophoneIds, authorUserId, perTipLimit = 3) 
     if (list.length >= perTipLimit) continue
     list.push({
       userId: Number(row.user_id),
-      label: maskPhone(row.phone),
+      label: likerDisplayName(row),
       avatarUrl: row.avatar_url || null,
     })
     map.set(id, list)
   }
   return map
 }
+
+function sanitizeUserNotes(raw) {
+  const list = Array.isArray(raw) ? raw : []
+  const notes = []
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue
+    const meaning = String(item.meaning ?? '').trim().slice(0, 200)
+    if (!meaning) continue
+    const pos = String(item.pos ?? '').trim().slice(0, 20)
+    notes.push({ pos, meaning, user: true })
+    if (notes.length >= 20) break
+  }
+  return notes
+}
+
+/** Private supplemental glosses for the signed-in user, shared across devices. */
+router.get('/word-notes', authRequired, async (req, res) => {
+  const wordKey = normalizeWordKey(req.query.word)
+  if (!wordKey) {
+    res.status(400).json({ error: '缺少单词' })
+    return
+  }
+  const row = (
+    await query(
+      `SELECT definitions FROM word_user_notes WHERE user_id = $1 AND word_key = $2`,
+      [req.user.id, wordKey],
+    )
+  ).rows[0]
+  const definitions = sanitizeUserNotes(row?.definitions)
+  res.json({ word: wordKey, definitions })
+})
+
+router.put('/word-notes', authRequired, async (req, res) => {
+  const wordKey = normalizeWordKey(req.body?.word)
+  if (!wordKey) {
+    res.status(400).json({ error: '缺少单词' })
+    return
+  }
+  const definitions = sanitizeUserNotes(req.body?.definitions)
+  if (!definitions.length) {
+    await query(`DELETE FROM word_user_notes WHERE user_id = $1 AND word_key = $2`, [req.user.id, wordKey])
+    res.json({ word: wordKey, definitions: [] })
+    return
+  }
+  await query(
+    `INSERT INTO word_user_notes (user_id, word_key, definitions, updated_at)
+     VALUES ($1, $2, $3::jsonb, now())
+     ON CONFLICT (user_id, word_key)
+     DO UPDATE SET definitions = EXCLUDED.definitions, updated_at = now()`,
+    [req.user.id, wordKey, JSON.stringify(definitions)],
+  )
+  res.json({ word: wordKey, definitions })
+})
 
 /** Top liked 谐音助记 for a headword (shared across all notebooks). */
 router.get('/homophones', optionalAuth, async (req, res) => {
@@ -2266,7 +2325,7 @@ router.get('/homophones/:id/likes', authRequired, async (req, res) => {
   const offset = Math.max(Number(req.query.offset) || 0, 0)
   const total = Number(row.like_count) || 0
   const likes = await query(
-    `SELECT u.id AS user_id, u.phone, u.avatar_url, l.created_at
+    `SELECT u.id AS user_id, u.phone, u.nickname, u.avatar_url, l.created_at
      FROM word_homophone_likes l
      JOIN users u ON u.id = l.user_id
      WHERE l.homophone_id = $1
@@ -2276,7 +2335,7 @@ router.get('/homophones/:id/likes', authRequired, async (req, res) => {
   )
   const items = likes.rows.map((r) => ({
     userId: Number(r.user_id),
-    label: maskPhone(r.phone),
+    label: likerDisplayName(r),
     avatarUrl: r.avatar_url || null,
   }))
   const nextOffset = offset + items.length < total ? offset + items.length : null

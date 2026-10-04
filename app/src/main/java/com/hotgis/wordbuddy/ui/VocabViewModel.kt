@@ -188,6 +188,9 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private val _homophones = MutableStateFlow<List<WordHomophone>>(emptyList())
     /** Top liked 谐音助记 for the currently focused headword. */
     val homophones: StateFlow<List<WordHomophone>> = _homophones.asStateFlow()
+    private val _userNotes = MutableStateFlow<List<Definition>>(emptyList())
+    /** Private supplemental glosses for the focused headword, shared across devices. */
+    val userNotes: StateFlow<List<Definition>> = _userNotes.asStateFlow()
     private var homophonesWordKey: String = ""
     private var pageJob: Job? = null
     private var earlierJob: Job? = null
@@ -804,10 +807,13 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 syncLookupImage(id)
             }.onFailure { error ->
                 val api = error as? com.hotgis.wordbuddy.data.ApiException
+                val raw = error.message?.takeIf { it.isNotBlank() }
                 val detail = when {
                     api?.httpCode == 402 || api?.code == "INSUFFICIENT_POINTS" ->
                         (api.message?.takeIf { it.isNotBlank() } ?: "积分不足") + "，请先购买积分"
-                    else -> error.message?.takeIf { it.isNotBlank() }
+                    raw != null && (raw.contains("超时") || raw.contains("timeout", ignoreCase = true)) ->
+                        "生图超时，请稍后再试"
+                    else -> raw
                 }
                 _ui.update {
                     it.copy(
@@ -2279,6 +2285,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         if (key.isEmpty()) {
             homophonesWordKey = ""
             _homophones.value = emptyList()
+            _userNotes.value = emptyList()
             return
         }
         homophonesWordKey = key
@@ -2289,6 +2296,48 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             if (homophonesWordKey == key) {
                 _homophones.value = tips
             }
+        }
+    }
+
+    /**
+     * Loads this account's supplemental glosses. If the server has none yet but this
+     * device already stored some (catalog words can't be patched), upload them so the
+     * other client can show the same notes.
+     */
+    fun loadUserNotes(word: String, localDefinitions: List<Definition> = emptyList()) {
+        val key = word.trim().lowercase()
+        if (key.isEmpty()) {
+            _userNotes.value = emptyList()
+            return
+        }
+        viewModelScope.launch {
+            val token = _session.value?.token ?: return@launch
+            val remote = runCatching { api.fetchWordNotes(token, word) }.getOrDefault(emptyList())
+            if (homophonesWordKey.isNotEmpty() && homophonesWordKey != key) return@launch
+            if (remote.isEmpty()) {
+                val local = localDefinitions.filter { it.isUserAdded && it.meaning.isNotBlank() }
+                if (local.isNotEmpty()) {
+                    runCatching { api.saveWordNotes(token, word, local) }
+                    if (homophonesWordKey.isEmpty() || homophonesWordKey == key) {
+                        _userNotes.value = local
+                    }
+                    return@launch
+                }
+            }
+            if (homophonesWordKey.isEmpty() || homophonesWordKey == key) {
+                _userNotes.value = remote
+            }
+        }
+    }
+
+    fun saveUserNotes(word: String, definitions: List<Definition>) {
+        val key = word.trim().lowercase()
+        if (key.isEmpty()) return
+        val notes = definitions.filter { it.isUserAdded && it.meaning.isNotBlank() }
+        _userNotes.value = notes
+        viewModelScope.launch {
+            val token = _session.value?.token ?: return@launch
+            runCatching { api.saveWordNotes(token, word, notes) }
         }
     }
 
@@ -2979,6 +3028,24 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 _login.update { it.copy(error = error.message ?: "绑定失败", loggingIn = false) }
             }
             _login.update { it.copy(loggingIn = false) }
+        }
+    }
+
+    fun unlockWithPassword(phone: String, password: String, onResult: (Boolean, String?) -> Unit) {
+        viewModelScope.launch {
+            runCatching { api.loginWithPassword(phone, password) }
+                .onSuccess { result ->
+                    val next = result.session
+                    if (next == null) {
+                        onResult(false, "密码不正确")
+                    } else {
+                        enterSession(next)
+                        onResult(true, null)
+                    }
+                }
+                .onFailure { error ->
+                    onResult(false, error.message?.takeIf { it.isNotBlank() } ?: "密码不正确")
+                }
         }
     }
 

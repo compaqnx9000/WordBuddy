@@ -16,8 +16,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Fingerprint
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,9 +42,16 @@ import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
 @Composable
 fun BiometricUnlockScreen(
     phoneHint: String?,
+    accountLabel: String? = null,
     error: String?,
     onUnlock: () -> Unit,
     onLogout: () -> Unit,
+    askPassword: Boolean = false,
+    password: String = "",
+    onPasswordChange: (String) -> Unit = {},
+    passwordBusy: Boolean = false,
+    onSubmitPassword: () -> Unit = {},
+    onDismissPassword: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -114,5 +129,63 @@ fun BiometricUnlockScreen(
                 .clickable(onClick = onLogout)
                 .padding(horizontal = 14.sdp(), vertical = 10.sdp()),
         )
+        if (askPassword) {
+            AlertDialog(
+                onDismissRequest = { if (!passwordBusy) onDismissPassword() },
+                title = { Text("密码解锁") },
+                text = {
+                    Column {
+                        Text(
+                            text = "指纹已错误 3 次，请输入登录密码",
+                            color = Stellar.OnSurfaceVariant,
+                            fontSize = 14.ssp(),
+                        )
+                        if (!accountLabel.isNullOrBlank()) {
+                            Spacer(Modifier.height(12.sdp()))
+                            Text(
+                                text = "当前账号",
+                                color = Stellar.OnSurfaceVariant,
+                                fontSize = 12.ssp(),
+                            )
+                            Spacer(Modifier.height(4.sdp()))
+                            Text(
+                                text = accountLabel,
+                                color = Stellar.CyanSoft,
+                                fontSize = 16.ssp(),
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Spacer(Modifier.height(12.sdp()))
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = onPasswordChange,
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            placeholder = { Text("登录密码") },
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Password,
+                                imeAction = ImeAction.Done,
+                            ),
+                            keyboardActions = KeyboardActions(onDone = { onSubmitPassword() }),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (!error.isNullOrBlank()) {
+                            Spacer(Modifier.height(8.sdp()))
+                            Text(text = error, color = Stellar.Pink, fontSize = 13.ssp())
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = onSubmitPassword, enabled = !passwordBusy) {
+                        Text(if (passwordBusy) "验证中…" else "解锁")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismissPassword, enabled = !passwordBusy) {
+                        Text("取消")
+                    }
+                },
+            )
+        }
     }
 }

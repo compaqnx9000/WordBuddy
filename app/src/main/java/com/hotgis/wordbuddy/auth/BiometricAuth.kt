@@ -11,6 +11,10 @@ import androidx.fragment.app.FragmentActivity
 object BiometricAuth {
     private const val AUTHENTICATORS = BIOMETRIC_STRONG or BIOMETRIC_WEAK
 
+    private class PromptHandle {
+        var prompt: BiometricPrompt? = null
+    }
+
     fun canAuthenticate(context: Context): Boolean {
         val manager = BiometricManager.from(context)
         return manager.canAuthenticate(AUTHENTICATORS) == BiometricManager.BIOMETRIC_SUCCESS
@@ -34,6 +38,7 @@ object BiometricAuth {
         onSuccess: () -> Unit,
         onError: (String) -> Unit = {},
         onCancel: () -> Unit = {},
+        onPasswordFallback: (() -> Unit)? = null,
     ) {
         val blocked = statusMessage(activity)
         if (blocked != null) {
@@ -41,15 +46,31 @@ object BiometricAuth {
             return
         }
         val executor = ContextCompat.getMainExecutor(activity)
+        val handle = PromptHandle()
+        var failures = 0
+        var handedOff = false
+        fun handOff() {
+            if (handedOff) return
+            handedOff = true
+            onPasswordFallback?.invoke()
+        }
         val prompt = BiometricPrompt(
             activity,
             executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    onSuccess()
+                    if (!handedOff) onSuccess()
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (handedOff) return
+                    if (onPasswordFallback != null &&
+                        (errorCode == BiometricPrompt.ERROR_LOCKOUT ||
+                            errorCode == BiometricPrompt.ERROR_LOCKOUT_PERMANENT)
+                    ) {
+                        handOff()
+                        return
+                    }
                     if (errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
                         errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
                         errorCode == BiometricPrompt.ERROR_CANCELED
@@ -61,10 +82,16 @@ object BiometricAuth {
                 }
 
                 override fun onAuthenticationFailed() {
-                    // Keep prompt open; system shows retry UI.
+                    if (onPasswordFallback == null || handedOff) return
+                    failures += 1
+                    if (failures >= 3) {
+                        handOff()
+                        handle.prompt?.cancelAuthentication()
+                    }
                 }
             },
         )
+        handle.prompt = prompt
         prompt.authenticate(
             BiometricPrompt.PromptInfo.Builder()
                 .setTitle(title)

@@ -93,13 +93,7 @@ struct RootView: View {
         }
         .overlay {
             if needsBiometricLock {
-                BiometricLockCover {
-                    Task {
-                        if await BiometricAuth.authenticate(reason: "验证\(BiometricAuth.methodName)后继续使用词搭子") {
-                            model.biometricUnlocked = true
-                        }
-                    }
-                }
+                BiometricLockCover()
             }
         }
         .task {

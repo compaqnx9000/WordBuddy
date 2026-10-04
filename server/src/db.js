@@ -144,6 +144,15 @@ export async function ensureSchema() {
       ON word_homophones (word_key, like_count DESC, id DESC)
   `)
   await query(`
+    CREATE TABLE IF NOT EXISTS word_user_notes (
+      user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+      word_key TEXT NOT NULL,
+      definitions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, word_key)
+    )
+  `)
+  await query(`
     CREATE TABLE IF NOT EXISTS word_homophone_likes (
       homophone_id BIGINT NOT NULL REFERENCES word_homophones (id) ON DELETE CASCADE,
       user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,

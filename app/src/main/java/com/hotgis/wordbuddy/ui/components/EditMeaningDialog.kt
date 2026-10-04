@@ -510,17 +510,14 @@ fun HomophoneTipRow(
     }
 }
 
-/** Card summary never enumerates everyone — at most one recent name + total. */
+/** A few nicknames, then "..." when more people liked this tip. */
 fun formatLikerSummary(tip: WordHomophone): String {
     val total = tip.likeCount.coerceAtLeast(0)
-    val people = formatPeopleCount(total)
-    val recent = tip.likers.firstOrNull()?.label
-    return when {
-        total <= 0 -> ""
-        recent == null -> "收到 $people 赞 · 点查看"
-        total == 1 -> "$recent 赞了你"
-        else -> "$recent 等 $people 赞了你 · 点查看"
-    }
+    if (total <= 0) return ""
+    val names = tip.likers.map { it.label.trim() }.filter { it.isNotEmpty() }.distinct().take(3)
+    if (names.isEmpty()) return "收到 ${formatPeopleCount(total)}赞"
+    val more = total > names.size
+    return names.joinToString("、") + (if (more) "..." else "") + " 赞了你"
 }
 
 fun formatCompactCount(n: Int): String = when {
