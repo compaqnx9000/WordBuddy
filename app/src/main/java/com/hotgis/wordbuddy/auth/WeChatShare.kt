@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import com.hotgis.wordbuddy.R
 import com.tencent.mm.opensdk.modelmsg.SendMessageToWX
 import com.tencent.mm.opensdk.modelmsg.WXMediaMessage
@@ -64,6 +66,7 @@ object WeChatShare {
         description: String,
         webpageUrl: String,
         scene: Int = SendMessageToWX.Req.WXSceneSession,
+        showPlayBadge: Boolean = false,
     ): Boolean {
         if (!isReady(context)) return false
         val url = webpageUrl.trim()
@@ -72,7 +75,7 @@ object WeChatShare {
         val msg = WXMediaMessage(webpage).apply {
             this.title = title.trim().ifBlank { "词搭子短视频" }.take(200)
             this.description = description.trim().take(300)
-            thumbData = thumbBytes(context)
+            thumbData = if (showPlayBadge) playBadgeThumb() else thumbBytes(context)
         }
         val req = SendMessageToWX.Req().apply {
             transaction = "wb_web_${System.currentTimeMillis()}"
@@ -104,5 +107,44 @@ object WeChatShare {
         val bmp = Bitmap.createBitmap(120, 120, Bitmap.Config.ARGB_8888)
         Canvas(bmp).drawColor(Color.parseColor("#0D2219"))
         return bmp
+    }
+
+    /** Dark square with a white play ring, matching WeChat's video-card thumb. */
+    private fun playBadgeThumb(): ByteArray {
+        val size = 150
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        canvas.drawColor(Color.parseColor("#143528"))
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 5f
+        }
+        val cx = size / 2f
+        val cy = size / 2f
+        canvas.drawCircle(cx, cy, 34f, paint)
+        paint.style = Paint.Style.FILL
+        val path = Path().apply {
+            moveTo(cx - 10f, cy - 16f)
+            lineTo(cx - 10f, cy + 16f)
+            lineTo(cx + 18f, cy)
+            close()
+        }
+        canvas.drawPath(path, paint)
+        val bytes = jpegUnder32k(bmp)
+        bmp.recycle()
+        return bytes
+    }
+
+    private fun jpegUnder32k(bitmap: Bitmap): ByteArray {
+        var quality = 85
+        var bytes: ByteArray
+        do {
+            val out = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+            bytes = out.toByteArray()
+            quality -= 15
+        } while (bytes.size > 32 * 1024 && quality >= 20)
+        return bytes
     }
 }

@@ -750,11 +750,13 @@ class WordBuddyApi {
         channel: String,
         account: String,
         realName: String? = null,
+        amountFen: Int? = null,
     ): WithdrawResult = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("channel", channel)
             .put("account", account)
         if (!realName.isNullOrBlank()) body.put("realName", realName)
+        if (amountFen != null && amountFen > 0) body.put("amountFen", amountFen)
         val root = request("POST", "/me/withdrawals", auth = token, body = body)
         WithdrawResult(
             message = root.optString("message").ifBlank { "提现成功" },
@@ -779,6 +781,22 @@ class WordBuddyApi {
                 )
             }
         }
+        val tiersArr = obj.optJSONArray("tiers") ?: JSONArray()
+        val tiers = buildList {
+            for (i in 0 until tiersArr.length()) {
+                val tier = tiersArr.optJSONObject(i) ?: continue
+                val fen = tier.optInt("amountFen")
+                if (fen <= 0) continue
+                add(
+                    WithdrawTier(
+                        amountFen = fen,
+                        amountYuan = tier.optString("amountYuan").ifBlank { "%.2f".format(fen / 100.0) },
+                        pointsCost = tier.optInt("pointsCost", 1).coerceAtLeast(1),
+                        label = tier.optString("label").ifBlank { "¥${tier.optString("amountYuan")}" },
+                    ),
+                )
+            }
+        }
         return WithdrawConfig(
             sandbox = obj.optBoolean("sandbox", true),
             amountFen = obj.optInt("amountFen", 1),
@@ -787,6 +805,7 @@ class WordBuddyApi {
             alipayReady = obj.optBoolean("alipayReady", true),
             wechatReady = obj.optBoolean("wechatReady", true),
             channels = channels,
+            tiers = tiers,
             note = obj.optString("note"),
         )
     }

@@ -10,6 +10,7 @@ import { ensureGiftSeed } from './gifts.js'
 import { purgeDueDeletions } from './deletion.js'
 import { adminRouter } from './admin.js'
 import { router } from './routes.js'
+import { renderWatchPage } from './watchPage.js'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: path.resolve(root, '../.env') })
@@ -85,6 +86,17 @@ app.use('/admin/api', adminRouter)
 app.use('/admin', express.static(path.resolve(root, '../public/admin')))
 app.get('/admin', (_req, res) => {
   res.sendFile(path.resolve(root, '../public/admin/index.html'))
+})
+// Shared short video: plays the mp4 and keeps the download link and invite code on the page.
+app.get('/watch', (req, res) => {
+  res.set('Cache-Control', 'no-store')
+  res.type('html').send(
+    renderWatchPage({
+      videoUrl: req.query.v,
+      inviteCode: req.query.code,
+      title: req.query.title,
+    }),
+  )
 })
 // Invite landing: /i/{buddyId}
 app.get('/i/:code', (req, res) => {

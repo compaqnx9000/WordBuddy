@@ -254,6 +254,7 @@ struct ShortsView: View {
 }
 
 private struct ShortPage: View {
+    @EnvironmentObject private var model: AppModel
     var clip: ShortClip
     var engaged: Bool
     var fullscreen: Bool
@@ -390,10 +391,24 @@ private struct ShortPage: View {
                 tint: clip.favorited ? Theme.gold : .white,
                 action: onToggleFavorite
             )
-            ShareLink(item: clip.shareText) {
-                ShortActionLabel(systemImage: "square.and.arrow.up", title: "分享", tint: .white)
+            if let code = model.session?.buddyId?.trimmingCharacters(in: .whitespacesAndNewlines), !code.isEmpty {
+                ShareLink(item: clip.shareText(inviteCode: code)) {
+                    ShortActionLabel(systemImage: "square.and.arrow.up", title: "分享", tint: .white)
+                }
+                .buttonStyle(.plain)
+            } else {
+                ShortActionButton(
+                    systemImage: "square.and.arrow.up",
+                    title: "分享",
+                    action: {
+                        if model.session == nil {
+                            model.showLogin = true
+                        } else {
+                            model.banner = "请等待搭子号分配"
+                        }
+                    }
+                )
             }
-            .buttonStyle(.plain)
             ShortActionButton(
                 systemImage: metaVisible ? "eye.slash" : "eye",
                 title: metaVisible ? "藏文案" : "文案",

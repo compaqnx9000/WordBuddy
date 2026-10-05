@@ -1,5 +1,6 @@
 package com.hotgis.wordbuddy.ui.gifts
 
+import android.app.Activity
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -56,6 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.hotgis.wordbuddy.R
+import com.hotgis.wordbuddy.ads.RewardVideoController
+import com.hotgis.wordbuddy.ads.findActivity
 import com.hotgis.wordbuddy.data.WordBuddyApi
 import com.hotgis.wordbuddy.data.WithdrawConfig
 import com.hotgis.wordbuddy.data.WithdrawalItem
@@ -67,6 +70,7 @@ import com.hotgis.wordbuddy.ui.lookup.Stellar
 import com.hotgis.wordbuddy.ui.lookup.stellarGlass
 import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
@@ -89,6 +93,7 @@ fun PointsWithdrawScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
     val api = remember { WordBuddyApi() }
     val scope = rememberCoroutineScope()
     var config by remember { mutableStateOf<WithdrawConfig?>(null) }
@@ -97,6 +102,7 @@ fun PointsWithdrawScreen(
     var submitting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var channel by remember { mutableStateOf("alipay") }
+    var selectedFen by remember { mutableStateOf(20) }
     var confirmOpen by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
 
@@ -124,7 +130,65 @@ fun PointsWithdrawScreen(
         }
     }
 
+    fun watchAdThenConfirm(act: Activity?, amountFen: Int) {
+        if (act == null) {
+            Toast.makeText(context, "无法播放广告，请稍后重试", Toast.LENGTH_SHORT).show()
+            return
+        }
+        var rewarded = false
+        fun showReady() {
+            RewardVideoController.show(
+                act,
+                object : RewardVideoController.Callbacks {
+                    override fun onShown() = Unit
+                    override fun onRewarded() {
+                        rewarded = true
+                        act.runOnUiThread {
+                            selectedFen = amountFen
+                            confirmOpen = true
+                            RewardVideoController.preload(act)
+                        }
+                    }
+                    override fun onClosed() {
+                        if (!rewarded) {
+                            act.runOnUiThread {
+                                Toast.makeText(context, "需看完广告才能提现", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    override fun onFailed(reason: String) {
+                        act.runOnUiThread {
+                            Toast.makeText(context, "广告播放失败：$reason", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+            )
+        }
+        RewardVideoController.preload(act)
+        act.runOnUiThread {
+            if (RewardVideoController.hasReadyAd()) {
+                showReady()
+                return@runOnUiThread
+            }
+            scope.launch {
+                var waits = 0
+                while (!RewardVideoController.hasReadyAd() && waits < 25) {
+                    delay(200)
+                    waits++
+                }
+                if (!RewardVideoController.hasReadyAd()) {
+                    Toast.makeText(context, "广告暂未填充，请稍后再试", Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                act.runOnUiThread { showReady() }
+            }
+        }
+    }
+
     LaunchedEffect(token) { reload() }
+    LaunchedEffect(token, activity) {
+        if (!token.isNullOrBlank()) activity?.let(RewardVideoController::preload)
+    }
 
     val cfg = config
     val selectedAccount = when (channel) {
@@ -222,9 +286,9 @@ fun PointsWithdrawScreen(
                         Spacer(Modifier.height(8.sdp()))
                         Text(
                             text = if (cfg.sandbox) {
-                                "沙箱单笔 ¥${cfg.amountYuan}，消耗 ${cfg.pointsCost} 积分"
+                                "沙箱模式，不会真实打款。每天只能提现一次。"
                             } else {
-                                "单笔 ¥${cfg.amountYuan}，消耗 ${cfg.pointsCost} 积分"
+                                "每天只能提现一次。"
                             },
                             color = Stellar.OnSurfaceVariant,
                             fontSize = 13.ssp(),
@@ -321,6 +385,51 @@ fun PointsWithdrawScreen(
                 }
             }
 
+            item {
+                Text("提现金额", color = Stellar.OnSurface, fontSize = 15.ssp(), fontWeight = FontWeight.SemiBold)
+            }
+            item {
+                val tiers = cfg?.tiers.orEmpty()
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.sdp()),
+                ) {
+                    tiers.forEach { tier ->
+                        val selectedNow = tier.amountFen == selectedFen
+                        val affordable = tier.pointsCost <= totalPoints
+                        Column(
+                            Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(14.sdp()))
+                                .border(
+                                    1.dp,
+                                    if (selectedNow) Stellar.Cyan else Stellar.Outline.copy(alpha = 0.35f),
+                                    RoundedCornerShape(14.sdp()),
+                                )
+                                .background(
+                                    if (selectedNow) Stellar.Cyan.copy(alpha = 0.12f) else Stellar.SurfaceContainer,
+                                )
+                                .clickable { selectedFen = tier.amountFen }
+                                .padding(vertical = 14.sdp(), horizontal = 6.sdp()),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = tier.label,
+                                color = if (selectedNow) Stellar.Cyan else Stellar.OnSurface,
+                                fontSize = 18.ssp(),
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Spacer(Modifier.height(4.sdp()))
+                            Text(
+                                text = "${tier.pointsCost} 积分",
+                                color = if (affordable) Stellar.OnSurfaceVariant else Stellar.Pink,
+                                fontSize = 12.ssp(),
+                            )
+                        }
+                    }
+                }
+            }
+
             if (error != null) {
                 item {
                     Text(error ?: "", color = Stellar.Pink, fontSize = 13.ssp())
@@ -328,16 +437,27 @@ fun PointsWithdrawScreen(
             }
 
             item {
+                val tier = cfg?.tiers?.firstOrNull { it.amountFen == selectedFen }
+                    ?: cfg?.tiers?.firstOrNull()
+                val alreadyToday = withdrewAlipayToday(history)
                 Box(
                     Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.sdp()))
                         .background(
-                            if (submitting || cfg == null) Stellar.SurfaceHigh else Stellar.Cyan,
+                            if (submitting || cfg == null || tier == null || alreadyToday) {
+                                Stellar.SurfaceHigh
+                            } else {
+                                Stellar.Cyan
+                            },
                         )
-                        .clickable(enabled = !submitting && cfg != null) {
+                        .clickable(enabled = !submitting && cfg != null && tier != null && !alreadyToday) {
+                            val picked = tier ?: return@clickable
                             when {
-                                withdrewAlipayToday(history) -> {
+                                picked.pointsCost > totalPoints -> {
+                                    Toast.makeText(context, "积分不足", Toast.LENGTH_SHORT).show()
+                                }
+                                alreadyToday -> {
                                     Toast.makeText(context, "今天已经提现过一次，请明天再试", Toast.LENGTH_SHORT).show()
                                 }
                                 selectedAccount.length < 3 -> {
@@ -371,10 +491,10 @@ fun PointsWithdrawScreen(
                                         Toast.LENGTH_SHORT,
                                     ).show()
                                 }
-                                (cfg?.pointsCost ?: 1) > totalPoints -> {
-                                    Toast.makeText(context, "积分不足", Toast.LENGTH_SHORT).show()
+                                else -> {
+                                    selectedFen = picked.amountFen
+                                    watchAdThenConfirm(activity, picked.amountFen)
                                 }
-                                else -> confirmOpen = true
                             }
                         }
                         .padding(vertical = 14.sdp()),
@@ -388,8 +508,16 @@ fun PointsWithdrawScreen(
                         )
                     } else {
                         Text(
-                            text = "确认提现 ¥${cfg?.amountYuan ?: "0.01"}",
-                            color = if (cfg == null) Stellar.OnSurfaceVariant else Stellar.OnPrimary,
+                            text = when {
+                                alreadyToday -> "今天已提现"
+                                tier != null -> "确认提现 ${tier.label}"
+                                else -> "确认提现"
+                            },
+                            color = if (cfg == null || tier == null || alreadyToday) {
+                                Stellar.OnSurfaceVariant
+                            } else {
+                                Stellar.OnPrimary
+                            },
                             fontSize = 16.ssp(),
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -406,11 +534,13 @@ fun PointsWithdrawScreen(
         )
     }
 
-    if (confirmOpen && cfg != null) {
+    val selectedTier = cfg?.tiers?.firstOrNull { it.amountFen == selectedFen }
+        ?: cfg?.tiers?.firstOrNull()
+    if (confirmOpen && cfg != null && selectedTier != null) {
         val channelName = if (channel == "wechat") "微信" else "支付宝"
         StellarConfirmDialog(
             title = "确认提现",
-            message = "将消耗 ${cfg.pointsCost} 积分，向${channelName}账号「${maskPayoutAccount(selectedAccount)}」发放 ¥${cfg.amountYuan}。\n\n${cfg.note}",
+            message = "将消耗 ${selectedTier.pointsCost} 积分，向${channelName}账号「${maskPayoutAccount(selectedAccount)}」发放 ${selectedTier.label}（¥${selectedTier.amountYuan}）。每天只能提现一次。",
             confirmText = if (submitting) "提交中…" else "确认",
             dismissText = "取消",
             onDismiss = { if (!submitting) confirmOpen = false },
@@ -420,7 +550,7 @@ fun PointsWithdrawScreen(
                 submitting = true
                 scope.launch {
                     runCatching {
-                        api.createWithdrawal(t, channel, selectedAccount, alipayName)
+                        api.createWithdrawal(t, channel, selectedAccount, alipayName, selectedTier.amountFen)
                     }.onSuccess { result ->
                         Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
                         confirmOpen = false

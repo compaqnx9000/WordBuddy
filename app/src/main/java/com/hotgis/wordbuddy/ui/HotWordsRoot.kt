@@ -216,6 +216,25 @@ fun HotWordsRoot(
         showBuyPoints = true
     }
 
+    fun shareShort(hostContext: android.content.Context, clip: com.hotgis.wordbuddy.ui.shorts.ShortClip) {
+        val code = session?.buddyId?.trim().orEmpty()
+        if (session == null) {
+            loginHint = "登录后分享可带上你的邀请码"
+            showLogin = true
+            return
+        }
+        if (code.isBlank()) {
+            Toast.makeText(hostContext, "请等待搭子号分配", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val host = hostContext.findActivity()
+        if (host == null) {
+            Toast.makeText(hostContext, "无法打开分享", Toast.LENGTH_SHORT).show()
+        } else {
+            ShortShareHelper.share(host, clip, code)
+        }
+    }
+
     fun promptBiometricUnlock() {
         val host = activity
         if (host == null) {
@@ -876,14 +895,7 @@ fun HotWordsRoot(
                                 viewModel.submitLookup()
                                 showShortsLookup = true
                             },
-                            onShare = { clip ->
-                                val host = context.findActivity()
-                                if (host == null) {
-                                    Toast.makeText(context, "无法打开分享", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    ShortShareHelper.share(host, clip)
-                                }
-                            },
+                            onShare = { clip -> shareShort(context, clip) },
                             modifier = Modifier
                                 .fillMaxSize()
                                 .hotWordsScreen(padding, consumeStatusBars = false),
@@ -1257,14 +1269,7 @@ fun HotWordsRoot(
                                 shortsFullscreen = false
                                 showShortsLookup = true
                             },
-                            onShare = { clip ->
-                                val host = context.findActivity()
-                                if (host == null) {
-                                    Toast.makeText(context, "无法打开分享", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    ShortShareHelper.share(host, clip)
-                                }
-                            },
+                            onShare = { clip -> shareShort(context, clip) },
                             onRequireLogin = {
                                 loginHint = "登录后可收藏短视频"
                                 showLogin = true

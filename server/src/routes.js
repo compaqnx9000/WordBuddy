@@ -1424,6 +1424,7 @@ router.post('/me/withdrawals', authRequired, async (req, res) => {
       channel: req.body?.channel,
       account: req.body?.account,
       realName: req.body?.realName,
+      amountFen: req.body?.amountFen,
     })
     if (!result.ok) {
       res.status(400).json({

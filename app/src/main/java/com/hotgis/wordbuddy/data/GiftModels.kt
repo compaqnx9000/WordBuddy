@@ -83,6 +83,13 @@ data class WithdrawChannel(
     val accountHint: String = "",
 )
 
+data class WithdrawTier(
+    val amountFen: Int,
+    val amountYuan: String,
+    val pointsCost: Int,
+    val label: String,
+)
+
 data class WithdrawConfig(
     val sandbox: Boolean = true,
     val amountFen: Int = 1,
@@ -91,6 +98,7 @@ data class WithdrawConfig(
     val alipayReady: Boolean = true,
     val wechatReady: Boolean = true,
     val channels: List<WithdrawChannel> = emptyList(),
+    val tiers: List<WithdrawTier> = emptyList(),
     val note: String = "",
 )
 

@@ -312,14 +312,21 @@ struct ShortClip: Identifiable, Equatable, Hashable {
     var coverUrl: String?
     var favorited: Bool
 
-    var shareText: String {
-        let words = relatedWords.prefix(20).joined(separator: " · ")
+    func shareText(inviteCode: String) -> String {
+        let code = inviteCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        var parts = URLComponents(string: "\(WordBuddyAPI.primaryBase)/watch")
+        parts?.queryItems = [
+            URLQueryItem(name: "v", value: videoUrl),
+            URLQueryItem(name: "code", value: code),
+            URLQueryItem(name: "title", value: title.isEmpty ? "英语短视频" : title),
+        ]
+        let page = parts?.string ?? "\(WordBuddyAPI.primaryBase)/watch"
         var lines = ["【词搭子】\(title.isEmpty ? "英语短视频" : title)"]
         let captionText = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         if !captionText.isEmpty { lines.append(captionText) }
-        if !words.isEmpty { lines.append("关键词：\(words)") }
-        lines.append("@\(author.isEmpty ? "词搭子" : author)")
-        if !videoUrl.isEmpty { lines.append(videoUrl) }
+        if !code.isEmpty { lines.append("邀请码：\(code)") }
+        lines.append("打开观看并下载：")
+        lines.append(page)
         return lines.joined(separator: "\n")
     }
 }

@@ -5,16 +5,18 @@ import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
+import com.hotgis.wordbuddy.BuildConfig
 import com.hotgis.wordbuddy.auth.WeChatAuth
 import com.hotgis.wordbuddy.auth.WeChatShare
 import com.tencent.mm.opensdk.modelmsg.SendMessageToWX
 
 object ShortShareHelper {
-    fun share(activity: Activity, clip: ShortClip) {
-        val text = buildShareText(clip)
-        val url = clip.videoUrl.trim()
-        val hasHttp = url.startsWith("http://") || url.startsWith("https://")
+    fun share(activity: Activity, clip: ShortClip, inviteCode: String) {
+        val page = watchPageUrl(clip, inviteCode)
+        val text = buildShareText(clip, inviteCode, page)
+        val hasHttp = page.startsWith("http://") || page.startsWith("https://")
         val wechatInstalled = WeChatAuth.isConfigured() &&
             WeChatAuth.api(activity).isWXAppInstalled
 
@@ -28,8 +30,8 @@ object ShortShareHelper {
                 .setTitle("分享到微信")
                 .setItems(arrayOf("微信好友", "朋友圈", "系统分享", "复制文案")) { _, which ->
                     when (which) {
-                        0 -> shareWeChatVideo(activity, clip, SendMessageToWX.Req.WXSceneSession)
-                        1 -> shareWeChatVideo(activity, clip, SendMessageToWX.Req.WXSceneTimeline)
+                        0 -> shareWeChatPage(activity, clip, inviteCode, page, SendMessageToWX.Req.WXSceneSession)
+                        1 -> shareWeChatPage(activity, clip, inviteCode, page, SendMessageToWX.Req.WXSceneTimeline)
                         2 -> shareSystem(activity, text)
                         3 -> copyText(activity, text)
                     }
@@ -51,8 +53,18 @@ object ShortShareHelper {
             .show()
     }
 
-    fun buildShareText(clip: ShortClip): String {
-        val words = clip.relatedWords.take(20).joinToString(" · ")
+    fun watchPageUrl(clip: ShortClip, inviteCode: String): String {
+        val base = BuildConfig.API_BASE_URL.trimEnd('/')
+        return Uri.parse("$base/watch").buildUpon()
+            .appendQueryParameter("v", clip.videoUrl.trim())
+            .appendQueryParameter("code", inviteCode.trim())
+            .appendQueryParameter("title", clip.title.ifBlank { "英语短视频" })
+            .build()
+            .toString()
+    }
+
+    fun buildShareText(clip: ShortClip, inviteCode: String, page: String = watchPageUrl(clip, inviteCode)): String {
+        val code = inviteCode.trim()
         return buildString {
             append("【词搭子】")
             append(clip.title.ifBlank { "英语短视频" })
@@ -61,29 +73,37 @@ object ShortShareHelper {
                 append(clip.caption.trim())
                 append('\n')
             }
-            if (words.isNotBlank()) {
-                append("关键词：")
-                append(words)
+            if (code.isNotEmpty()) {
+                append("邀请码：")
+                append(code)
                 append('\n')
             }
-            append("@")
-            append(clip.author.ifBlank { "词搭子" })
-            if (clip.videoUrl.isNotBlank()) {
-                append('\n')
-                append(clip.videoUrl.trim())
-            }
+            append("打开观看并下载：")
+            append('\n')
+            append(page)
         }.trim()
     }
 
-    private fun shareWeChatVideo(activity: Activity, clip: ShortClip, scene: Int) {
-        val ok = WeChatShare.shareVideo(
+    private fun shareWeChatPage(
+        activity: Activity,
+        clip: ShortClip,
+        inviteCode: String,
+        page: String,
+        scene: Int,
+    ) {
+        val code = inviteCode.trim()
+        val description = if (code.isNotEmpty()) {
+            "邀请码 $code，点开看视频并下载词搭子"
+        } else {
+            "点开看视频并下载词搭子"
+        }
+        val ok = WeChatShare.shareWebpage(
             context = activity,
             title = clip.title.ifBlank { "词搭子短视频" },
-            description = clip.caption.ifBlank {
-                clip.relatedWords.take(8).joinToString(" · ").ifBlank { "来自词搭子的英语短视频" }
-            },
-            videoUrl = clip.videoUrl.trim(),
+            description = description,
+            webpageUrl = page,
             scene = scene,
+            showPlayBadge = true,
         )
         if (!ok) {
             Toast.makeText(activity, "调起微信失败，请确认已安装微信", Toast.LENGTH_SHORT).show()

@@ -18,6 +18,13 @@ import {
 /** Live Alipay TRANS_ACCOUNT_NO_PWD minimum is 0.10 yuan. */
 const LIVE_MIN_FEN = 10
 
+/** Alipay cash choices. Points are fixed, not derived from the old 1-point rate. */
+const ALIPAY_TIERS = [
+  { amountFen: 20, amountYuan: '0.2', label: '0.2元', pointsCost: 2000 },
+  { amountFen: 50, amountYuan: '0.5', label: '0.5元', pointsCost: 5000 },
+  { amountFen: 100, amountYuan: '1.0', label: '1.0元', pointsCost: 10000 },
+]
+
 export function withdrawConfig() {
   const pay = alipayConfig()
   const sandboxEnv = process.env.WITHDRAW_SANDBOX
@@ -36,10 +43,11 @@ export function withdrawConfig() {
   const wx = wechatConfig()
   const alipayReady = pay.transferReady && !sandbox
   const wechatReady = wx.transferReady && !sandbox
-  const amountText = `单笔提现 ¥${(amountFen / 100).toFixed(2)}，消耗 ${pointsCost} 积分`
+  const tiers = ALIPAY_TIERS.map((tier) => ({ ...tier }))
+  const amountText = '支付宝可选 0.2元、0.5元、1.0元，每天只能提现一次。看完激励广告后才能提现。'
   let note
   if (sandbox) {
-    note = '当前为沙箱模式：仅模拟打款成功，不会真实转账。支付宝每天可提现 1 次。'
+    note = '当前为沙箱模式：仅模拟打款成功，不会真实转账。支付宝每天只能提现一次。'
   } else {
     const parts = [amountText]
     parts.push(
@@ -49,8 +57,8 @@ export function withdrawConfig() {
     )
     parts.push(
       alipayReady
-        ? '支付宝请先在个人资料中绑定支付宝。每天可提现 1 次。'
-        : '支付宝应用还在审核/未上线，暂可能无法打款。每天可提现 1 次。',
+        ? '支付宝请先在个人资料中绑定支付宝。每天只能提现一次。'
+        : '支付宝应用还在审核/未上线，暂可能无法打款。每天只能提现一次。',
     )
     note = parts.join('')
   }
@@ -59,6 +67,7 @@ export function withdrawConfig() {
     amountFen,
     amountYuan: (amountFen / 100).toFixed(2),
     pointsCost,
+    tiers,
     alipayReady,
     wechatReady,
     certMode: Boolean(pay.certMode),
@@ -150,7 +159,7 @@ export async function listWithdrawals(userId, { page = 1, pageSize = 20 } = {}) 
  * Debit points first, then call Alipay. Unknown results stay pending (no refund)
  * until query confirms success or failure.
  */
-export async function createWithdrawal(userId, { channel, account, realName } = {}) {
+export async function createWithdrawal(userId, { channel, account, realName, amountFen: requestedFen } = {}) {
   const cfg = withdrawConfig()
   const ch = String(channel || '').trim().toLowerCase()
   if (ch !== 'alipay' && ch !== 'wechat') {
@@ -192,8 +201,16 @@ export async function createWithdrawal(userId, { channel, account, realName } = 
     return { ok: false, error: '请先在个人资料中绑定微信账号' }
   }
 
-  const amountFen = cfg.amountFen
-  const pointsCost = cfg.pointsCost
+  let amountFen = cfg.amountFen
+  let pointsCost = cfg.pointsCost
+  if (ch === 'alipay' && requestedFen != null && requestedFen !== '') {
+    const tier = cfg.tiers.find((item) => item.amountFen === Number(requestedFen))
+    if (!tier) {
+      return { ok: false, error: '请选择 0.2元、0.5元或 1.0元' }
+    }
+    amountFen = tier.amountFen
+    pointsCost = tier.pointsCost
+  }
   const client = await pool.connect()
   let row
   let nextBalance
@@ -209,7 +226,7 @@ export async function createWithdrawal(userId, { channel, account, realName } = 
     const balance = Math.max(0, Number(checkIn?.total_points || 0))
     if (balance < pointsCost) {
       await client.query('ROLLBACK')
-      return { ok: false, error: `积分不足，还差 ${pointsCost - balance} 分` }
+      return { ok: false, error: '积分不足' }
     }
 
     const dailyLimit = ch === 'alipay' ? 1 : 20
