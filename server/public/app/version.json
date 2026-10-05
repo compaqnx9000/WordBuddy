@@ -1,8 +1,8 @@
 {
-  "versionCode": 163,
-  "versionName": "1.72",
+  "versionCode": 165,
+  "versionName": "1.74",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "支付宝提现改为 0.2元/2000分、0.5元/5000分、1.0元/10000分，提现前需看完激励广告。",
-  "releasedAt": "2026-10-05T12:15:00.000Z"
+  "notes": "短视频先把每条都排到，并且不会连续播放同一条。",
+  "releasedAt": "2026-10-05T14:32:00.000Z"
 }

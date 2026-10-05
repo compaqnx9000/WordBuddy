@@ -29,6 +29,7 @@ struct RootView: View {
         tab != .notebook
             && !(tab == .shorts && shortsChromeHidden)
             && !(tab == .me && mallCoversTabBar)
+            && model.shortsWordLookup == nil
     }
 
     var body: some View {

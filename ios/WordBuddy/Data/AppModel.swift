@@ -66,6 +66,8 @@ final class AppModel: ObservableObject {
     @Published var rewardBusy = false
     @Published var accounts: [RememberedAccount] = []
     @Published var pendingLookup: String?
+    /// Word opened from the short that is still on screen. Keeps that video paused underneath.
+    @Published var shortsWordLookup: String?
 
     let api: WordBuddyAPI
     let podcast = PodcastPlayer()

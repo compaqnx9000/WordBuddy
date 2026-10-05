@@ -299,7 +299,12 @@ actor WordBuddyAPI {
         }
     }
 
-    func fetchShortsFeed(token: String?, limit: Int = 20, excludeIds: [String] = []) async throws -> [ShortClip] {
+    func fetchShortsFeed(
+        token: String?,
+        limit: Int = 20,
+        excludeIds: [String] = [],
+        afterId: String? = nil
+    ) async throws -> [ShortClip] {
         var path = "/shorts/feed?limit=\(limit)"
         let exclude = excludeIds
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -308,6 +313,10 @@ actor WordBuddyAPI {
         if !exclude.isEmpty {
             let encoded = exclude.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? exclude
             path += "&exclude=\(encoded)"
+        }
+        if let afterId = afterId?.trimmingCharacters(in: .whitespacesAndNewlines), !afterId.isEmpty {
+            let encoded = afterId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? afterId
+            path += "&after=\(encoded)"
         }
         let root = try await request(method: "GET", path: path, auth: token, body: nil)
         return JSONValue.array(root, key: "items").compactMap { item in

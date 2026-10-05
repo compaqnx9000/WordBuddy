@@ -128,6 +128,9 @@ export async function listAdminShorts({ q, category, published, page = 1, pageSi
 
 const CATEGORY_ORDER = SHORT_CATEGORIES.map((c) => c.id)
 
+/** Preference ranking waits until the catalog is large enough to be useful. */
+export const SHORT_RECOMMEND_MIN = 300
+
 /**
  * Watch-time share decides how often each category appears.
  * A few seconds is still a cold start (even mix). Longer 口语 time takes most slots,
@@ -203,18 +206,77 @@ function videoFreshness(row, excludeSet, recentIds) {
   return score
 }
 
+function excludeIdList(excludeIds) {
+  return (Array.isArray(excludeIds) ? excludeIds : [])
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0)
+}
+
+function catalogOrder(rows) {
+  return rows.slice().sort((a, b) => {
+    const order = (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0)
+    if (order !== 0) return order
+    return Number(b.id) - Number(a.id)
+  })
+}
+
+/**
+ * Every published video is delivered before any repeat. After the catalog wraps,
+ * the next page starts after the video the client already has at the tail.
+ */
+function tailVideoId(excludeIds, afterId) {
+  const after = Number(afterId)
+  if (Number.isFinite(after) && after > 0) return after
+  const exclude = excludeIdList(excludeIds)
+  return exclude.length ? exclude[exclude.length - 1] : null
+}
+
+export function planCoverageFeed(rows, { limit = 20, excludeIds = [], afterId = null } = {}) {
+  const size = Math.min(50, Math.max(1, Number(limit) || 20))
+  const ordered = catalogOrder(rows)
+  if (!ordered.length || size <= 0) return []
+  const excludeSet = new Set(excludeIdList(excludeIds))
+  const tailId = tailVideoId(excludeIds, afterId)
+  const unseen = ordered.filter((row) => !excludeSet.has(Number(row.id)))
+  let queue = unseen
+  if (!queue.length) {
+    const at = tailId == null ? -1 : ordered.findIndex((row) => Number(row.id) === tailId)
+    queue = at >= 0 ? ordered.slice(at + 1).concat(ordered.slice(0, at)) : ordered
+  }
+  const picked = []
+  let prev = tailId
+  for (const row of queue) {
+    const id = Number(row.id)
+    if (id === prev) continue
+    picked.push(row)
+    prev = id
+    if (picked.length >= size) break
+  }
+  return picked
+}
+
 /**
  * One page of the feed. Unseen videos of the preferred category come first inside
  * that category. When the catalog is exhausted, the same pool is reused so the
  * client can keep paging in a loop.
  */
-export function planShortFeed(rows, { limit = 20, excludeIds = [], weights, recentIds = new Set() } = {}) {
+function pickUnique(bucketMap, pointers, used, slot, substitute) {
+  let row = bucketMap[slot]?.length
+    ? takeCategoryVideo(bucketMap[slot], pointers, slot, used, false)
+    : null
+  if (!row) {
+    for (const cat of substitute) {
+      if (cat === slot) continue
+      row = takeCategoryVideo(bucketMap[cat], pointers, cat, used, false)
+      if (row) break
+    }
+  }
+  return row
+}
+
+export function planShortFeed(rows, { limit = 20, excludeIds = [], afterId = null, weights, recentIds = new Set() } = {}) {
   const size = Math.min(50, Math.max(1, Number(limit) || 20))
-  const excludeSet = new Set(
-    (Array.isArray(excludeIds) ? excludeIds : [])
-      .map((id) => Number(id))
-      .filter((id) => Number.isFinite(id) && id > 0),
-  )
+  const excludeSet = new Set(excludeIdList(excludeIds))
   const buckets = Object.fromEntries(CATEGORY_ORDER.map((cat) => [cat, []]))
   for (const row of rows) {
     buckets[normalizeCategory(row.category)].push(row)
@@ -229,29 +291,34 @@ export function planShortFeed(rows, { limit = 20, excludeIds = [], weights, rece
   if (CATEGORY_ORDER.every((cat) => !buckets[cat].length)) return []
   const counts = allocateCategorySlots(availableWeights, size)
   const pattern = spreadCategoryPattern(counts, size)
+  const unseenBuckets = Object.fromEntries(CATEGORY_ORDER.map((cat) => [
+    cat,
+    buckets[cat].filter((row) => !excludeSet.has(Number(row.id))),
+  ]))
+  const hasUnseen = CATEGORY_ORDER.some((cat) => unseenBuckets[cat].length)
+  const source = hasUnseen ? unseenBuckets : buckets
   const pointers = Object.fromEntries(CATEGORY_ORDER.map((cat) => [cat, 0]))
   const used = new Set()
   const picked = []
+  let prevId = tailVideoId(excludeIds, afterId)
   const substitute = CATEGORY_ORDER.slice().sort(
     (a, b) => (availableWeights[b] || 0) - (availableWeights[a] || 0),
   )
   for (const slot of pattern) {
-    let row = null
-    if (buckets[slot]?.length) {
-      // Repeat this category before giving the slot away. A 口语-heavy mix stays 口语
-      // even when that category has fewer videos than its slot count.
-      row = takeCategoryVideo(buckets[slot], pointers, slot, used, false)
-        || takeCategoryVideo(buckets[slot], pointers, slot, used, true)
-    }
-    if (!row) {
-      for (const cat of substitute) {
-        if (cat === slot) continue
-        row = takeCategoryVideo(buckets[cat], pointers, cat, used, false)
-          || takeCategoryVideo(buckets[cat], pointers, cat, used, true)
-        if (row) break
+    let row = pickUnique(source, pointers, used, slot, substitute)
+    if (!row && !hasUnseen) {
+      for (const cat of [slot, ...substitute]) {
+        const candidate = takeCategoryVideo(source[cat], pointers, cat, used, true)
+        if (candidate && Number(candidate.id) !== prevId) {
+          row = candidate
+          break
+        }
       }
     }
-    if (row) picked.push(row)
+    if (!row) break
+    if (Number(row.id) === prevId) continue
+    picked.push(row)
+    prevId = Number(row.id)
     if (picked.length >= size) break
   }
   return picked
@@ -283,6 +350,7 @@ export async function recommendShorts({
   deviceKey = null,
   limit = 20,
   excludeIds = [],
+  afterId = null,
   absoluteBase = '',
 } = {}) {
   const size = Math.min(50, Math.max(1, Number(limit) || 20))
@@ -351,17 +419,19 @@ export async function recommendShorts({
     await query(
       `SELECT * FROM short_videos
        WHERE published = TRUE
-       ORDER BY sort_order ASC, id DESC
-       LIMIT 1000`,
+       ORDER BY sort_order ASC, id DESC`,
     )
   ).rows
   const weights = categoryWeightsFromWatch(watchMs, favoriteCounts)
-  const page = planShortFeed(candidates, {
-    limit: size,
-    excludeIds,
-    weights,
-    recentIds,
-  })
+  const page = candidates.length < SHORT_RECOMMEND_MIN
+    ? planCoverageFeed(candidates, { limit: size, excludeIds, afterId })
+    : planShortFeed(candidates, {
+        limit: size,
+        excludeIds,
+        afterId,
+        weights,
+        recentIds,
+      })
   return page.map((row) =>
     mapShortVideo(
       { ...row, favorited: favoriteIds.has(Number(row.id)) },

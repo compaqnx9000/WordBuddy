@@ -102,12 +102,24 @@ private sealed interface ShortFeedItem {
     data class Ad(override val key: String) : ShortFeedItem
 }
 
+private fun withoutConsecutiveDuplicate(tailId: String?, incoming: List<ShortClip>): List<ShortClip> {
+    val kept = ArrayList<ShortClip>(incoming.size)
+    var previous = tailId
+    for (clip in incoming) {
+        if (clip.id == previous) continue
+        kept.add(clip)
+        previous = clip.id
+    }
+    return kept
+}
+
 @Composable
 fun ShortsScreen(
     modifier: Modifier = Modifier,
     authToken: String? = null,
     metaVisibleDefault: Boolean = true,
     fullscreen: Boolean = false,
+    playbackEnabled: Boolean = true,
     onFullscreenChange: (Boolean) -> Unit = {},
     onOpenWord: (String) -> Unit = {},
     onShare: (ShortClip) -> Unit = {},
@@ -160,9 +172,14 @@ fun ShortsScreen(
         }
     }
 
-    suspend fun loadMoreClips(exclude: List<String> = emptyList()): List<ShortClip> {
+    suspend fun loadMoreClips(exclude: List<String> = emptyList(), afterId: String? = null): List<ShortClip> {
         return try {
-            api.fetchShortsFeed(token = tokenState.value, limit = 20, excludeIds = exclude)
+            api.fetchShortsFeed(
+                token = tokenState.value,
+                limit = 20,
+                excludeIds = exclude,
+                afterId = afterId,
+            )
         } catch (_: Exception) {
             emptyList()
         }
@@ -188,10 +205,13 @@ fun ShortsScreen(
         loadingMore = true
         scope.launch {
             try {
-                val more = loadMoreClips(clips.map { it.id })
-                // Server refills with a watch-time ranking after every video has been seen.
-                // A failed request still replays the current pool so the pager never ends.
-                val incoming = if (more.isNotEmpty()) more else clips
+                val tailId = (feed.lastOrNull { it is ShortFeedItem.Video } as? ShortFeedItem.Video)?.clip?.id
+                val more = loadMoreClips(clips.map { it.id }, afterId = tailId)
+                // After every published video has been shown, the server continues from
+                // the video on screen. A failed request replays the pool, still without
+                // placing the same video twice in a row.
+                val source = if (more.isNotEmpty()) more else clips
+                val incoming = withoutConsecutiveDuplicate(tailId, source)
                 if (incoming.isEmpty()) return@launch
                 if (more.isNotEmpty()) {
                     clips = (clips + more).distinctBy { it.id }
@@ -259,7 +279,7 @@ fun ShortsScreen(
                     when (val item = feed[page]) {
                         is ShortFeedItem.Video -> ShortVideoPage(
                             clip = item.clip,
-                            active = pagerState.settledPage == page,
+                            active = playbackEnabled && pagerState.settledPage == page,
                             metaVisibleDefault = metaVisibleDefault,
                             fullscreen = fullscreen,
                             onToggleFullscreen = { onFullscreenChange(!fullscreen) },
@@ -305,7 +325,7 @@ fun ShortsScreen(
                         is ShortFeedItem.Ad -> DrawAdPage(
                             activity = activity,
                             adKey = item.key,
-                            active = pagerState.settledPage == page,
+                            active = playbackEnabled && pagerState.settledPage == page,
                         )
                     }
                 }
@@ -587,6 +607,7 @@ fun FavoriteClipPlayer(
     onBack: () -> Unit,
     authToken: String?,
     onRequireLogin: () -> Unit,
+    playbackEnabled: Boolean = true,
     metaVisibleDefault: Boolean = true,
     onOpenWord: (String) -> Unit = {},
     onShare: (ShortClip) -> Unit = {},
@@ -603,7 +624,7 @@ fun FavoriteClipPlayer(
     ) {
         ShortVideoPage(
             clip = current,
-            active = true,
+            active = playbackEnabled,
             metaVisibleDefault = metaVisibleDefault,
             onOpenWord = onOpenWord,
             onShare = { onShare(current) },

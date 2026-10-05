@@ -600,11 +600,14 @@ class WordBuddyApi {
         token: String? = null,
         limit: Int = 20,
         excludeIds: List<String> = emptyList(),
+        afterId: String? = null,
     ): List<com.hotgis.wordbuddy.ui.shorts.ShortClip> = withContext(Dispatchers.IO) {
         val exclude = excludeIds.joinToString(",")
         val path = buildString {
             append("/shorts/feed?limit=$limit")
             if (exclude.isNotBlank()) append("&exclude=${enc(exclude)}")
+            val after = afterId?.trim().orEmpty()
+            if (after.isNotEmpty()) append("&after=${enc(after)}")
         }
         val root = request("GET", path, auth = token)
         val items = root.optJSONArray("items") ?: JSONArray()

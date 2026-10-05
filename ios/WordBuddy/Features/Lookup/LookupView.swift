@@ -3,6 +3,8 @@ import UIKit
 
 struct LookupView: View {
     @EnvironmentObject private var model: AppModel
+    var embeddedWord: String? = nil
+    var onClose: (() -> Void)? = nil
     @State private var query = ""
     @State private var entry: VocabEntry?
     @State private var lookingUp = false
@@ -20,11 +22,28 @@ struct LookupView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Text("词搭子")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Theme.cyanSoft)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
+                ZStack {
+                    Text("词搭子")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(Theme.cyanSoft)
+                    if onClose != nil {
+                        HStack {
+                            Button {
+                                onClose?()
+                            } label: {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(Theme.cyanSoft)
+                                    .frame(width: 44, height: 44)
+                            }
+                            .buttonStyle(.plain)
+                            Spacer()
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .padding(.horizontal, 8)
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
@@ -54,7 +73,14 @@ struct LookupView: View {
             }
             .stellarScreenBackground()
             .navigationBarHidden(true)
-            .onAppear { consumePendingLookup() }
+            .onAppear {
+                if let embeddedWord, query.isEmpty {
+                    query = embeddedWord
+                    Task { await search() }
+                } else {
+                    consumePendingLookup()
+                }
+            }
             .onChange(of: model.pendingLookup) { _, _ in consumePendingLookup() }
             .overlay {
                 if let item = editingEntry {

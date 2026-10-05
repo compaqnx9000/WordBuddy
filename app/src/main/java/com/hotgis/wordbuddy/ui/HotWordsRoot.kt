@@ -820,70 +820,15 @@ fun HotWordsRoot(
                     }
                 },
             ) { padding ->
+            Box(Modifier.fillMaxSize()) {
             when {
-                showShortsLookup -> {
-                    LookupScreen(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .hotWordsScreen(padding, consumeStatusBars = false)
-                            .foldableCenteredContent(),
-                        ui = ui,
-                        wordCount = activeWordCount,
-                        userName = ui.settings.displayName,
-                        onToggleTheme = {
-                            viewModel.updateSettings { settings ->
-                                settings.copy(
-                                    appTheme = if (settings.appTheme == AppTheme.Light) {
-                                        AppTheme.Dark
-                                    } else {
-                                        AppTheme.Light
-                                    },
-                                )
-                            }
-                        },
-                        onQuery = viewModel::setLookupQuery,
-                        onSubmit = viewModel::submitLookup,
-                        onToggleStar = {
-                            if (requireLogin("收藏生词需要先登录或注册")) {
-                                viewModel.toggleStar()
-                            }
-                        },
-                        onSpeak = viewModel::speak,
-                        onSpeakText = viewModel::speakText,
-                        onChangeAccent = { accent ->
-                            viewModel.updateSettings { it.copy(accent = accent) }
-                        },
-                        onToggleRelatedStar = { entry ->
-                            if (requireLogin("收藏生词需要先登录或注册")) {
-                                viewModel.toggleSaveRelatedWord(entry)
-                            }
-                        },
-                        isRelatedWordSaved = viewModel::isWordSaved,
-                        onPickLookupImage = viewModel::setLookupImage,
-                        onGenerateAiForLookup = viewModel::generateAiForLookup,
-                        onEnsureLoginForAiImage = { requireLogin("登录后可使用 AI 助记配图") },
-                        onOpenBuyPoints = { openBuyPoints() },
-                        onClearImageError = viewModel::clearImageError,
-                        onUpdateDefinitions = viewModel::updateDefinitions,
-                        homophones = homophones,
-                        userNotes = userNotes,
-                        onLoadHomophones = viewModel::loadHomophones,
-                        onLoadUserNotes = viewModel::loadUserNotes,
-                        onSaveUserNotes = viewModel::saveUserNotes,
-                        onSubmitHomophone = viewModel::submitHomophone,
-                        onToggleHomophoneLike = viewModel::toggleHomophoneLike,
-                        onLoadHomophoneLikers = { id, offset ->
-                            viewModel.loadHomophoneLikers(id, offset)
-                        },
-                        onBack = { showShortsLookup = false },
-                    )
-                }
                 showShortFavorites -> {
                     val playing = favoritePlaying
                     if (playing != null) {
                         FavoriteClipPlayer(
                             clip = playing,
                             authToken = session?.token,
+                            playbackEnabled = !showShortsLookup,
                             metaVisibleDefault = ui.settings.shortsMetaVisibleDefault,
                             onBack = { favoritePlaying = null },
                             onRequireLogin = {
@@ -1260,6 +1205,7 @@ fun HotWordsRoot(
                                 .fillMaxSize()
                                 .hotWordsScreen(padding, consumeStatusBars = false),
                             authToken = session?.token,
+                            playbackEnabled = !showShortsLookup,
                             metaVisibleDefault = ui.settings.shortsMetaVisibleDefault,
                             fullscreen = shortsFullscreen,
                             onFullscreenChange = { shortsFullscreen = it },
@@ -1505,6 +1451,64 @@ fun HotWordsRoot(
                         )
                     }
                 }
+            }
+            }
+            if (showShortsLookup) {
+                LookupScreen(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .hotWordsScreen(padding, consumeStatusBars = false)
+                        .foldableCenteredContent(),
+                    ui = ui,
+                    wordCount = activeWordCount,
+                    userName = ui.settings.displayName,
+                    onToggleTheme = {
+                        viewModel.updateSettings { settings ->
+                            settings.copy(
+                                appTheme = if (settings.appTheme == AppTheme.Light) {
+                                    AppTheme.Dark
+                                } else {
+                                    AppTheme.Light
+                                },
+                            )
+                        }
+                    },
+                    onQuery = viewModel::setLookupQuery,
+                    onSubmit = viewModel::submitLookup,
+                    onToggleStar = {
+                        if (requireLogin("收藏生词需要先登录或注册")) {
+                            viewModel.toggleStar()
+                        }
+                    },
+                    onSpeak = viewModel::speak,
+                    onSpeakText = viewModel::speakText,
+                    onChangeAccent = { accent ->
+                        viewModel.updateSettings { it.copy(accent = accent) }
+                    },
+                    onToggleRelatedStar = { entry ->
+                        if (requireLogin("收藏生词需要先登录或注册")) {
+                            viewModel.toggleSaveRelatedWord(entry)
+                        }
+                    },
+                    isRelatedWordSaved = viewModel::isWordSaved,
+                    onPickLookupImage = viewModel::setLookupImage,
+                    onGenerateAiForLookup = viewModel::generateAiForLookup,
+                    onEnsureLoginForAiImage = { requireLogin("登录后可使用 AI 助记配图") },
+                    onOpenBuyPoints = { openBuyPoints() },
+                    onClearImageError = viewModel::clearImageError,
+                    onUpdateDefinitions = viewModel::updateDefinitions,
+                    homophones = homophones,
+                    userNotes = userNotes,
+                    onLoadHomophones = viewModel::loadHomophones,
+                    onLoadUserNotes = viewModel::loadUserNotes,
+                    onSaveUserNotes = viewModel::saveUserNotes,
+                    onSubmitHomophone = viewModel::submitHomophone,
+                    onToggleHomophoneLike = viewModel::toggleHomophoneLike,
+                    onLoadHomophoneLikers = { id, offset ->
+                        viewModel.loadHomophoneLikers(id, offset)
+                    },
+                    onBack = { showShortsLookup = false },
+                )
             }
             }
             ui.catalogCopyProgress?.let { progress ->

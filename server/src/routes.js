@@ -1274,6 +1274,7 @@ router.get('/shorts/feed', optionalAuth, async (req, res) => {
       deviceKey: req.user?.id ? null : device.deviceKey,
       limit,
       excludeIds: excludeRaw,
+      afterId: String(req.query.after || '').trim(),
       absoluteBase: publicBaseFromReq(req),
     })
     res.json({ items, categories: SHORT_CATEGORIES })

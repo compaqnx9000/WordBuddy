@@ -86,6 +86,14 @@ struct ShortsView: View {
                 chromeHidden = false
             }
         }
+        .overlay {
+            if let word = model.shortsWordLookup {
+                LookupView(embeddedWord: word) {
+                    model.shortsWordLookup = nil
+                }
+                .environmentObject(model)
+            }
+        }
     }
 
     private var emptyState: some View {
@@ -136,12 +144,18 @@ struct ShortsView: View {
         loadingMore = true
         defer { loadingMore = false }
         do {
+            let tailId = feed.reversed().compactMap(\.clip).first?.id
             let more = playable(
-                try await model.api.fetchShortsFeed(token: model.session?.token, excludeIds: clips.map(\.id))
+                try await model.api.fetchShortsFeed(
+                    token: model.session?.token,
+                    excludeIds: clips.map(\.id),
+                    afterId: tailId
+                )
             )
-            // The server refills a watch-time ranking after the catalog wraps.
-            // If that page is empty, replay the videos already loaded so the list never ends.
-            let incoming = more.isEmpty ? clips : more
+            // After every published video has been shown, the server continues from
+            // the video on screen. An empty page replays the pool without placing
+            // the same video twice in a row.
+            let incoming = withoutConsecutiveDuplicate(more.isEmpty ? clips : more, after: tailId)
             guard !incoming.isEmpty else { return }
             if !more.isEmpty {
                 var merged = clips
@@ -153,12 +167,25 @@ struct ShortsView: View {
             }
             appendCycle(incoming)
         } catch {
-            if !clips.isEmpty {
-                appendCycle(clips)
-            } else {
+            let tailId = feed.reversed().compactMap(\.clip).first?.id
+            let incoming = withoutConsecutiveDuplicate(clips, after: tailId)
+            if !incoming.isEmpty {
+                appendCycle(incoming)
+            } else if clips.isEmpty {
                 _ = model.noteSessionError(error)
             }
         }
+    }
+
+    private func withoutConsecutiveDuplicate(_ items: [ShortClip], after tailId: String?) -> [ShortClip] {
+        var previous = tailId
+        var kept: [ShortClip] = []
+        kept.reserveCapacity(items.count)
+        for clip in items where clip.id != previous {
+            kept.append(clip)
+            previous = clip.id
+        }
+        return kept
     }
 
     private func appendCycle(_ items: [ShortClip]) {
@@ -212,10 +239,11 @@ struct ShortsView: View {
             ShortPage(
                 clip: clip,
                 engaged: isSelected && item.id == currentId,
+                pausedForLookup: model.shortsWordLookup != nil,
                 fullscreen: fullscreen,
                 metaStartsVisible: model.shortsMetaVisibleDefault,
                 onToggleFullscreen: { fullscreen.toggle() },
-                onOpenWord: { model.openWord($0) },
+                onOpenWord: { model.shortsWordLookup = $0 },
                 onToggleFavorite: { toggleFavorite(clip) },
                 onWatch: { reportWatch(clip: clip, watchMs: $0) }
             )
@@ -257,6 +285,7 @@ private struct ShortPage: View {
     @EnvironmentObject private var model: AppModel
     var clip: ShortClip
     var engaged: Bool
+    var pausedForLookup: Bool = false
     var fullscreen: Bool
     var onToggleFullscreen: () -> Void
     var onOpenWord: (String) -> Void
@@ -270,6 +299,7 @@ private struct ShortPage: View {
     init(
         clip: ShortClip,
         engaged: Bool,
+        pausedForLookup: Bool = false,
         fullscreen: Bool,
         metaStartsVisible: Bool,
         onToggleFullscreen: @escaping () -> Void,
@@ -279,6 +309,7 @@ private struct ShortPage: View {
     ) {
         self.clip = clip
         self.engaged = engaged
+        self.pausedForLookup = pausedForLookup
         self.fullscreen = fullscreen
         self.onToggleFullscreen = onToggleFullscreen
         self.onOpenWord = onOpenWord
@@ -293,7 +324,7 @@ private struct ShortPage: View {
         ZStack {
             Color.black
             if engaged, let url = URL(string: clip.videoUrl) {
-                ShortPlayer(url: url, playing: !userPaused)
+                ShortPlayer(url: url, playing: !userPaused && !pausedForLookup)
             } else if let cover = clip.coverUrl, let url = URL(string: cover) {
                 AsyncImage(url: url) { image in
                     image.resizable().scaledToFit()
