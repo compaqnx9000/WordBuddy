@@ -1353,11 +1353,19 @@ struct RelatedWordPreview: View {
     }
 }
 
+private struct ExamplePaneWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private struct CardExamplePanel: View {
     var word: String
     var examples: [ExampleSentence]
     var accent: Accent
     @State private var page: Int? = 0
+    @State private var paneWidth: CGFloat = 0
 
     var body: some View {
         let example = examples[safePage]
@@ -1367,6 +1375,13 @@ private struct CardExamplePanel: View {
                 .tracking(1.2)
                 .foregroundStyle(Theme.onSurfaceVariant)
             sentencePager
+                .background {
+                    GeometryReader { geo in
+                        Color.clear
+                            .preference(key: ExamplePaneWidthKey.self, value: geo.size.width)
+                    }
+                }
+                .onPreferenceChange(ExamplePaneWidthKey.self) { paneWidth = $0 }
             if examples.count > 1 {
                 HStack(spacing: CardMetrics.sdp(6)) {
                     ForEach(examples.indices, id: \.self) { index in
@@ -1409,8 +1424,7 @@ private struct CardExamplePanel: View {
         ScrollView(.horizontal) {
             LazyHStack(spacing: 0) {
                 ForEach(Array(examples.enumerated()), id: \.offset) { index, example in
-                    sentenceBlock(example)
-                        .containerRelativeFrame(.horizontal)
+                    sentenceBlock(example, width: paneWidth)
                         .id(index)
                 }
             }
@@ -1422,17 +1436,30 @@ private struct CardExamplePanel: View {
         .scrollDisabled(examples.count < 2)
     }
 
-    private func sentenceBlock(_ example: ExampleSentence) -> some View {
-        VStack(spacing: CardMetrics.sdp(10)) {
+    private func sentenceBlock(_ example: ExampleSentence, width: CGFloat) -> some View {
+        let englishSize = CardMetrics.sdp(22)
+        let chineseSize = CardMetrics.sdp(16)
+        let textWidth = width > 1 ? width : nil
+        return VStack(spacing: CardMetrics.sdp(10)) {
             Text(highlighted(example.english))
-                .font(.system(size: CardMetrics.sdp(22)))
+                .font(.system(size: englishSize))
+                .lineSpacing(Self.leading(fontSize: englishSize, lineHeight: CardMetrics.sdp(30)))
+                .foregroundStyle(Theme.onSurface)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
+                .frame(width: textWidth, alignment: .center)
             Text(example.chinese)
-                .font(.system(size: CardMetrics.sdp(16)))
+                .font(.system(size: chineseSize))
+                .lineSpacing(Self.leading(fontSize: chineseSize, lineHeight: CardMetrics.sdp(24)))
                 .foregroundStyle(Theme.onSurfaceVariant)
                 .multilineTextAlignment(.center)
+                .frame(width: textWidth, alignment: .center)
         }
+        .frame(width: textWidth)
+    }
+
+    private static func leading(fontSize: CGFloat, lineHeight: CGFloat) -> CGFloat {
+        let font = UIFont.systemFont(ofSize: fontSize)
+        return max(0, lineHeight - font.lineHeight)
     }
 
     private var safePage: Int {

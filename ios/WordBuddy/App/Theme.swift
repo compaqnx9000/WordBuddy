@@ -487,10 +487,19 @@ struct DefinitionLine: View {
                     .frame(width: 48, alignment: .leading)
             }
             Text(definition.meaning)
+                .font(.body)
+                .lineSpacing(Self.meaningLineSpacing)
                 .foregroundStyle(Theme.onSurface)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+
+    /// Android definition rows use 16sp type on a 26sp line. Keep that ratio on the body font.
+    private static let meaningLineSpacing: CGFloat = {
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let target = font.pointSize * 26 / 16
+        return max(0, target - font.lineHeight)
+    }()
 }
 
 struct PrimaryButtonStyle: ButtonStyle {
