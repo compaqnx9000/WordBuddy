@@ -239,6 +239,18 @@ CREATE INDEX IF NOT EXISTS user_checkin_logs_date
 CREATE INDEX IF NOT EXISTS user_checkin_logs_user
     ON user_checkin_logs (user_id, checkin_date DESC);
 
+CREATE TABLE IF NOT EXISTS user_activity_days (
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    activity_date DATE NOT NULL,
+    active_ms INTEGER NOT NULL DEFAULT 0,
+    counted BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, activity_date)
+);
+
+CREATE INDEX IF NOT EXISTS user_activity_days_counted
+    ON user_activity_days (user_id) WHERE counted;
+
 CREATE INDEX IF NOT EXISTS user_checkins_points
     ON user_checkins (total_points DESC);
 
@@ -410,7 +422,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 
 INSERT INTO app_settings (key, value)
-VALUES ('reward_video_points', '5')
+VALUES ('reward_video_points', '1500')
 ON CONFLICT (key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS reward_video_grants (

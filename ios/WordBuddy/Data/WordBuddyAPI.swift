@@ -559,6 +559,16 @@ actor WordBuddyAPI {
         }
     }
 
+    func reportActivity(token: String, activeMs: Int) async throws -> Int {
+        let root = try await request(
+            method: "POST",
+            path: "/me/activity",
+            auth: token,
+            body: ["activeMs": activeMs]
+        )
+        return JSONValue.int(root, key: "level", default: -1)
+    }
+
     func fetchMe(token: String) async throws -> UserSession {
         let root = try await request(method: "GET", path: "/me", auth: token, body: nil)
         guard let user = root["user"] as? [String: Any] else {
@@ -708,7 +718,7 @@ actor WordBuddyAPI {
         let used = max(0, JSONValue.int(object, key: "usedToday"))
         let remaining = max(0, JSONValue.int(object, key: "remaining", default: max(0, limit - used)))
         return RewardVideoOffer(
-            pointsPerWatch: max(1, JSONValue.int(object, key: "pointsPerWatch", default: 5)),
+            pointsPerWatch: max(1, JSONValue.int(object, key: "pointsPerWatch", default: 1500)),
             dailyLimit: limit,
             usedToday: used,
             remaining: remaining,
@@ -857,8 +867,8 @@ actor WordBuddyAPI {
         return InviteInfo(
             canBindInvite: JSONValue.bool(root, key: "canBindInvite", default: true),
             invitedByBuddyId: JSONValue.string(root, key: "invitedByBuddyId"),
-            inviteeReward: JSONValue.int(rewards, key: "inviteePoints", default: 10),
-            inviterReward: JSONValue.int(rewards, key: "inviterPoints", default: 20),
+            inviteeReward: JSONValue.int(rewards, key: "inviteePoints", default: 5000),
+            inviterReward: JSONValue.int(rewards, key: "inviterPoints", default: 5000),
             invitedCount: JSONValue.int(root, key: "invitedCount")
         )
     }
@@ -886,19 +896,19 @@ actor WordBuddyAPI {
         }
     }
 
-    func listGifts(category: String, page: Int = 1) async throws -> [GiftItem] {
+    func listGifts(category: String, page: Int = 1, token: String? = nil) async throws -> [GiftItem] {
         let encoded = category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category
         let root = try await request(
             method: "GET",
             path: "/gifts?page=\(page)&pageSize=40&category=\(encoded)",
-            auth: nil,
+            auth: token,
             body: nil
         )
         return JSONValue.array(root, key: "items").compactMap { ($0 as? [String: Any]).map(parseGift) }
     }
 
-    func fetchGift(id: Int64) async throws -> GiftItem {
-        let root = try await request(method: "GET", path: "/gifts/\(id)", auth: nil, body: nil)
+    func fetchGift(id: Int64, token: String? = nil) async throws -> GiftItem {
+        let root = try await request(method: "GET", path: "/gifts/\(id)", auth: token, body: nil)
         guard let item = root["item"] as? [String: Any] else {
             throw APIError(message: "礼品不存在")
         }

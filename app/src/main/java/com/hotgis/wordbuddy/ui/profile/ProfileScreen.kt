@@ -121,6 +121,7 @@ fun ProfileScreen(
     onExportContent: suspend () -> String,
     onImportContent: suspend (String) -> NotebookImportResult,
     phone: String? = null,
+    signature: String? = null,
     level: Int = 1,
     networkRegion: String? = null,
     networkRegionDetail: String? = null,
@@ -529,6 +530,7 @@ fun ProfileScreen(
             ProfileHeroCard(
                 userName = userName,
                 phone = phone,
+                signature = signature,
                 level = level,
                 wordCount = wordCount,
                 totalPoints = checkIn.totalPoints,
@@ -1150,6 +1152,7 @@ private fun CheckInDayCell(
 private fun ProfileHeroCard(
     userName: String,
     phone: String?,
+    signature: String?,
     level: Int,
     wordCount: Int,
     totalPoints: Int,
@@ -1330,6 +1333,23 @@ private fun ProfileHeroCard(
                 fontSize = 14.ssp(),
                 modifier = Modifier.offset(y = (-16).sdp()),
             )
+            val signatureText = signature
+                ?.replace(Regex("\\s+"), " ")
+                ?.trim()
+                ?.takeIf { loggedIn && it.isNotEmpty() }
+            if (signatureText != null) {
+                Text(
+                    text = signatureText,
+                    color = Stellar.OnSurfaceVariant,
+                    fontSize = 13.ssp(),
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .offset(y = (-12).sdp())
+                        .padding(horizontal = 12.sdp()),
+                )
+            }
             Text(
                 text = statsText,
                 color = Stellar.OnSurfaceVariant,

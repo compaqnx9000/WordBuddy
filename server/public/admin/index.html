@@ -263,6 +263,24 @@ async function saveRewardVideoPoints() {
     alert(e.message || '保存失败');
   }
 }
+async function saveLevelRules() {
+  const minutes = Number(document.getElementById('lvMinutes')?.value);
+  const levels = [0,1,2,3,4,5,6,7].map((level) => ({
+    level,
+    minDays: Number(document.getElementById('lvDays' + level)?.value),
+    videoDailyLimit: Number(document.getElementById('lvVideo' + level)?.value),
+    checkInBonusPercent: Number(document.getElementById('lvCheckin' + level)?.value),
+    makeupPerDay: Number(document.getElementById('lvMakeup' + level)?.value),
+    mallDiscountPercent: Number(document.getElementById('lvMall' + level)?.value),
+  }));
+  try {
+    await api('/level-rules', { method: 'PUT', body: JSON.stringify({ minutesPerValidDay: minutes, levels }) });
+    alert('等级规则已保存，之后的签到、看视频、补签和商城兑换立即按新规则计算');
+    go('checkins');
+  } catch (e) {
+    alert(e.message || '保存失败');
+  }
+}
 async function api(path, opts = {}) {
   const res = await fetch('/admin/api' + path, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
   const data = await res.json().catch(() => ({}));
@@ -707,17 +725,39 @@ async function render() {
         </tr>`).join('')}</tbody></table>
         ${pager(d.total)}`;
     } else if (state.page === 'checkins') {
-      const rv = await api('/reward-video').catch(() => ({ pointsPerWatch: 5, dailyLimit: 20 }));
+      const rv = await api('/reward-video').catch(() => ({ pointsPerWatch: 1500, dailyLimit: 20 }));
+      const rules = await api('/level-rules').catch(() => null);
+      const ruleRows = (rules && rules.levels) ? rules.levels : [];
+      const levelTable = ruleRows.map((row) => `<tr>
+        <td>Lv.${row.level}</td>
+        <td><input id="lvDays${row.level}" type="number" min="0" max="20000" value="${row.minDays}" style="max-width:96px" ${row.level===0?'readonly':''} /></td>
+        <td><input id="lvVideo${row.level}" type="number" min="1" max="100" value="${row.videoDailyLimit}" style="max-width:80px" /></td>
+        <td><input id="lvCheckin${row.level}" type="number" min="0" max="500" value="${row.checkInBonusPercent}" style="max-width:80px" /></td>
+        <td><input id="lvMakeup${row.level}" type="number" min="0" max="10" value="${row.makeupPerDay}" style="max-width:72px" /></td>
+        <td><input id="lvMall${row.level}" type="number" min="0" max="90" value="${row.mallDiscountPercent}" style="max-width:72px" /></td>
+      </tr>`).join('');
       const rvBar = `<div class="card" style="width:100%;max-width:none;margin:0 0 16px;padding:18px 20px">
         <h1 style="font-size:18px">激励广告积分</h1>
         <p class="sub" style="margin:0 0 12px">用户看完一条激励视频后获得的积分。保存后，下一次看完立即按新数值发放。</p>
         <div class="toolbar" style="margin:0">
           <label style="margin:0">每次获得</label>
-          <input id="rvPoints" type="number" min="1" max="999" value="${Number(rv.pointsPerWatch) || 5}" style="max-width:120px" />
+          <input id="rvPoints" type="number" min="1" max="100000" value="${Number(rv.pointsPerWatch) || 1500}" style="max-width:120px" />
           <span class="sub" style="margin:0">积分</span>
           <button class="btn" onclick="saveRewardVideoPoints()">保存</button>
-          <span class="sub" style="margin:0">每人每天 ${Number(rv.dailyLimit) || 20} 次</span>
+          <span class="sub" style="margin:0">每天可看次数由等级规则决定</span>
         </div>
+      </div>
+      <div class="card" style="width:100%;max-width:none;margin:0 0 16px;padding:18px 20px">
+        <h1 style="font-size:18px">等级规则</h1>
+        <p class="sub" style="margin:0 0 12px">等级按有效使用天数自动计算，只升不降。同一天前台使用满设定分钟才算 1 天。天数、看视频次数、签到加成必须逐级不减。Lv0 天数固定为 0。</p>
+        <div class="toolbar" style="margin:0 0 12px">
+          <label style="margin:0">每天满</label>
+          <input id="lvMinutes" type="number" min="5" max="180" value="${Number(rules?.minutesPerValidDay) || 30}" style="max-width:88px" />
+          <span class="sub" style="margin:0">分钟算 1 个有效天</span>
+          <button class="btn" onclick="saveLevelRules()">保存规则</button>
+        </div>
+        <table><thead><tr><th>等级</th><th>有效天数</th><th>每天看视频</th><th>签到加成 %</th><th>每天补签</th><th>商城折扣 %</th></tr></thead>
+        <tbody>${levelTable || '<tr><td colspan="6">规则加载失败</td></tr>'}</tbody></table>
       </div>`;
       if (state.checkInView === 'logs') {
         const d = await api(`/checkins/logs?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
@@ -1052,11 +1092,7 @@ async function openUser(id) {
     </div>
     <div class="toolbar">
       <input id="newPhone" placeholder="改手机号" value="${esc(u.phone)}" />
-      <label class="field-inline">等级
-        <select id="newLevel">
-          ${[0,1,2,3,4,5,6,7].map(lv => `<option value="${lv}" ${(u.level??0)===lv?'selected':''}>Lv.${lv}</option>`).join('')}
-        </select>
-      </label>
+      <span class="sub" style="margin:0">Lv.${u.level ?? 0} · 有效使用 ${u.validDays ?? 0} 天（按规则自动计算）</span>
       <input id="newPass" type="password" placeholder="重置密码（可空）" />
       <button class="btn" onclick="saveUser(${u.id})">保存</button>
       <button class="btn danger" onclick="delUser(${u.id},'${esc(u.phone)}')">删除用户</button>
@@ -1115,7 +1151,6 @@ async function saveUser(id) {
   try {
     const body = {
       phone: document.getElementById('newPhone').value,
-      level: Number(document.getElementById('newLevel').value),
     };
     const pw = document.getElementById('newPass').value;
     if (pw) body.password = pw;

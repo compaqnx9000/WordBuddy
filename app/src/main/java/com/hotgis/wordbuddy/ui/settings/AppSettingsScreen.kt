@@ -37,7 +37,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.Image
@@ -275,7 +274,6 @@ fun AppSettingsScreen(
                     onSelectNotebook = onSelectDefaultNotebook,
                     autoPronounce = settings.speakOnPageChange,
                     dailyReminder = settings.dailyReminder,
-                    aiImageAutoGen = settings.aiImageAutoGen,
                     imageProvider = settings.imageProvider,
                     podcastPlayWhenScreenOff = settings.podcastPlayWhenScreenOff,
                     shortsMetaVisibleDefault = settings.shortsMetaVisibleDefault,
@@ -284,7 +282,6 @@ fun AppSettingsScreen(
                         val handler = onDailyReminderChange
                         if (handler != null) handler(enabled) else onChange { it.copy(dailyReminder = enabled) }
                     },
-                    onAiImageAutoGen = { enabled -> onChange { it.copy(aiImageAutoGen = enabled) } },
                     onImageProvider = { provider -> onChange { it.copy(imageProvider = provider) } },
                     onPodcastPlayWhenScreenOff = { enabled ->
                         onChange { it.copy(podcastPlayWhenScreenOff = enabled) }
@@ -590,13 +587,11 @@ private fun PreferencesCard(
     onSelectNotebook: (Long) -> Unit,
     autoPronounce: Boolean,
     dailyReminder: Boolean,
-    aiImageAutoGen: Boolean,
     imageProvider: ImageGenProvider,
     podcastPlayWhenScreenOff: Boolean,
     shortsMetaVisibleDefault: Boolean,
     onAutoPronounce: (Boolean) -> Unit,
     onDailyReminder: (Boolean) -> Unit,
-    onAiImageAutoGen: (Boolean) -> Unit,
     onImageProvider: (ImageGenProvider) -> Unit,
     onPodcastPlayWhenScreenOff: (Boolean) -> Unit,
     onShortsMetaVisibleDefault: (Boolean) -> Unit,
@@ -664,15 +659,6 @@ private fun PreferencesCard(
             checked = shortsMetaVisibleDefault,
             accentOnHover = Stellar.Cyan,
             onChecked = onShortsMetaVisibleDefault,
-        )
-        PreferenceDivider()
-        PreferenceToggle(
-            icon = Icons.Filled.AutoAwesome,
-            title = "AI 自动生成配图",
-            subtitle = "收藏生词时自动生成助记图",
-            checked = aiImageAutoGen,
-            accentOnHover = Stellar.Pink,
-            onChecked = onAiImageAutoGen,
         )
         if (notebooks.isNotEmpty()) {
             PreferenceDivider()

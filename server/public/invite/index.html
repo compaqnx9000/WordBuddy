@@ -145,8 +145,8 @@
             return;
           }
           var j = res.j;
-          var invitee = (j.rewards && j.rewards.inviteePoints) || 10;
-          var inviter = (j.rewards && j.rewards.inviterPoints) || 20;
+          var invitee = (j.rewards && j.rewards.inviteePoints) || 5000;
+          var inviter = (j.rewards && j.rewards.inviterPoints) || 5000;
           var apk = j.downloadUrl || '/app/WordBuddy-release.apk';
           var shareHint = '邀请码 ' + j.inviteCode;
           try { sessionStorage.setItem('wb_invite', j.inviteCode); } catch (e) {}

@@ -1,9 +1,9 @@
 import { pool, query } from './db.js'
 
 /** Points granted to the inviter when a new user registers with their buddy id. */
-export const INVITE_REWARD_INVITER = 20
+export const INVITE_REWARD_INVITER = 5000
 /** Points granted to the new user who used a valid invite code. */
-export const INVITE_REWARD_INVITEE = 10
+export const INVITE_REWARD_INVITEE = 5000
 
 export function normalizeInviteCode(raw) {
   const code = String(raw || '')

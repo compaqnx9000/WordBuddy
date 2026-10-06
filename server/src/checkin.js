@@ -1,4 +1,5 @@
 import { pool, query } from './db.js'
+import { applyCheckInBonus, getUserPerks } from './levels.js'
 
 /** Calendar date in Asia/Shanghai as yyyy-MM-dd. */
 export function todayShanghai(now = new Date()) {
@@ -217,7 +218,8 @@ export async function performUserCheckIn(userId, today = todayShanghai()) {
     dates.add(today)
     const prevPoints = Math.max(0, Number(existing?.total_points || 0))
     const newStreak = consecutiveEndingAt(dates, today)
-    const earned = rewardForDay(newStreak)
+    const perks = await getUserPerks(userId)
+    const earned = applyCheckInBonus(rewardForDay(newStreak), perks.checkInBonusPercent)
     const newTotal = prevPoints + earned
 
     await client.query(
@@ -315,13 +317,34 @@ export async function performMakeupCheckIn(userId, dateYmd, today = todayShangha
       return { ok: false, already: true, error: '该日已签到', state }
     }
 
+    const perks = await getUserPerks(userId)
+    const madeToday = (
+      await client.query(
+        `SELECT count(*)::int AS n
+         FROM user_checkin_logs
+         WHERE user_id = $1
+           AND checkin_date < $2::date
+           AND (created_at AT TIME ZONE 'Asia/Shanghai')::date = $2::date`,
+        [userId, today],
+      )
+    ).rows[0]
+    if (Number(madeToday?.n || 0) >= perks.makeupPerDay) {
+      await client.query('ROLLBACK')
+      const state = await getUserCheckIn(userId, today)
+      return {
+        ok: false,
+        error: `今天最多补签 ${perks.makeupPerDay} 次`,
+        state,
+      }
+    }
+
     const dates = await loadDatesSet(client, userId)
     const last = dateString(existing?.last_checkin_date)
     if (last) dates.add(last)
     dates.add(date)
     const prevPoints = Math.max(0, Number(existing?.total_points || 0))
     const streakAtDate = consecutiveEndingAt(dates, date)
-    const earned = rewardForDay(streakAtDate)
+    const earned = applyCheckInBonus(rewardForDay(streakAtDate), perks.checkInBonusPercent)
     const newTotal = prevPoints + earned
 
     await client.query(

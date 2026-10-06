@@ -137,6 +137,15 @@ struct MeView: View {
 
     private var loggedIn: Bool { model.session != nil }
 
+    private var profileSignature: String? {
+        guard loggedIn else { return nil }
+        let text = model.session?.signature?
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let text, !text.isEmpty else { return nil }
+        return text
+    }
+
     /// Words saved in every personal notebook, not only the open one.
     private var collectedWordCount: Int {
         model.notebooks.reduce(0) { total, book in
@@ -234,6 +243,16 @@ struct MeView: View {
                     .font(.subheadline)
                     .foregroundStyle(Theme.cyan)
                     .padding(.top, 6)
+
+                if let signature = profileSignature {
+                    Text(signature)
+                        .font(.caption)
+                        .foregroundStyle(Theme.onSurfaceVariant)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .padding(.top, 6)
+                        .padding(.horizontal, 8)
+                }
 
                 Text(
                     loggedIn
@@ -1415,13 +1434,6 @@ struct SettingsView: View {
                 title: "短视频默认显示文案",
                 subtitle: "关闭后播放时默认藏文案，仍可单击点开",
                 isOn: Binding(get: { model.shortsMetaVisibleDefault }, set: { model.setShortsMetaVisibleDefault($0) })
-            )
-            preferenceDivider()
-            preferenceToggle(
-                icon: "sparkles",
-                title: "AI 自动生成配图",
-                subtitle: "收藏生词时自动生成助记图",
-                isOn: Binding(get: { model.aiImageAutoGen }, set: { model.setAiImageAutoGen($0) })
             )
             if !favoriteNotebooks.isEmpty {
                 preferenceDivider()

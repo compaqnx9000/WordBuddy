@@ -4,6 +4,31 @@ export function aiImagePointsCost() {
   return Math.max(0, Number(process.env.AI_IMAGE_POINTS_COST) || 5)
 }
 
+/** Credited once when an account is created, before any invite bonus. */
+export const SIGNUP_BONUS_POINTS = 10000
+
+/**
+ * Grant the new-user bonus at most once. Safe to call again after a retry.
+ */
+export async function grantSignupBonus(userId) {
+  const uid = Number(userId)
+  if (!Number.isFinite(uid) || uid <= 0) return { ok: false, error: '无效用户' }
+  const paid = (
+    await query(
+      `SELECT 1 FROM points_ledger WHERE user_id = $1 AND reason = 'signup_bonus' LIMIT 1`,
+      [uid],
+    )
+  ).rowCount > 0
+  if (paid) return { ok: true, skipped: true, balance: await getPointsBalance(uid) }
+  return adjustPoints({
+    userId: uid,
+    delta: SIGNUP_BONUS_POINTS,
+    reason: 'signup_bonus',
+    refType: 'signup',
+    refId: String(uid),
+  })
+}
+
 /**
  * Credit or debit points inside an existing client transaction, or open a short one.
  * delta > 0 credit, delta < 0 debit.

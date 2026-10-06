@@ -78,6 +78,13 @@ struct RootView: View {
             if phase != .active, !model.podcastPlayWhenScreenOff {
                 model.podcast.pause()
             }
+            updateActivityTracking(phase: phase)
+        }
+        .onChange(of: needsBiometricLock) { _, _ in
+            updateActivityTracking(phase: scenePhase)
+        }
+        .onChange(of: model.session?.userId) { _, _ in
+            updateActivityTracking(phase: scenePhase)
         }
         .overlay {
             if showColdSplash {
@@ -99,11 +106,21 @@ struct RootView: View {
         .task {
             await model.bootstrap()
             StudyReminder.sync(enabled: model.dailyReminder)
+            updateActivityTracking(phase: scenePhase)
         }
         .alert("提示", isPresented: bannerPresented) {
             Button("好", role: .cancel) { model.banner = nil }
         } message: {
             Text(model.banner ?? "")
+        }
+    }
+
+    private func updateActivityTracking(phase: ScenePhase) {
+        let track = phase != .background && model.session != nil && !needsBiometricLock
+        if track {
+            model.startActivityTracking()
+        } else {
+            model.stopActivityTracking()
         }
     }
 

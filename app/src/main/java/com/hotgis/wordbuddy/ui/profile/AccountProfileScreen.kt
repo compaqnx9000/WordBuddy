@@ -1,7 +1,6 @@
 package com.hotgis.wordbuddy.ui.profile
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
@@ -66,7 +65,6 @@ import com.google.zxing.qrcode.QRCodeWriter
 import com.hotgis.wordbuddy.ads.findActivity
 import com.hotgis.wordbuddy.auth.WeChatAuth
 import com.hotgis.wordbuddy.data.WordBuddyApi
-import com.hotgis.wordbuddy.data.InviteStore
 import com.hotgis.wordbuddy.pay.AlipayPayHelper
 import com.hotgis.wordbuddy.pay.isAlipayAuthIdentity
 import com.hotgis.wordbuddy.ui.components.WordBuddyAvatarIcon
@@ -152,7 +150,7 @@ fun AccountProfileScreen(
     var editError by remember { mutableStateOf<String?>(null) }
     var canBindInvite by remember { mutableStateOf(false) }
     var invitedByBuddyId by remember { mutableStateOf<String?>(null) }
-    var inviteeReward by remember { mutableStateOf(10) }
+    var inviteeReward by remember { mutableStateOf(5000) }
 
     val resolvedBuddyId = buddyId?.trim().orEmpty()
 
@@ -727,22 +725,6 @@ fun AccountProfileScreen(
                     showChevron = false,
                     onClick = {
                         Toast.makeText(context, "搭子号由系统分配，不可修改", Toast.LENGTH_SHORT).show()
-                    },
-                )
-                AccountProfileDivider()
-                AccountProfileRow(
-                    title = "邀请好友",
-                    value = if (resolvedBuddyId.isBlank()) "分配中…" else "分享链接赚积分",
-                    onClick = {
-                        if (resolvedBuddyId.isBlank()) {
-                            Toast.makeText(context, "搭子号尚未分配，请稍后重试", Toast.LENGTH_SHORT).show()
-                            return@AccountProfileRow
-                        }
-                        val send = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, InviteStore.shareText(resolvedBuddyId))
-                        }
-                        context.startActivity(Intent.createChooser(send, "邀请好友"))
                     },
                 )
                 AccountProfileDivider()

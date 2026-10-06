@@ -305,6 +305,17 @@ class WordBuddyApi {
 
     suspend fun fetchMe(token: String): UserSession? = fetchMeSnapshot(token)?.session
 
+    /** Foreground heartbeat. Returns the computed level, or -1 when the body has none. */
+    suspend fun reportActivity(token: String, activeMs: Int): Int = withContext(Dispatchers.IO) {
+        val root = request(
+            "POST",
+            "/me/activity",
+            auth = token,
+            body = JSONObject().put("activeMs", activeMs),
+        )
+        if (!root.has("level")) -1 else root.optInt("level", 0)
+    }
+
     suspend fun fetchMeSnapshot(token: String): MeSnapshot? = withContext(Dispatchers.IO) {
         val root = request("GET", "/me", auth = token)
         val user = root.optJSONObject("user") ?: return@withContext null
@@ -406,8 +417,8 @@ class WordBuddyApi {
         InviteInfo(
             canBindInvite = root.optBoolean("canBindInvite", true),
             invitedByBuddyId = root.optString("invitedByBuddyId").trim().takeIf { it.isNotEmpty() },
-            inviteeReward = rewards?.optInt("inviteePoints", 10) ?: 10,
-            inviterReward = rewards?.optInt("inviterPoints", 20) ?: 20,
+            inviteeReward = rewards?.optInt("inviteePoints", 5000) ?: 5000,
+            inviterReward = rewards?.optInt("inviterPoints", 5000) ?: 5000,
             invitedCount = root.optInt("invitedCount", 0),
         )
     }
@@ -422,7 +433,7 @@ class WordBuddyApi {
             )
             BindInviteResult(
                 message = root.optString("message").ifBlank { "邀请码已填写" },
-                inviteeReward = root.optInt("inviteeReward", 10),
+                inviteeReward = root.optInt("inviteeReward", 5000),
                 totalPoints = root.optInt("totalPoints", 0),
                 invitedByBuddyId = root.optString("invitedByBuddyId").trim().takeIf { it.isNotEmpty() },
             )
@@ -681,10 +692,10 @@ class WordBuddyApi {
         }
     }
 
-    suspend fun listGifts(category: String = "recommend", page: Int = 1): List<GiftItem> =
+    suspend fun listGifts(category: String = "recommend", page: Int = 1, token: String? = null): List<GiftItem> =
         withContext(Dispatchers.IO) {
             val path = "/gifts?page=$page&pageSize=40&category=${enc(category)}"
-            val root = request("GET", path, auth = null)
+            val root = request("GET", path, auth = token)
             val items = root.optJSONArray("items") ?: JSONArray()
             buildList {
                 for (i in 0 until items.length()) {
@@ -694,8 +705,8 @@ class WordBuddyApi {
             }
         }
 
-    suspend fun fetchGift(id: Long): GiftItem = withContext(Dispatchers.IO) {
-        val root = request("GET", "/gifts/$id", auth = null)
+    suspend fun fetchGift(id: Long, token: String? = null): GiftItem = withContext(Dispatchers.IO) {
+        val root = request("GET", "/gifts/$id", auth = token)
         parseGift(root.getJSONObject("item"))
     }
 
@@ -902,7 +913,7 @@ class WordBuddyApi {
         val used = obj.optInt("usedToday", 0).coerceAtLeast(0)
         val remaining = obj.optInt("remaining", (limit - used).coerceAtLeast(0)).coerceAtLeast(0)
         return RewardVideoOffer(
-            pointsPerWatch = obj.optInt("pointsPerWatch", 5).coerceAtLeast(1),
+            pointsPerWatch = obj.optInt("pointsPerWatch", 1500).coerceAtLeast(1),
             dailyLimit = limit,
             usedToday = used,
             remaining = remaining,

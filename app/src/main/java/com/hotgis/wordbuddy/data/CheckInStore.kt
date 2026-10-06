@@ -6,7 +6,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 data class RewardVideoOffer(
-    val pointsPerWatch: Int = 5,
+    val pointsPerWatch: Int = 1500,
     val dailyLimit: Int = 20,
     val usedToday: Int = 0,
     val remaining: Int = 20,

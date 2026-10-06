@@ -48,11 +48,11 @@ final class AppModel: ObservableObject {
     @Published var imageProvider: ImageProvider = .pollinations
     @Published var aiImagePointsCost = 5
     @Published var dailyReminder = true
-    @Published var aiImageAutoGen = false
     @Published var podcastPlayWhenScreenOff = false
     @Published var shortsMetaVisibleDefault = true
     @Published var biometricLogin = false
     @Published var biometricUnlocked = false
+    private var activityTask: Task<Void, Never>?
     @Published var defaultNotebookId: Int64 = 0
     @Published var mnemonicRevision = 0
     @Published var avatarImage: UIImage?
@@ -81,7 +81,6 @@ final class AppModel: ObservableObject {
         speakOnPageChange = SettingsStore.speakOnPageChange
         imageProvider = SettingsStore.imageProvider
         dailyReminder = SettingsStore.dailyReminder
-        aiImageAutoGen = SettingsStore.aiImageAutoGen
         podcastPlayWhenScreenOff = SettingsStore.podcastPlayWhenScreenOff
         shortsMetaVisibleDefault = SettingsStore.shortsMetaVisibleDefault
         biometricLogin = SettingsStore.biometricLogin
@@ -257,7 +256,39 @@ final class AppModel: ObservableObject {
         await loadAvatar()
     }
 
+    func startActivityTracking() {
+        guard activityTask == nil else { return }
+        activityTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                if Task.isCancelled { return }
+                await self?.reportActiveUse(activeMs: 30_000)
+            }
+        }
+    }
+
+    func stopActivityTracking() {
+        activityTask?.cancel()
+        activityTask = nil
+    }
+
+    func reportActiveUse(activeMs: Int) async {
+        guard let session else { return }
+        do {
+            let level = try await api.reportActivity(token: session.token, activeMs: activeMs)
+            guard level >= 0, level != session.level else { return }
+            var updated = session
+            updated.level = level
+            self.session = updated
+            SessionStore.save(updated)
+            AccountStore.upsert(updated)
+        } catch {
+            _ = noteSessionError(error)
+        }
+    }
+
     func logout() {
+        stopActivityTracking()
         session = nil
         biometricUnlocked = false
         SessionStore.clear()
@@ -310,11 +341,6 @@ final class AppModel: ObservableObject {
         dailyReminder = value
         SettingsStore.dailyReminder = value
         StudyReminder.sync(enabled: value, ask: value)
-    }
-
-    func setAiImageAutoGen(_ value: Bool) {
-        aiImageAutoGen = value
-        SettingsStore.aiImageAutoGen = value
     }
 
     func setPodcastPlayWhenScreenOff(_ value: Bool) {
@@ -1004,11 +1030,6 @@ final class AppModel: ObservableObject {
             }
             headsCache[notebookId] = nil
             banner = "已收藏到「\(notebook.name)」"
-            if aiImageAutoGen {
-                let word = entry.text
-                let hint = entry.definitions.first?.label ?? ""
-                Task { _ = await generateMnemonicImage(word: word, meaningHint: hint) }
-            }
             return true
         } catch {
             if !noteSessionError(error) {

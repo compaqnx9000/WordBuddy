@@ -1,4 +1,5 @@
 import { pool, query } from './db.js'
+import { discountedPoints, getUserPerks } from './levels.js'
 
 export const GIFT_CATEGORY_DEFS = [
   { id: 'recommend', name: '推荐', sortOrder: 0 },
@@ -282,7 +283,8 @@ export async function redeemGift(userId, giftId, address = {}) {
       await client.query('ROLLBACK')
       return { ok: false, error: '库存不足' }
     }
-    const pointsCost = Math.max(0, Number(gift.points_cost || 0))
+    const perks = await getUserPerks(userId)
+    const pointsCost = discountedPoints(gift.points_cost, perks.mallDiscountPercent)
     const cashFen = Math.max(0, Number(gift.cash_fen || 0))
     const needAddress = Boolean(gift.need_address)
     const name = String(address.name || '').trim()

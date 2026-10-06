@@ -48,7 +48,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.window.Dialog
@@ -583,7 +582,7 @@ fun EditSignatureDialog(
     var value by remember { mutableStateOf(initial) }
     ProfileFormDialog(
         title = "修改签名",
-        subtitle = "最多 40 个字，展示在个人资料页。",
+        subtitle = "最多 40 个字，展示在个人资料和「我的」页顶部。",
         busy = busy,
         error = error,
         confirmText = "保存",
@@ -631,7 +630,7 @@ fun EditEmailDialog(
 fun EditInviteCodeDialog(
     busy: Boolean,
     error: String?,
-    inviteeReward: Int = 10,
+    inviteeReward: Int = 5000,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
@@ -690,13 +689,6 @@ fun BuddyQrDialog(
                 text = "搭子号  $buddyId",
                 color = Stellar.OnSurfaceVariant,
                 fontSize = 13.ssp(),
-            )
-            Spacer(Modifier.height(4.sdp()))
-            Text(
-                text = "与搭子号一一对应，之后可扫码加搭子",
-                color = Stellar.OnSurfaceVariant.copy(alpha = 0.75f),
-                fontSize = 12.ssp(),
-                textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(16.sdp()))
             Box(

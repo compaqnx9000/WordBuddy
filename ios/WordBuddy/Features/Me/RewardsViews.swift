@@ -297,7 +297,7 @@ struct PointsMallView: View {
         defer { loading = false }
         do {
             // 上架前不展示含现金的礼品。在线支付未开通，审核员会看到未完成的支付说明。
-            gifts = try await model.api.listGifts(category: category).filter { $0.cashFen == 0 }
+            gifts = try await model.api.listGifts(category: category, token: model.session?.token).filter { $0.cashFen == 0 }
         } catch {
             errorText = error.localizedDescription
         }
@@ -524,7 +524,7 @@ struct GiftDetailView: View {
     private func load() async {
         loading = true
         defer { loading = false }
-        gift = try? await model.api.fetchGift(id: giftId)
+        gift = try? await model.api.fetchGift(id: giftId, token: model.session?.token)
     }
 
     private func redeem() async {

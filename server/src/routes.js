@@ -25,6 +25,7 @@ import {
 import { newLoginCode, sendCode, skipVerify } from './sms.js'
 import * as rateLimit from './rateLimit.js'
 import { getUserCheckIn, performUserCheckIn, performMakeupCheckIn } from './checkin.js'
+import { recordActiveMs, syncUserLevel, discountedPoints, getUserPerks } from './levels.js'
 import { claimRewardVideo, rewardVideoStatus } from './rewardVideo.js'
 import { resolveIpLocation, extractDeviceInfo } from './device.js'
 import {
@@ -52,7 +53,7 @@ import {
   pointPayConfig,
   simulatePayOrder,
 } from './pointOrders.js'
-import { aiImagePointsCost } from './points.js'
+import { aiImagePointsCost, grantSignupBonus } from './points.js'
 import { alipayConfig, buildAppAuthInfo, exchangeAlipayAuthCode, fetchAlipayUserProfile } from './alipay.js'
 import {
   createWithdrawal,
@@ -526,6 +527,15 @@ router.post('/auth/register', async (req, res) => {
   await recordPasswordEvent(req, user.id, 'register')
   await consumeSms(checked.smsId)
 
+  try {
+    const bonus = await grantSignupBonus(user.id)
+    if (bonus?.ok && !bonus.skipped) {
+      console.log(`[signup] user ${user.id} +${bonus.delta}`)
+    }
+  } catch (err) {
+    console.error('[signup] bonus failed', err)
+  }
+
   let invite = null
   if (inviteCode) {
     try {
@@ -583,6 +593,11 @@ router.post('/auth/wechat', async (req, res) => {
         [openid, exchanged.unionid],
       )
     ).rows[0]
+    try {
+      await grantSignupBonus(user.id)
+    } catch (err) {
+      console.error('[signup] bonus failed', err)
+    }
   }
   if (wxProfile.ok) {
     await applyWechatProfile(user.id, wxProfile)
@@ -630,6 +645,11 @@ router.post('/auth/alipay', async (req, res) => {
           [identity],
         )
       ).rows[0]
+      try {
+        await grantSignupBonus(user.id)
+      } catch (err) {
+        console.error('[signup] bonus failed', err)
+      }
     }
     if (exchanged.accessToken) {
       const aliProfile = await fetchAlipayUserProfile(exchanged.accessToken)
@@ -856,8 +876,23 @@ router.post('/me/invite/bind', authRequired, async (req, res) => {
   }
 })
 
+router.post('/me/activity', authRequired, async (req, res) => {
+  try {
+    const progress = await recordActiveMs(req.user.id, req.body?.activeMs)
+    if (!progress.ok) {
+      res.status(400).json({ error: progress.error || '记录失败' })
+      return
+    }
+    res.json(progress)
+  } catch (error) {
+    console.error('[me/activity]', error)
+    res.status(500).json({ error: '使用时长记录失败' })
+  }
+})
+
 router.get('/me', authRequired, async (req, res) => {
   const vocabNotebookId = await ensureUserNotebook(req.user.id)
+  await syncUserLevel(req.user.id)
   const row = await loadUserProfileRow(req.user.id)
   if (!row) {
     res.status(404).json({ error: '用户不存在' })
@@ -1342,20 +1377,31 @@ router.get('/me/short-favorites', authRequired, async (req, res) => {
   }
 })
 
-router.get('/gifts', async (req, res) => {
+router.get('/gifts', optionalAuth, async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1)
   const pageSize = Math.min(60, Math.max(1, Number(req.query.pageSize) || 40))
   const category = String(req.query.category || '').trim()
   const q = String(req.query.q || '').trim()
   const data = await listPublishedGifts({ category, q, page, pageSize })
+  if (req.user?.id) {
+    const perks = await getUserPerks(req.user.id)
+    data.items = data.items.map((gift) => ({
+      ...gift,
+      pointsCost: discountedPoints(gift.pointsCost, perks.mallDiscountPercent),
+    }))
+  }
   res.json(data)
 })
 
-router.get('/gifts/:id', async (req, res) => {
+router.get('/gifts/:id', optionalAuth, async (req, res) => {
   const gift = await getGift(Number(req.params.id))
   if (!gift || !gift.published) {
     res.status(404).json({ error: '礼品不存在' })
     return
+  }
+  if (req.user?.id) {
+    const perks = await getUserPerks(req.user.id)
+    gift.pointsCost = discountedPoints(gift.pointsCost, perks.mallDiscountPercent)
   }
   res.json({ item: gift })
 })

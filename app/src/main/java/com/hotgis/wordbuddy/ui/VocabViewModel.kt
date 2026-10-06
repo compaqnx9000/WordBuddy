@@ -323,6 +323,23 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Credit one foreground slice. The server clamps each report to real elapsed time. */
+    fun reportActiveUse(activeMs: Int) {
+        val token = _session.value?.token ?: return
+        viewModelScope.launch {
+            runCatching { api.reportActivity(token, activeMs) }
+                .onSuccess { level ->
+                    if (level < 0) return@onSuccess
+                    val current = _session.value ?: return@onSuccess
+                    if (current.level == level) return@onSuccess
+                    val merged = current.copy(level = level)
+                    sessionStore.save(merged)
+                    _session.value = merged
+                    LauncherIcons.apply(getApplication(), merged.level)
+                }
+        }
+    }
+
     private fun startSessionWatch() {
         sessionWatchJob?.cancel()
         sessionWatchJob = viewModelScope.launch {

@@ -397,6 +397,16 @@ fun HotWordsRoot(
             viewModel.validateSessionNow()
         }
     }
+    LaunchedEffect(lifecycleOwner, session?.userId, needsBiometricUnlock) {
+        val userId = session?.userId ?: return@LaunchedEffect
+        if (userId <= 0L || needsBiometricUnlock) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                delay(30_000)
+                viewModel.reportActiveUse(30_000)
+            }
+        }
+    }
 
     LaunchedEffect(needsBiometricUnlock) {
         if (needsBiometricUnlock) {
@@ -1008,6 +1018,7 @@ fun HotWordsRoot(
                             loginHint = "登录后可兑换礼品"
                             showLogin = true
                         },
+                        token = session?.token,
                         modifier = Modifier
                             .fillMaxSize()
                             .hotWordsScreen(padding, consumeStatusBars = false),
@@ -1417,6 +1428,7 @@ fun HotWordsRoot(
                             onExportContent = viewModel::exportNotebookJson,
                             onImportContent = viewModel::importNotebookJson,
                             phone = session?.phone,
+                            signature = session?.signature,
                             level = session?.level ?: 0,
                             networkRegion = session?.networkRegion,
                             networkRegionDetail = session?.networkRegionDetail,

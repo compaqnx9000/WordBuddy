@@ -89,10 +89,6 @@ struct AccountProfileView: View {
                         model.banner = "搭子号由系统分配，不可修改"
                     }
                     divider()
-                    row("邀请好友", value: buddyId.isEmpty ? "分配中…" : "分享链接赚积分") {
-                        shareInvite()
-                    }
-                    divider()
                     row(
                         "填写邀请码",
                         value: inviteTrailing,
@@ -211,7 +207,7 @@ struct AccountProfileView: View {
             if showSignature {
                 ProfileFormDialog(
                     title: "修改签名",
-                    subtitle: "最多 40 个字，展示在个人资料页。",
+                    subtitle: "最多 40 个字，展示在个人资料和「我的」页顶部。",
                     initial: session?.signature ?? "",
                     busy: busy,
                     error: dialogError,
@@ -258,7 +254,7 @@ struct AccountProfileView: View {
             if showInvite {
                 ProfileFormDialog(
                     title: "填写邀请码",
-                    subtitle: "注册时漏填可在此补填一次。填写成功后你将获得 \(inviteInfo?.inviteeReward ?? 10) 积分，且之后不可更改。",
+                    subtitle: "注册时漏填可在此补填一次。填写成功后你将获得 \(inviteInfo?.inviteeReward ?? 5000) 积分，且之后不可更改。",
                     busy: busy,
                     error: dialogError,
                     confirmTitle: "确认填写",
@@ -493,19 +489,6 @@ struct AccountProfileView: View {
         case "男": Color(hex: 0x3B82F6)
         case "女": Color(hex: 0xEC4899)
         default: Color(hex: 0x9CA3AF)
-        }
-    }
-
-    private func shareInvite() {
-        guard !buddyId.isEmpty else {
-            model.banner = "搭子号尚未分配，请稍后重试"
-            return
-        }
-        let text = "我在用「词搭子」背单词，邀请你一起来！\n邀请码：\(buddyId)\n打开链接注册：\(WordBuddyAPI.primaryBase)/i/\(buddyId)"
-        let activity = UIActivityViewController(activityItems: [text], applicationActivities: nil)
-        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let root = scene.keyWindow?.rootViewController {
-            root.present(activity, animated: true)
         }
     }
 
@@ -1294,10 +1277,6 @@ private struct BuddyQRDialog: View {
                 Text("搭子号  \(BuddyQr.normalize(buddyId) ?? buddyId)")
                     .font(.subheadline)
                     .foregroundStyle(Theme.onSurfaceVariant)
-                Text("与搭子号一一对应，之后可扫码加搭子")
-                    .font(.caption)
-                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.75))
-                    .multilineTextAlignment(.center)
                 if let payload = BuddyQr.payload(buddyId), let image = Self.makeQR(payload: payload) {
                     Image(uiImage: image)
                         .interpolation(.none)

@@ -254,7 +254,7 @@ extension UserSession: Codable {
 }
 
 struct RewardVideoOffer: Equatable {
-    var pointsPerWatch: Int = 5
+    var pointsPerWatch: Int = 1500
     var dailyLimit: Int = 20
     var usedToday: Int = 0
     var remaining: Int = 20

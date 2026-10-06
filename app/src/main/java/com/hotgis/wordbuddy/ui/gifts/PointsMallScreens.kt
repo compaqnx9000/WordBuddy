@@ -94,6 +94,7 @@ fun PointsMallScreen(
     onOpenGift: (Long) -> Unit,
     onOpenWithdraw: () -> Unit = {},
     onLogin: () -> Unit,
+    token: String? = null,
     streakDays: Int = 0,
     checkedInToday: Boolean = false,
     modifier: Modifier = Modifier,
@@ -117,7 +118,7 @@ fun PointsMallScreen(
                 categories = tabs
                 val selected = if (tabs.any { it.id == cat }) cat else tabs.first().id
                 category = selected
-                api.listGifts(selected)
+                api.listGifts(selected, token = token)
             }.onSuccess {
                 gifts = it
             }.onFailure {
@@ -127,7 +128,7 @@ fun PointsMallScreen(
         }
     }
 
-    LaunchedEffect(Unit) { reload() }
+    LaunchedEffect(token) { reload() }
 
     Column(
         modifier
@@ -463,9 +464,9 @@ fun GiftDetailScreen(
     val savedDetail = initialShippingDetail.trim()
     val hasShipping = savedName.isNotEmpty() && savedPhone.isNotEmpty() && savedDetail.isNotEmpty()
 
-    LaunchedEffect(giftId) {
+    LaunchedEffect(giftId, token) {
         loading = true
-        runCatching { api.fetchGift(giftId) }
+        runCatching { api.fetchGift(giftId, token) }
             .onSuccess { gift = it }
             .onFailure {
                 Toast.makeText(context, it.message ?: "加载失败", Toast.LENGTH_LONG).show()

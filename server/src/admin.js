@@ -14,6 +14,7 @@ import {
 import { mapDeviceRow } from './device.js'
 import { todayShanghai } from './checkin.js'
 import { getRewardVideoPoints, setRewardVideoPoints, REWARD_VIDEO_DAILY_LIMIT } from './rewardVideo.js'
+import { getLevelRules, setLevelRules, syncUserLevel } from './levels.js'
 import {
   GIFT_CATEGORY_DEFS,
   mapGift,
@@ -84,6 +85,7 @@ function mapUser(row) {
     lastIpLocation: row.last_ip_location || null,
     deviceCount: Number(row.device_count || 0),
     level: Math.min(7, Math.max(0, Number.isFinite(Number(row.user_level)) ? Number(row.user_level) : 0)),
+    validDays: row.valid_days == null ? null : Math.max(0, Number(row.valid_days) || 0),
     nickname: row.nickname || null,
     gender: row.gender || null,
     region: row.region || null,
@@ -559,6 +561,9 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
     res.status(404).json({ error: '用户不存在' })
     return
   }
+  const perk = await syncUserLevel(id)
+  user.user_level = perk.level
+  user.valid_days = perk.validDays
   const [notebooks, logins, passwords, sms, devices, checkIn, checkInLogs, shortFavorites, withdrawals, withdrawalSummary] =
     await Promise.all([
     query(
@@ -1094,6 +1099,19 @@ adminRouter.get('/reward-video', adminRequired, async (_req, res) => {
 
 adminRouter.put('/reward-video', adminRequired, async (req, res) => {
   const saved = await setRewardVideoPoints(req.body?.pointsPerWatch)
+  if (!saved.ok) {
+    res.status(400).json({ error: saved.error })
+    return
+  }
+  res.json(saved)
+})
+
+adminRouter.get('/level-rules', adminRequired, async (_req, res) => {
+  res.json(await getLevelRules())
+})
+
+adminRouter.put('/level-rules', adminRequired, async (req, res) => {
+  const saved = await setLevelRules(req.body)
   if (!saved.ok) {
     res.status(400).json({ error: saved.error })
     return

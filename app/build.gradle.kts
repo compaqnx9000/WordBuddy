@@ -39,8 +39,8 @@ android {
         applicationId = "com.hotgis.wordbuddy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 165
-        versionName = "1.74"
+        versionCode = 168
+        versionName = "1.77"
         ndk {
             // Pangle AAR only ships armeabi-v7a / arm64-v8a (no x86_64).
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")

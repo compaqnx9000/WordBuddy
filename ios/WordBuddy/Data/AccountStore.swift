@@ -95,11 +95,6 @@ enum SettingsStore {
         set { defaults.set(newValue, forKey: "hotwords_daily_reminder") }
     }
 
-    static var aiImageAutoGen: Bool {
-        get { defaults.object(forKey: "hotwords_ai_image_auto") as? Bool ?? false }
-        set { defaults.set(newValue, forKey: "hotwords_ai_image_auto") }
-    }
-
     static var podcastPlayWhenScreenOff: Bool {
         get { defaults.object(forKey: "hotwords_podcast_screen_off") as? Bool ?? false }
         set { defaults.set(newValue, forKey: "hotwords_podcast_screen_off") }
