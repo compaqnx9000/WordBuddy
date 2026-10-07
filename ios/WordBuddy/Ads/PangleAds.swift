@@ -219,7 +219,7 @@ final class RewardPresenter: NSObject, BUNativeExpressRewardedVideoAdDelegate {
         presented = false
         let model = BURewardedVideoModel()
         model.userId = userId ?? "0"
-        model.rewardName = "积分"
+        model.rewardName = "搭币"
         model.rewardAmount = 1
         let ad = BUNativeExpressRewardedVideoAd(slotID: PangleSlot.reward, rewardedVideoModel: model)
         ad.delegate = self

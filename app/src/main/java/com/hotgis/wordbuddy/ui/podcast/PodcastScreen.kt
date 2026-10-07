@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -400,16 +401,32 @@ private fun VinylPlayerSheet(
     onSleep: (Int) -> Unit,
 ) {
     val playingThisShow = playback.showId == show.id
-    Box(
+    val showTransport = playingThisShow && playback.title.isNotBlank()
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.55f))
             .clickable(onClick = onDismiss),
     ) {
+        // The disc used to be width / 1.15. On an unfolded foldable that height
+        // is the whole window, so the episode list is clipped off the bottom.
+        val listSlot = 180.sdp()
+        val transportBlock = if (showTransport) 168.sdp() else 0.dp
+        val fixedChrome = 160.sdp() + transportBlock
+        val room = (maxHeight - fixedChrome).coerceAtLeast(220.dp)
+        val naturalVinyl = maxWidth / 1.15f
+        val fits = naturalVinyl + listSlot <= room
+        val vinylBoxHeight = if (fits) {
+            naturalVinyl
+        } else {
+            minOf(naturalVinyl, room * 0.52f).coerceAtLeast(120.dp)
+        }
+        val listHeight = if (fits) listSlot else (room - vinylBoxHeight).coerceAtLeast(110.dp)
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .heightIn(max = maxHeight)
                 .clip(RoundedCornerShape(topStart = 24.sdp(), topEnd = 24.sdp()))
                 .background(
                     Brush.verticalGradient(
@@ -453,7 +470,7 @@ private fun VinylPlayerSheet(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .aspectRatio(1.15f),
+                    .height(vinylBoxHeight),
                 contentAlignment = Alignment.Center,
             ) {
                 VinylDisc(
@@ -463,7 +480,7 @@ private fun VinylPlayerSheet(
                     spinning = playingThisShow && playback.isPlaying,
                     showTonearm = true,
                     tonearmDown = playingThisShow && playback.isPlaying,
-                    modifier = Modifier.fillMaxWidth(0.78f),
+                    modifier = Modifier.size(vinylBoxHeight * 0.9f),
                 )
             }
 
@@ -547,7 +564,7 @@ private fun VinylPlayerSheet(
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .height(120.sdp()),
+                            .height(listHeight),
                         contentAlignment = Alignment.Center,
                     ) {
                         CircularProgressIndicator(color = Stellar.Cyan, strokeWidth = 2.dp)
@@ -565,7 +582,7 @@ private fun VinylPlayerSheet(
                     Column(
                         Modifier
                             .fillMaxWidth()
-                            .height(180.sdp())
+                            .height(listHeight)
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(6.sdp()),
                     ) {

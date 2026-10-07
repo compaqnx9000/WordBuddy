@@ -1,8 +1,8 @@
 {
-  "versionCode": 173,
-  "versionName": "1.82",
+  "versionCode": 178,
+  "versionName": "1.87",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "10 张配图档的优惠标显示为省 ¥0。",
-  "releasedAt": "2026-10-07T12:10:00.000Z"
+  "notes": "折叠屏展开后，播客曲目列表不再被唱片挡住。",
+  "releasedAt": "2026-10-07T14:35:00.000Z"
 }

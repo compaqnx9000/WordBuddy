@@ -492,6 +492,11 @@ export async function ensureSchema() {
   await query('ALTER TABLE point_orders ADD COLUMN IF NOT EXISTS pay_channel TEXT')
   await query('ALTER TABLE point_orders ADD COLUMN IF NOT EXISTS provider_trade_no TEXT')
   await query(`ALTER TABLE point_orders ADD COLUMN IF NOT EXISTS grant_kind TEXT NOT NULL DEFAULT 'points'`)
+  await query('ALTER TABLE point_orders ADD COLUMN IF NOT EXISTS refund_amount_fen INTEGER')
+  await query('ALTER TABLE point_orders ADD COLUMN IF NOT EXISTS refund_reason TEXT')
+  await query('ALTER TABLE point_orders ADD COLUMN IF NOT EXISTS refunded_credits INTEGER')
+  await query('ALTER TABLE point_orders ADD COLUMN IF NOT EXISTS refund_request_no TEXT')
+  await query('ALTER TABLE point_orders ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ')
   await query(`
     CREATE TABLE IF NOT EXISTS image_credit_ledger (
       id BIGSERIAL PRIMARY KEY,

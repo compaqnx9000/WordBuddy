@@ -99,7 +99,7 @@ fun EditShippingDialog(
     var detail by remember { mutableStateOf(initialDetail) }
     ProfileFormDialog(
         title = "收货地址",
-        subtitle = "用于积分兑礼发货，请填写真实可联系的信息。",
+        subtitle = "用于搭币兑礼发货，请填写真实可联系的信息。",
         busy = busy,
         error = error,
         confirmText = "保存",
@@ -637,7 +637,7 @@ fun EditInviteCodeDialog(
     var value by remember { mutableStateOf("") }
     ProfileFormDialog(
         title = "填写邀请码",
-        subtitle = "注册时漏填可在此补填一次。填写成功后你将获得 ${inviteeReward} 积分，且之后不可再改。",
+        subtitle = "注册时漏填可在此补填一次。填写成功后你将获得 ${inviteeReward} 搭币，且之后不可再改。",
         busy = busy,
         error = error,
         confirmText = "确认填写",

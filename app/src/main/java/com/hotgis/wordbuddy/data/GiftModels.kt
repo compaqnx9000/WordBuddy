@@ -21,7 +21,7 @@ data class GiftItem(
     val description: String = "",
 ) {
     val priceLabel: String
-        get() = if (cashFen > 0) "${pointsCost}积分 + ${cashYuan}元" else "${pointsCost}积分"
+        get() = if (cashFen > 0) "${pointsCost}搭币 + ${cashYuan}元" else "${pointsCost}搭币"
 
     val redeemedLabel: String
         get() = when {
@@ -66,7 +66,7 @@ data class GiftOrder(
         }
 
     val priceLabel: String
-        get() = if (cashFen > 0) "${pointsSpent}积分 + ${cashYuan}元" else "${pointsSpent}积分"
+        get() = if (cashFen > 0) "${pointsSpent}搭币 + ${cashYuan}元" else "${pointsSpent}搭币"
 }
 
 data class GiftRedeemResult(

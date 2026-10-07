@@ -631,6 +631,34 @@ actor WordBuddyAPI {
         return parseCheckIn(JSONValue.childObject(root, key: "checkIn") ?? [:])
     }
 
+    func fetchPointsLedger(token: String, page: Int = 1) async throws -> PointsLedgerPage {
+        let root = try await request(
+            method: "GET",
+            path: "/me/points-ledger?page=\(page)&pageSize=30",
+            auth: token,
+            body: nil
+        )
+        let items = JSONValue.array(root, key: "items").compactMap { raw -> PointsLedgerEntry? in
+            guard let obj = raw as? [String: Any] else { return nil }
+            return PointsLedgerEntry(
+                id: JSONValue.string(obj, key: "id") ?? UUID().uuidString,
+                delta: JSONValue.int(obj, key: "delta"),
+                balanceAfter: JSONValue.optionalInt(obj, key: "balanceAfter"),
+                reason: JSONValue.string(obj, key: "reason") ?? "",
+                title: JSONValue.string(obj, key: "title") ?? "搭币变动",
+                detail: JSONValue.string(obj, key: "detail"),
+                createdAt: JSONValue.string(obj, key: "createdAt")
+            )
+        }
+        return PointsLedgerPage(
+            balance: JSONValue.int(root, key: "balance"),
+            total: JSONValue.int(root, key: "total"),
+            page: JSONValue.int(root, key: "page", default: page),
+            pageSize: JSONValue.int(root, key: "pageSize", default: 30),
+            items: items
+        )
+    }
+
     func performCheckIn(token: String) async throws -> CheckInOutcome {
         let root = try await request(method: "POST", path: "/me/checkin", auth: token, body: [:])
         let state = parseCheckIn(JSONValue.childObject(root, key: "checkIn") ?? [:])
@@ -985,7 +1013,7 @@ actor WordBuddyAPI {
         if let balance = JSONValue.optionalInt(paid, key: "balance") {
             return balance
         }
-        throw APIError(message: "支付结果确认中，请稍后查看积分")
+        throw APIError(message: "支付结果确认中，请稍后查看搭币")
     }
 
     func fetchWithdrawConfig(token: String) async throws -> WithdrawConfig {

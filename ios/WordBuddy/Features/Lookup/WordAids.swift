@@ -15,7 +15,7 @@ struct MnemonicImageSection: View {
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(Theme.gold)
                 Spacer()
-                Text("\(model.aiImagePointsCost) 积分")
+                Text("\(model.aiImagePointsCost) 搭币")
                     .font(.caption)
                     .foregroundStyle(Theme.onSurfaceVariant)
             }

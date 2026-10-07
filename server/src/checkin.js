@@ -12,9 +12,9 @@ export function todayShanghai(now = new Date()) {
 }
 
 export function rewardForDay(streakDay) {
-  const n = Number(streakDay) || 0
-  if (n < 1) return 1
-  return Math.min(n, 7)
+  const n = Math.trunc(Number(streakDay) || 0)
+  const day = Math.min(Math.max(n, 1), 7)
+  return day * 10
 }
 
 /** Normalize pg DATE / string / Date to yyyy-MM-dd without timezone drift. */

@@ -406,9 +406,14 @@ CREATE TABLE IF NOT EXISTS point_orders (
     pay_channel TEXT,
     provider_trade_no TEXT,
     grant_kind TEXT NOT NULL DEFAULT 'points',
+    refund_amount_fen INTEGER,
+    refund_reason TEXT,
+    refunded_credits INTEGER,
+    refund_request_no TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    paid_at TIMESTAMPTZ
+    paid_at TIMESTAMPTZ,
+    refunded_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS point_orders_user

@@ -52,9 +52,10 @@ import {
   listUserPointOrders,
   pointPayConfig,
   simulatePayOrder,
+  syncPendingAlipayOrders,
 } from './pointOrders.js'
 import { listImageCreditPackages, getImageCredits, grantSignupImageCredit } from './imageCredits.js'
-import { aiImagePointsCost, grantSignupBonus } from './points.js'
+import { aiImagePointsCost, grantSignupBonus, listPointsLedger } from './points.js'
 import { alipayConfig, buildAppAuthInfo, exchangeAlipayAuthCode, fetchAlipayUserProfile } from './alipay.js'
 import {
   createWithdrawal,
@@ -867,7 +868,7 @@ router.post('/me/invite/bind', authRequired, async (req, res) => {
     const stats = await getInviteStats(req.user.id)
     res.json({
       ok: true,
-      message: `邀请码已填写，获得 ${result.inviteeReward} 积分`,
+      message: `邀请码已填写，获得 ${result.inviteeReward} 搭币`,
       inviteeReward: result.inviteeReward,
       inviterReward: result.inviterReward,
       inviterBuddyId: result.inviterBuddyId,
@@ -1210,7 +1211,25 @@ function mapUserProfile(row, fallbackUser = {}) {
   }
 }
 
+router.get('/me/points-ledger', authRequired, async (req, res) => {
+  try {
+    const data = await listPointsLedger(req.user.id, {
+      page: req.query.page,
+      pageSize: req.query.pageSize,
+    })
+    res.json(data)
+  } catch (error) {
+    console.error('[points-ledger]', error)
+    res.status(500).json({ error: '加载搭币明细失败' })
+  }
+})
+
 router.get('/me/checkin', authRequired, async (req, res) => {
+  try {
+    await syncPendingAlipayOrders(req.user.id)
+  } catch (error) {
+    console.error('[checkin] sync alipay', error)
+  }
   const checkIn = await getUserCheckIn(req.user.id)
   const imageCredits = await getImageCredits(req.user.id)
   res.json({ checkIn: { ...checkIn, imageCredits } })
@@ -1235,7 +1254,7 @@ router.post('/me/reward-video/claim', authRequired, async (req, res) => {
     })
   } catch (error) {
     console.error('[me/reward-video]', error)
-    res.status(500).json({ error: '积分发放失败，请稍后重试' })
+    res.status(500).json({ error: '搭币发放失败，请稍后重试' })
   }
 })
 
@@ -2628,12 +2647,21 @@ router.get('/me/point-orders', authRequired, async (req, res) => {
 
 router.get('/me/point-orders/:id', authRequired, async (req, res) => {
   try {
-    const order = await getPointOrderForUser(req.user.id, Number(req.params.id))
+    let order = await getPointOrderForUser(req.user.id, Number(req.params.id))
     if (!order) {
       res.status(404).json({ error: '订单不存在' })
       return
     }
-    res.json({ order })
+    if (order.status === 'pending') {
+      try {
+        await syncPendingAlipayOrders(req.user.id)
+        order = (await getPointOrderForUser(req.user.id, Number(req.params.id))) || order
+      } catch (error) {
+        console.error('[point-orders/confirm]', error)
+      }
+    }
+    const imageCredits = await getImageCredits(req.user.id)
+    res.json({ order, imageCredits })
   } catch (error) {
     console.error('[point-orders/get]', error)
     res.status(500).json({ error: '加载订单失败' })

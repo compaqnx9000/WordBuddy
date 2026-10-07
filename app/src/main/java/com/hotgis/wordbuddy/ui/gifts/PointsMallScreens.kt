@@ -135,7 +135,7 @@ fun PointsMallScreen(
             .fillMaxSize()
             .stellarScreenBackground(),
     ) {
-        MallTopBar(title = "积分兑礼", onBack = onBack)
+        MallTopBar(title = "搭币兑礼", onBack = onBack)
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
             contentPadding = PaddingValues(horizontal = 12.sdp(), vertical = 10.sdp()),
@@ -256,7 +256,7 @@ private fun MallHeader(
         )
         Spacer(Modifier.height(10.sdp()))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("我的积分", color = Stellar.OnSurfaceVariant, fontSize = 13.ssp())
+            Text("我的搭币", color = Stellar.OnSurfaceVariant, fontSize = 13.ssp())
             Spacer(Modifier.width(8.sdp()))
             Text(
                 text = "$totalPoints",
@@ -611,7 +611,7 @@ fun GiftDetailScreen(
                             }
                             if (g.pointsOffsetYuan != null) {
                                 Text(
-                                    text = "积分已抵 ${g.pointsOffsetYuan} 元",
+                                    text = "搭币已抵 ${g.pointsOffsetYuan} 元",
                                     color = Color(0xFFFFE08A),
                                     fontSize = 12.ssp(),
                                     modifier = Modifier.padding(top = 4.sdp()),
@@ -643,13 +643,13 @@ fun GiftDetailScreen(
                         )
                         Spacer(Modifier.height(12.sdp()))
                         Text(
-                            text = "当前积分 $totalPoints · ${g.redeemedLabel}",
+                            text = "当前搭币 $totalPoints · ${g.redeemedLabel}",
                             color = Stellar.Cyan,
                             fontSize = 13.ssp(),
                         )
                         if (g.cashFen > 0) {
                             Text(
-                                text = "含现金部分：积分先扣，现金需客服确认（暂未开通在线支付）",
+                                text = "含现金部分：搭币先扣，现金需客服确认（暂未开通在线支付）",
                                 color = Stellar.Gold,
                                 fontSize = 12.ssp(),
                                 modifier = Modifier.padding(top = 6.sdp()),
@@ -690,7 +690,7 @@ fun GiftDetailScreen(
     if (confirmRedeem && g != null) {
         StellarConfirmDialog(
             title = "确认兑换",
-            message = "将花费 ${g.priceLabel}\n当前积分 $totalPoints",
+            message = "将花费 ${g.priceLabel}\n当前搭币 $totalPoints",
             confirmText = "确认",
             dismissText = "取消",
             onDismiss = { confirmRedeem = false },

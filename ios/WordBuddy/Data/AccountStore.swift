@@ -55,6 +55,17 @@ enum ShanghaiDate {
         guard let date = parseDay(text) else { return 0 }
         return calendar.component(.day, from: date)
     }
+
+    static func shift(_ text: String, days: Int) -> String {
+        guard let date = parseDay(text),
+              let next = calendar.date(byAdding: .day, value: days, to: date) else { return text }
+        return todayString(next)
+    }
+
+    static func days(from start: String, to end: String) -> Int {
+        guard let startDate = parseDay(start), let endDate = parseDay(end) else { return 0 }
+        return calendar.dateComponents([.day], from: startDate, to: endDate).day ?? 0
+    }
 }
 
 enum SettingsStore {

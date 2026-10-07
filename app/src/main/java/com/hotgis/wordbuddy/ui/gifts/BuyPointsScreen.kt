@@ -118,27 +118,40 @@ fun BuyPointsScreen(
                 return@launch
             }
             val paid = payOrder(activity, api, token, created)
-            buyingId = null
-            if (paid == null) return@launch
+            if (paid == null) {
+                buyingId = null
+                return@launch
+            }
+            fun applyCredits(next: Int) {
+                balance = next
+                onCreditsUpdated(next)
+            }
             if (paid.imageCredits != null) {
-                balance = paid.imageCredits
-                onCreditsUpdated(paid.imageCredits)
+                applyCredits(paid.imageCredits)
+                buyingId = null
                 Toast.makeText(context, "已到账 ${pkg.credits} 张配图", Toast.LENGTH_SHORT).show()
             } else {
-                repeat(8) {
-                    delay(900)
-                    val order = runCatching {
+                var credited = false
+                for (attempt in 0 until 12) {
+                    if (attempt > 0) delay(500)
+                    val lookup = runCatching {
                         withContext(Dispatchers.IO) {
                             api.getPointOrder(token, created.orderId)
                         }
                     }.getOrNull()
-                    if (order?.status == "paid") {
-                        Toast.makeText(context, "支付成功，配图次数已到账", Toast.LENGTH_SHORT).show()
-                        onCreditsUpdated(-1)
-                        return@launch
+                    if (lookup?.order?.status == "paid") {
+                        val next = lookup.imageCredits ?: (balance + pkg.credits).coerceAtLeast(0)
+                        applyCredits(next)
+                        credited = true
+                        break
                     }
                 }
-                Toast.makeText(context, "支付结果确认中，请稍后查看剩余配图", Toast.LENGTH_LONG).show()
+                buyingId = null
+                Toast.makeText(
+                    context,
+                    if (credited) "已到账 ${pkg.credits} 张配图" else "支付结果确认中，请稍后查看剩余配图",
+                    if (credited) Toast.LENGTH_SHORT else Toast.LENGTH_LONG,
+                ).show()
             }
         }
     }

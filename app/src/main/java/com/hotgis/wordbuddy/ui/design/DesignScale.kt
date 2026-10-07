@@ -21,6 +21,12 @@ object DesignSpec {
     const val HEIGHT_DP = 956f
 }
 
+/** Fraction of the extra width (beyond the phone canvas) that turns into scale. */
+private const val WIDE_GROWTH = 0.3f
+
+/** Hard cap for windows wider than the phone canvas (an unfolded 800 dp screen lands here). */
+private const val WIDE_MAX_SCALE = 1.15f
+
 val LocalDesignScale = compositionLocalOf { 1f }
 val LocalFontScale = compositionLocalOf { 1f }
 
@@ -37,7 +43,14 @@ fun DesignScaleProvider(
         // Dual-pane panes nest their own provider so each half scales like a phone;
         // full-bleed pages (e.g. Shorts) see the real window width and fill it.
         val referenceWidth = forceReferenceWidthDp?.takeIf { it > 0f } ?: maxWidth.value
-        val scale = (referenceWidth / DesignSpec.WIDTH_DP).coerceIn(0.72f, 1.6f)
+        val ratio = referenceWidth / DesignSpec.WIDTH_DP
+        val scale = if (ratio > 1f) {
+            // Unfolded foldables / tablets: grow gently and let the layout use the extra width,
+            // instead of stretching every title, bar and button 1:1 with the window.
+            (1f + (ratio - 1f) * WIDE_GROWTH).coerceAtMost(WIDE_MAX_SCALE)
+        } else {
+            ratio.coerceAtLeast(0.72f)
+        }
         CompositionLocalProvider(
             LocalDesignScale provides scale,
             LocalFontScale provides fontScale.coerceIn(0.8f, 1.4f),
@@ -45,6 +58,20 @@ fun DesignScaleProvider(
             content()
         }
     }
+}
+
+/**
+ * Bottom tabs stay at the phone design height. The root scale grows with the
+ * unfolded window (up to 1.6), which stretches these buttons; wide windows keep scale 1.
+ */
+@Composable
+fun PhoneSizedChrome(content: @Composable () -> Unit) {
+    val scale = if (LocalFoldableLayout.current.windowWidthDp > DesignSpec.WIDTH_DP) {
+        1f
+    } else {
+        LocalDesignScale.current
+    }
+    CompositionLocalProvider(LocalDesignScale provides scale, content = content)
 }
 
 @Composable

@@ -208,7 +208,13 @@ export function verifyNotify(params, alipayPublicKey) {
   const sign = String(params.sign || '')
   const key = alipayPublicKey || alipayConfig().alipayPublicKey
   if (!sign || !key) return false
-  const content = sortedQuery(params)
+  // Async notify signatures exclude both sign and sign_type. Request signatures keep sign_type.
+  const content = Object.keys(params)
+    .filter((k) => k !== 'sign' && k !== 'sign_type')
+    .filter((k) => params[k] !== undefined && params[k] !== null && params[k] !== '')
+    .sort()
+    .map((k) => `${k}=${params[k]}`)
+    .join('&')
   const verifier = crypto.createVerify('RSA-SHA256')
   verifier.update(content, 'utf8')
   verifier.end()
@@ -243,7 +249,7 @@ export function buildAppPayOrderInfo({
   const bizContent = JSON.stringify({
     out_trade_no: outTradeNo,
     total_amount: totalAmountYuan,
-    subject: String(subject || '词搭子积分').slice(0, 128),
+    subject: String(subject || '词搭子搭币').slice(0, 128),
     product_code: 'QUICK_MSECURITY_PAY',
     body: String(body || '').slice(0, 128),
   })
@@ -447,11 +453,11 @@ export function withdrawalOutBizNo(withdrawalId) {
 }
 
 function transferSceneReports(scene, remark) {
-  const detail = String(remark || '积分提现').trim().slice(0, 64) || '积分提现'
+  const detail = String(remark || '搭币提现').trim().slice(0, 64) || '搭币提现'
   // 现金营销必须同时传「活动名称」和「奖励说明」，缺一条会被拒。
   if (scene === '现金营销') {
     return [
-      { info_type: '活动名称', info_content: '词搭子积分提现' },
+      { info_type: '活动名称', info_content: '词搭子搭币提现' },
       { info_type: '奖励说明', info_content: detail },
     ]
   }
@@ -482,8 +488,8 @@ export async function transferToAlipay({
   amountYuan,
   loginId,
   realName,
-  title = '词搭子积分提现',
-  remark = '积分提现',
+  title = '词搭子搭币提现',
+  remark = '搭币提现',
 } = {}) {
   const cfg = alipayConfig()
   if (!cfg.transferReady) {

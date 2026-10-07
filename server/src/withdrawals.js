@@ -226,7 +226,7 @@ export async function createWithdrawal(userId, { channel, account, realName, amo
     const balance = Math.max(0, Number(checkIn?.total_points || 0))
     if (balance < pointsCost) {
       await client.query('ROLLBACK')
-      return { ok: false, error: '积分不足' }
+      return { ok: false, error: '搭币不足' }
     }
 
     const dailyLimit = ch === 'alipay' ? 1 : 20
@@ -419,7 +419,7 @@ async function finalizeWithdrawal({ withdrawalId, userId, pointsCost, payout, cf
       await client.query('COMMIT')
       return {
         ok: false,
-        error: payout.error || '打款失败，积分已退回',
+        error: payout.error || '打款失败，搭币已退回',
         item: mapWithdrawal(updated),
         totalPoints: refundBalance,
         config: cfg,
@@ -472,7 +472,7 @@ async function performPayout({ channel, account, realName, amountFen, withdrawal
       outBillNo: wechatOutBillNo(withdrawalId),
       amountFen,
       openid: account,
-      remark: `积分提现#${withdrawalId}`,
+      remark: `搭币提现#${withdrawalId}`,
     })
   }
   return transferToAlipay({
@@ -480,8 +480,8 @@ async function performPayout({ channel, account, realName, amountFen, withdrawal
     amountYuan: (amountFen / 100).toFixed(2),
     loginId: account,
     realName,
-    title: '词搭子积分提现',
-    remark: `积分提现#${withdrawalId}`,
+    title: '词搭子搭币提现',
+    remark: `搭币提现#${withdrawalId}`,
   })
 }
 
@@ -510,7 +510,7 @@ export async function reconcilePendingWithdrawals(userId) {
             outBillNo: wechatOutBillNo(row.id),
             amountFen: Number(row.amount_fen || 0),
             openid: row.account,
-            remark: `积分提现#${row.id}`,
+            remark: `搭币提现#${row.id}`,
           })
         } else if (!queried.ok && !queried.pending) {
           payout = queried
@@ -527,8 +527,8 @@ export async function reconcilePendingWithdrawals(userId) {
             amountYuan: (Number(row.amount_fen || 0) / 100).toFixed(2),
             loginId: row.account,
             realName: row.alipay_name,
-            title: '词搭子积分提现',
-            remark: `积分提现#${row.id}`,
+            title: '词搭子搭币提现',
+            remark: `搭币提现#${row.id}`,
           })
         } else if (!interpreted.ok && !interpreted.pending) {
           payout = interpreted

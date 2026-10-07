@@ -331,7 +331,7 @@ fun LoginScreen(
         Spacer(Modifier.height(18.sdp()))
         Text(
             text = when {
-                needPassword -> "设置密码时可填写好友邀请码（选填），注册成功双方可获积分。"
+                needPassword -> "设置密码时可填写好友邀请码（选填），注册成功双方可获搭币。"
                 smsMode -> "验证码将发送到您的手机，请注意查收。"
                 else -> "若尚未设置密码，请先用验证码登录。"
             },

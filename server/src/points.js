@@ -44,7 +44,7 @@ export async function adjustPoints({
   const uid = Number(userId)
   const change = Math.trunc(Number(delta) || 0)
   if (!Number.isFinite(uid) || uid <= 0) return { ok: false, error: '无效用户' }
-  if (!change) return { ok: false, error: '无效积分变动' }
+  if (!change) return { ok: false, error: '无效搭币变动' }
 
   const own = !client
   const c = client || (await pool.connect())
@@ -62,7 +62,7 @@ export async function adjustPoints({
       if (own) await c.query('ROLLBACK')
       return {
         ok: false,
-        error: `积分不足，还差 ${-change - balance} 分`,
+        error: `搭币不足，还差 ${-change - balance} 搭币`,
         code: 'INSUFFICIENT_POINTS',
         balance,
         need: -change,
@@ -95,4 +95,86 @@ export async function adjustPoints({
 export async function getPointsBalance(userId) {
   const row = (await query('SELECT total_points FROM user_checkins WHERE user_id = $1', [userId])).rows[0]
   return Math.max(0, Number(row?.total_points || 0))
+}
+
+const LEDGER_TITLES = {
+  signup_bonus: '新用户奖励',
+  invite_reward: '邀请好友',
+  invite_bonus: '填写邀请码',
+  reward_video: '看视频',
+  withdraw: '提现',
+  withdraw_refund: '提现退回',
+  redeem: '兑礼',
+  ai_image: '生成配图',
+  ai_image_refund: '配图退回',
+  purchase: '购买搭币',
+  checkin: '每日签到',
+  makeup: '补签',
+  admin_adjust: '系统调整',
+  admin_set: '系统调整',
+}
+
+export async function listPointsLedger(userId, { page = 1, pageSize = 30 } = {}) {
+  const uid = Number(userId)
+  const size = Math.min(50, Math.max(1, Number(pageSize) || 30))
+  const current = Math.max(1, Number(page) || 1)
+  const offset = (current - 1) * size
+  const total = Number(
+    (
+      await query(
+        `SELECT (
+           (SELECT count(*) FROM points_ledger WHERE user_id = $1) +
+           (SELECT count(*) FROM user_checkin_logs WHERE user_id = $1)
+         )::int AS n`,
+        [uid],
+      )
+    ).rows[0]?.n || 0,
+  )
+  const rows = (
+    await query(
+      `SELECT * FROM (
+         SELECT
+           'l' || l.id::text AS id,
+           l.delta,
+           l.balance_after,
+           l.reason,
+           l.created_at,
+           CASE WHEN l.reason = 'redeem' THEN g.title ELSE NULL END AS detail
+         FROM points_ledger l
+         LEFT JOIN gifts g ON l.reason = 'redeem' AND g.id::text = l.ref_id
+         WHERE l.user_id = $1
+         UNION ALL
+         SELECT
+           'c' || c.id::text AS id,
+           c.points_earned AS delta,
+           NULL::integer AS balance_after,
+           CASE
+             WHEN c.checkin_date < (c.created_at AT TIME ZONE 'Asia/Shanghai')::date THEN 'makeup'
+             ELSE 'checkin'
+           END AS reason,
+           c.created_at,
+           ('连续 ' || c.streak_days || ' 天') AS detail
+         FROM user_checkin_logs c
+         WHERE c.user_id = $1
+       ) entries
+       ORDER BY created_at DESC, id DESC
+       LIMIT $2 OFFSET $3`,
+      [uid, size, offset],
+    )
+  ).rows
+  return {
+    balance: await getPointsBalance(uid),
+    total,
+    page: current,
+    pageSize: size,
+    items: rows.map((row) => ({
+      id: String(row.id),
+      delta: Number(row.delta || 0),
+      balanceAfter: row.balance_after == null ? null : Number(row.balance_after),
+      reason: row.reason,
+      title: LEDGER_TITLES[row.reason] || '搭币变动',
+      detail: row.detail || null,
+      createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+    })),
+  }
 }

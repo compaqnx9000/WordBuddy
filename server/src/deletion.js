@@ -115,7 +115,7 @@ export async function evaluateDeletionConditions(userId) {
   if (withdrawCount > 0) settlementBits.push(`还有 ${withdrawCount} 笔提现处理中`)
   if (settlementOk) {
     const forfeits = []
-    if (remainingPoints > 0) forfeits.push(`剩余 ${remainingPoints} 积分将视为自愿放弃并清零`)
+    if (remainingPoints > 0) forfeits.push(`剩余 ${remainingPoints} 搭币将视为自愿放弃并清零`)
     if (imageCredits > 0) forfeits.push(`剩余 ${imageCredits} 张助记配图将视为自愿放弃并清零`)
     settlementBits.push(forfeits.length ? forfeits.join('；') : '没有未完成的兑换或提现')
   }

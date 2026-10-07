@@ -37,7 +37,7 @@ struct AccountDeletionView: View {
             Text("注销须知")
                 .font(.headline)
                 .foregroundStyle(Theme.cyanSoft)
-            Text("注销完成后，即使用同一手机号重新注册，也无法找回本账号里的生词、积分和资料。")
+            Text("注销完成后，即使用同一手机号重新注册，也无法找回本账号里的生词、搭币和资料。")
                 .foregroundStyle(Theme.onSurface)
             Text("普通注销有 \(status?.cooldownDays ?? 7) 天冷静期，期间可以撤销。强行注销在验证后立即生效。")
                 .foregroundStyle(Theme.onSurfaceVariant)
@@ -72,7 +72,7 @@ struct AccountDeletionView: View {
                     .foregroundStyle(Theme.onSurfaceVariant)
             }
             if let points = status?.remainingPoints, points > 0 {
-                Text("剩余积分 \(points)，注销后不再保留。")
+                Text("剩余搭币 \(points)，注销后不再保留。")
                     .font(.footnote)
                     .foregroundStyle(Theme.gold)
             }

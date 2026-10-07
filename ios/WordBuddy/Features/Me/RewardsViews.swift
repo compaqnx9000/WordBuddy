@@ -124,7 +124,7 @@ struct PointsMallView: View {
                     .frame(width: MallMetrics.sdp(48), height: MallMetrics.sdp(48))
             }
             .buttonStyle(.plain)
-            Text("积分兑礼")
+            Text("搭币兑礼")
                 .font(.system(size: MallMetrics.sdp(18), weight: .bold))
                 .foregroundStyle(Theme.cyanSoft)
             Spacer()
@@ -147,7 +147,7 @@ struct PointsMallView: View {
                 .font(.system(size: MallMetrics.sdp(16), weight: .semibold))
                 .foregroundStyle(Theme.onSurface)
             HStack(alignment: .center, spacing: MallMetrics.sdp(8)) {
-                Text("我的积分")
+                Text("我的搭币")
                     .font(.system(size: MallMetrics.sdp(13)))
                     .foregroundStyle(Theme.onSurfaceVariant)
                 Text("\(model.checkIn.totalPoints)")
@@ -339,7 +339,7 @@ struct GiftDetailView: View {
             Button("确认") { Task { await redeem() } }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("将花费 \(gift?.priceLabel ?? "")\n当前积分 \(model.checkIn.totalPoints)")
+            Text("将花费 \(gift?.priceLabel ?? "")\n当前搭币 \(model.checkIn.totalPoints)")
         }
         .alert("请先填写收货地址", isPresented: $missingAddress) {
             Button("去填写") { openProfile = true }
@@ -431,7 +431,7 @@ struct GiftDetailView: View {
                                 .foregroundStyle(.white.opacity(0.85))
                         }
                         if let offset = gift.pointsOffsetYuan, !offset.isEmpty {
-                            Text("积分已抵 \(offset) 元")
+                            Text("搭币已抵 \(offset) 元")
                                 .font(.system(size: MallMetrics.sdp(12)))
                                 .foregroundStyle(Color(hex: 0xFFE08A))
                                 .padding(.top, MallMetrics.sdp(4))
@@ -462,13 +462,13 @@ struct GiftDetailView: View {
                             .foregroundStyle(Theme.onSurfaceVariant)
                             .lineSpacing(MallMetrics.sdp(6))
                             .padding(.top, MallMetrics.sdp(10))
-                        Text("当前积分 \(model.checkIn.totalPoints) · \(gift.redeemedLabel)")
+                        Text("当前搭币 \(model.checkIn.totalPoints) · \(gift.redeemedLabel)")
                             .font(.system(size: MallMetrics.sdp(13)))
                             .foregroundStyle(Theme.cyan)
                             .padding(.top, MallMetrics.sdp(12))
                         // 上架前不展示现金补差说明。恢复在线支付后再打开。
                         // if gift.cashFen > 0 {
-                        //     Text("含现金部分：积分先扣，现金需客服确认（暂未开通在线支付）")
+                        //     Text("含现金部分：搭币先扣，现金需客服确认（暂未开通在线支付）")
                         //         .font(.system(size: MallMetrics.sdp(12)))
                         //         .foregroundStyle(Theme.gold)
                         //         .padding(.top, MallMetrics.sdp(6))
@@ -626,7 +626,7 @@ struct BuyPointsView: View {
                     if catalog == nil && errorText == nil {
                         ProgressView().tint(Theme.cyan).frame(maxWidth: .infinity).padding(.top, 24)
                     } else if catalog?.items.isEmpty == true {
-                        Text("暂无积分包")
+                        Text("暂无搭币包")
                             .font(.subheadline)
                             .foregroundStyle(Theme.onSurfaceVariant)
                     } else {
@@ -652,7 +652,7 @@ struct BuyPointsView: View {
                     .frame(width: 40, height: 40)
             }
             .buttonStyle(.plain)
-            Text("购买积分")
+            Text("购买搭币")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(Theme.onSurface)
             Spacer()
@@ -663,7 +663,7 @@ struct BuyPointsView: View {
 
     private var balanceCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("当前积分")
+            Text("当前搭币")
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.onSurfaceVariant)
             Text("\(model.checkIn.totalPoints)")
@@ -674,7 +674,7 @@ struct BuyPointsView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.gold)
-                Text("AI 生图每次消耗 \(aiCost) 积分（缓存图不扣）")
+                Text("AI 生图每次消耗 \(aiCost) 搭币（缓存图不扣）")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.onSurfaceVariant)
             }
@@ -830,9 +830,9 @@ struct BuyPointsView: View {
 
     private func packageLine(_ package: PointPackage) -> String {
         if package.subtitle.isEmpty {
-            return "\(package.points) 积分"
+            return "\(package.points) 搭币"
         }
-        return "\(package.points) 积分 · \(package.subtitle)"
+        return "\(package.points) 搭币 · \(package.subtitle)"
     }
 
     private func load() async {
@@ -880,14 +880,14 @@ struct WithdrawView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("可用积分")
+                    Text("可用搭币")
                         .font(.caption)
                         .foregroundStyle(Theme.onSurfaceVariant)
                     Text("\(model.checkIn.totalPoints)")
                         .font(.system(size: 32, weight: .bold))
                         .foregroundStyle(Theme.cyan)
                     if let config {
-                        Text("单笔 ¥\(config.amountYuan)，消耗 \(config.pointsCost) 积分")
+                        Text("单笔 ¥\(config.amountYuan)，消耗 \(config.pointsCost) 搭币")
                             .font(.footnote)
                             .foregroundStyle(Theme.onSurfaceVariant)
                         if config.sandbox {
@@ -962,7 +962,7 @@ struct WithdrawView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("\(item.channelLabel) ¥\(item.amountYuan)")
                                 .foregroundStyle(Theme.onSurface)
-                            Text("\(item.statusLabel) · \(item.account) · \(item.pointsSpent) 积分")
+                            Text("\(item.statusLabel) · \(item.account) · \(item.pointsSpent) 搭币")
                                 .font(.caption)
                                 .foregroundStyle(Theme.onSurfaceVariant)
                         }
@@ -975,7 +975,7 @@ struct WithdrawView: View {
             .padding(16)
         }
         .stellarScreenBackground()
-        .navigationTitle("积分提现")
+        .navigationTitle("搭币提现")
         .navigationBarTitleDisplayMode(.inline)
         .themeNavigationBar()
         .task { await load() }
@@ -1058,7 +1058,7 @@ struct InviteView: View {
                         .font(.system(size: 28, weight: .bold, design: .monospaced))
                         .foregroundStyle(Theme.cyanSoft)
                     if let info {
-                        Text("邀请 1 人你得 \(info.inviterReward) 积分，对方得 \(info.inviteeReward) 积分")
+                        Text("邀请 1 人你得 \(info.inviterReward) 搭币，对方得 \(info.inviteeReward) 搭币")
                             .font(.footnote)
                             .foregroundStyle(Theme.onSurface)
                         Text("已邀请 \(info.invitedCount) 人")
@@ -1149,5 +1149,117 @@ struct InviteView: View {
         } catch {
             model.banner = error.localizedDescription
         }
+    }
+}
+
+struct PointsLedgerView: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var pageData: PointsLedgerPage?
+    @State private var items: [PointsLedgerEntry] = []
+    @State private var loading = true
+    @State private var loadingMore = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("当前搭币")
+                    .font(.caption)
+                    .foregroundStyle(Theme.onSurfaceVariant)
+                Text("\(pageData?.balance ?? model.checkIn.totalPoints)")
+                    .font(.system(size: 32, weight: .bold))
+                    .foregroundStyle(Theme.cyan)
+                Text("收入和支出都会记在这里。")
+                    .font(.caption)
+                    .foregroundStyle(Theme.onSurfaceVariant)
+                if loading && items.isEmpty {
+                    ProgressView().tint(Theme.cyan).frame(maxWidth: .infinity).padding(.top, 24)
+                } else if items.isEmpty {
+                    Text("还没有搭币记录")
+                        .foregroundStyle(Theme.onSurfaceVariant)
+                        .padding(.top, 12)
+                } else {
+                    ForEach(items) { item in
+                        HStack(alignment: .center, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.title)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(Theme.onSurface)
+                                if let detail = item.detail, !detail.isEmpty {
+                                    Text(detail)
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.onSurfaceVariant)
+                                }
+                                Text(Self.displayTime(item.createdAt))
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.onSurfaceVariant)
+                            }
+                            Spacer(minLength: 8)
+                            Text(item.delta >= 0 ? "+\(item.delta)" : "\(item.delta)")
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(item.delta >= 0 ? Theme.cyan : Theme.pink)
+                        }
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .glassPanel()
+                    }
+                    if items.count < (pageData?.total ?? items.count) {
+                        Button(loadingMore ? "加载中…" : "加载更多") {
+                            Task { await load(page: (pageData?.page ?? 1) + 1) }
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.cyan)
+                        .frame(maxWidth: .infinity)
+                        .disabled(loadingMore)
+                    }
+                }
+            }
+            .padding(16)
+        }
+        .stellarScreenBackground()
+        .navigationTitle("搭币明细")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load(page: 1) }
+    }
+
+    private func load(page: Int) async {
+        guard let token = model.session?.token else {
+            loading = false
+            model.showLogin = true
+            return
+        }
+        if page == 1 { loading = true } else { loadingMore = true }
+        defer {
+            loading = false
+            loadingMore = false
+        }
+        do {
+            let result = try await model.api.fetchPointsLedger(token: token, page: page)
+            pageData = result
+            if page == 1 {
+                items = result.items
+            } else {
+                let seen = Set(items.map(\.id))
+                items.append(contentsOf: result.items.filter { !seen.contains($0.id) })
+            }
+        } catch {
+            model.banner = error.localizedDescription
+        }
+    }
+
+    private static func displayTime(_ iso: String?) -> String {
+        guard let iso else { return "" }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var date = formatter.date(from: iso)
+        if date == nil {
+            formatter.formatOptions = [.withInternetDateTime]
+            date = formatter.date(from: iso)
+        }
+        guard let date else { return "" }
+        let display = DateFormatter()
+        display.locale = Locale(identifier: "zh_CN")
+        display.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        display.dateFormat = "MM-dd HH:mm"
+        return display.string(from: date)
     }
 }

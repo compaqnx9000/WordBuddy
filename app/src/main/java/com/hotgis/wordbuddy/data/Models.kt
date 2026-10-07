@@ -237,6 +237,29 @@ data class PointOrder(
     val statusLabel: String = "",
 )
 
+data class PointOrderLookup(
+    val order: PointOrder,
+    val imageCredits: Int?,
+)
+
+data class PointsLedgerEntry(
+    val id: String,
+    val delta: Int,
+    val balanceAfter: Int?,
+    val reason: String,
+    val title: String,
+    val detail: String?,
+    val createdAt: String?,
+)
+
+data class PointsLedgerPage(
+    val balance: Int,
+    val total: Int,
+    val page: Int,
+    val pageSize: Int,
+    val items: List<PointsLedgerEntry>,
+)
+
 data class WechatPayOrderParams(
     val appId: String,
     val partnerId: String,

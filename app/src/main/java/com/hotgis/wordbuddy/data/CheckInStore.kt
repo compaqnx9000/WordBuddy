@@ -102,8 +102,8 @@ class CheckInStore(context: Context) {
 
         fun todayShanghai(): LocalDate = LocalDate.now(SHANGHAI)
 
-        /** Day 1→1 … day 7→7, then always 7. */
-        fun rewardForDay(streakDay: Int): Int = streakDay.coerceIn(1, 7)
+        /** Day 1→10, day 2→20 … day 7→70, then 70 every day. */
+        fun rewardForDay(streakDay: Int): Int = streakDay.coerceIn(1, 7) * 10
 
         fun consecutiveEndingAt(claimed: Set<LocalDate>, date: LocalDate): Int {
             var n = 0

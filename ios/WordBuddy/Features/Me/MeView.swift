@@ -59,6 +59,7 @@ struct MeView: View {
                 case .deletion: AccountDeletionView()
                 case .switchAccount: SwitchAccountView()
                 case .withdraw: WithdrawView()
+                case .ledger: PointsLedgerView()
                 }
             }
         }
@@ -102,7 +103,7 @@ struct MeView: View {
         .sheet(isPresented: $showHelp) {
             infoSheet(
                 title: "帮助与反馈",
-                body: "词搭子用于查词、生词本、卡片背诵、短视频和播客。底部五个 Tab 即可使用这些功能。登录后可以同步生词、签到和积分兑礼。\n\n遇到问题请发邮件至 hi@wordbuddy.cc，或拨打 18500090601。也可在「关于词搭子」中查看《隐私保护指引》。"
+                body: "词搭子用于查词、生词本、卡片背诵、短视频和播客。底部五个 Tab 即可使用这些功能。登录后可以同步生词、签到和搭币兑礼。\n\n遇到问题请发邮件至 hi@wordbuddy.cc，或拨打 18500090601。也可在「关于词搭子」中查看《隐私保护指引》。"
             )
         }
         .fullScreenCover(isPresented: $showAbout) {
@@ -256,8 +257,8 @@ struct MeView: View {
 
                 Text(
                     loggedIn
-                        ? "已收藏 \(collectedWordCount) 词 · 积分 \(model.checkIn.totalPoints)"
-                        : "登录后同步收藏与积分"
+                        ? "已收藏 \(collectedWordCount) 词 · 搭币 \(model.checkIn.totalPoints)"
+                        : "登录后同步收藏与搭币"
                 )
                 .font(.caption)
                 .foregroundStyle(Theme.onSurfaceVariant)
@@ -361,11 +362,11 @@ struct MeView: View {
     }
 
     private var checkInSubtitle: String {
-        if !loggedIn { return "登录后签到，积分将同步到云端" }
+        if !loggedIn { return "登录后签到，搭币将同步到云端" }
         if model.checkIn.streakDays > 0 {
-            return "已连签 \(model.checkIn.streakDays) 天 · 左右滑动查看本月 · 累计 \(model.checkIn.totalPoints) 分"
+            return "已连签 \(model.checkIn.streakDays) 天 · 左右滑动查看本月 · 累计 \(model.checkIn.totalPoints) 搭币"
         }
-        return "左右滑动查看本月 · 累计 \(model.checkIn.totalPoints) 分"
+        return "左右滑动查看本月 · 累计 \(model.checkIn.totalPoints) 搭币"
     }
 
     private var checkInButtonTitle: String {
@@ -431,7 +432,7 @@ struct MeView: View {
         .disabled(slot.claimed || slot.isFuture)
     }
 
-    // 上架前关闭「看视频领积分」。恢复时取消注释。
+    // 上架前关闭「看视频领搭币」。恢复时取消注释。
     // private var rewardVideoSubtitle: String {
     //     guard loggedIn else { return "登录后每日可领" }
     //     return "剩余 \(model.rewardVideo.remaining)/\(model.rewardVideo.dailyLimit) · +\(model.rewardVideo.pointsPerWatch)"
@@ -439,24 +440,28 @@ struct MeView: View {
 
     private var rewardsMenu: some View {
         menuCard {
-            // 上架前关闭「充值积分」。恢复时取消下面两行注释。
-            // menuRow("creditcard", Theme.pink, "充值积分", "测试价 ¥0.10") {
+            // 上架前关闭「充值搭币」。恢复时取消下面两行注释。
+            // menuRow("creditcard", Theme.pink, "充值搭币", "测试价 ¥0.10") {
             //     guardRequireLogin { path.append(MeRoute.buyPoints) }
             // }
             // menuDivider()
-            // menuRow("play.circle", Theme.gold, "看视频领积分", rewardVideoSubtitle) {
+            // menuRow("play.circle", Theme.gold, "看视频领搭币", rewardVideoSubtitle) {
             //     Task { await model.watchRewardVideo() }
             // }
             // menuDivider()
-            menuRow("gift", Theme.gold, "积分兑礼", "可用 \(model.checkIn.totalPoints) 分") {
+            menuRow("gift", Theme.gold, "搭币兑礼", "可用 \(model.checkIn.totalPoints) 搭币") {
                 path.append(MeRoute.mall)
+            }
+            menuDivider()
+            menuRow("list.bullet.rectangle", Theme.cyan, "搭币明细", "收入与支出") {
+                guardRequireLogin { path.append(MeRoute.ledger) }
             }
             menuDivider()
             menuRow("bookmark", Theme.cyan, "短视频收藏", "可取消收藏") {
                 guardRequireLogin { path.append(MeRoute.favorites) }
             }
             menuDivider()
-            menuRow("person.badge.plus", Theme.cyan, "邀请好友", "各得积分") {
+            menuRow("person.badge.plus", Theme.cyan, "邀请好友", "各得搭币") {
                 if let buddyId = model.session?.buddyId, !buddyId.isEmpty {
                     path.append(MeRoute.invite)
                 } else if loggedIn {
@@ -630,7 +635,7 @@ struct MeView: View {
 }
 
 private enum MeRoute: Hashable {
-    case profile, settings, buyPoints, mall, invite, favorites, tools, deletion, switchAccount, withdraw
+    case profile, settings, buyPoints, mall, invite, favorites, tools, deletion, switchAccount, withdraw, ledger
 }
 
 private struct DashedCircles: Shape {
@@ -692,7 +697,7 @@ private struct CheckInDaySlot: Identifiable {
 
     var footer: String {
         if claimed { return "已领取" }
-        if isClaimTarget { return "+\(reward)分" }
+        if isClaimTarget { return "+\(reward)搭币" }
         if canMakeup { return "补签" }
         if isFuture { return "待签到" }
         return "未签"
@@ -703,6 +708,17 @@ private struct CheckInDaySlot: Identifiable {
         let claimed = Set(state.recentDates + [state.lastCheckInDate].compactMap { $0 })
         let days = ShanghaiDate.monthDayStrings()
         let todayReward = max(1, state.todayReward)
+        let yesterday = ShanghaiDate.shift(today, days: -1)
+        let streakThroughYesterday = consecutiveDays(endingAt: yesterday, claimed: claimed)
+        let signedToday = state.checkedInToday || claimed.contains(today)
+        let afterSigningToday: Int
+        if signedToday {
+            afterSigningToday = consecutiveDays(endingAt: today, claimed: claimed)
+        } else if streakThroughYesterday > 0 {
+            afterSigningToday = streakThroughYesterday + 1
+        } else {
+            afterSigningToday = 1
+        }
         return days.map { date in
             let isToday = date == today
             let isFuture = date > today
@@ -713,12 +729,15 @@ private struct CheckInDaySlot: Identifiable {
             let reward: Int
             if isClaimTarget {
                 reward = todayReward
-            } else if canMakeup {
-                reward = 1
             } else if isFuture {
-                reward = min(7, todayReward + 1)
+                let ahead = ShanghaiDate.days(from: today, to: date)
+                reward = rewardForStreak(afterSigningToday + ahead)
+            } else if date < today {
+                var filled = claimed
+                filled.insert(date)
+                reward = rewardForStreak(consecutiveDays(endingAt: date, claimed: filled))
             } else {
-                reward = 1
+                reward = rewardForStreak(1)
             }
             return CheckInDaySlot(
                 date: date,
@@ -731,6 +750,21 @@ private struct CheckInDaySlot: Identifiable {
                 isFuture: isFuture
             )
         }
+    }
+
+    private static func rewardForStreak(_ streakDay: Int) -> Int {
+        max(1, min(streakDay, 7)) * 10
+    }
+
+    private static func consecutiveDays(endingAt date: String, claimed: Set<String>) -> Int {
+        guard var cursor = ShanghaiDate.parseDay(date) else { return 0 }
+        var count = 0
+        while claimed.contains(ShanghaiDate.todayString(cursor)) {
+            count += 1
+            guard let previous = ShanghaiDate.calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = previous
+        }
+        return count
     }
 }
 

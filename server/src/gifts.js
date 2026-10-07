@@ -159,7 +159,7 @@ export function mapGift(row) {
   const originalPriceFen = row.original_price_fen == null ? null : Math.max(0, Number(row.original_price_fen))
   const pointsOffsetFen =
     row.points_offset_fen == null
-      ? Math.round(pointsCost * 2) // ~50 积分≈1 元 的展示用抵扣额
+      ? Math.round(pointsCost * 2) // ~50 搭币≈1 元 的展示用抵扣额
       : Math.max(0, Number(row.points_offset_fen))
   const stockRaw = Number(row.stock)
   const stock = !Number.isFinite(stockRaw) ? -1 : stockRaw < 0 ? -1 : Math.floor(stockRaw)
@@ -223,8 +223,8 @@ export function mapOrder(row) {
 }
 
 export function priceLabel(gift) {
-  if (gift.cashFen > 0) return `${gift.pointsCost}积分 + ${gift.cashYuan}元`
-  return `${gift.pointsCost}积分`
+  if (gift.cashFen > 0) return `${gift.pointsCost}搭币 + ${gift.cashYuan}元`
+  return `${gift.pointsCost}搭币`
 }
 
 export async function listPublishedGifts({ category, q, page = 1, pageSize = 40 } = {}) {
@@ -305,7 +305,7 @@ export async function redeemGift(userId, giftId, address = {}) {
     const balance = Math.max(0, Number(checkIn?.total_points || 0))
     if (balance < pointsCost) {
       await client.query('ROLLBACK')
-      return { ok: false, error: `积分不足，还差 ${pointsCost - balance} 分` }
+      return { ok: false, error: `搭币不足，还差 ${pointsCost - balance} 搭币` }
     }
     const nextBalance = balance - pointsCost
     await client.query(
@@ -382,7 +382,7 @@ export async function redeemGift(userId, giftId, address = {}) {
       totalPoints: nextBalance,
       message:
         status === 'pending_cash'
-          ? '积分已扣除，现金部分请等待客服确认'
+          ? '搭币已扣除，现金部分请等待客服确认'
           : status === 'pending_ship'
             ? '兑换成功，等待发货'
             : '兑换成功',
@@ -431,7 +431,7 @@ export async function ensureGiftSeed() {
     },
     {
       title: '精美笔记本（A5）',
-      subtitle: '积分 + 现金',
+      subtitle: '搭币 + 现金',
       emoji: '📓',
       color: '#E76F51',
       category: 'daily',
@@ -440,7 +440,7 @@ export async function ensureGiftSeed() {
       original: 2990,
       offset: 200,
       needAddress: true,
-      description: '硬壳笔记本，积分抵扣后补差价 9.90 元（现金暂记待确认）。',
+      description: '硬壳笔记本，搭币抵扣后补差价 9.90 元（现金暂记待确认）。',
     },
     {
       title: '7 天专注学习卡',
@@ -466,11 +466,11 @@ export async function ensureGiftSeed() {
       original: 100,
       offset: 60,
       needAddress: false,
-      description: '演示礼品：纯积分兑换。',
+      description: '演示礼品：纯搭币兑换。',
     },
     {
       title: '白象经典桶面整箱 12 桶',
-      subtitle: '积分 + 现金示例',
+      subtitle: '搭币 + 现金示例',
       emoji: '🍜',
       color: '#9B2226',
       category: 'recommend',
@@ -479,7 +479,7 @@ export async function ensureGiftSeed() {
       original: 3323,
       offset: 434,
       needAddress: true,
-      description: '仿照积分商城「积分+现金」兑换示例；现金部分需客服确认后发货。',
+      description: '仿照搭币商城「搭币+现金」兑换示例；现金部分需客服确认后发货。',
     },
     {
       title: '记忆棉 U 型枕',
@@ -492,7 +492,7 @@ export async function ensureGiftSeed() {
       original: 9990,
       offset: 9398,
       needAddress: true,
-      description: '高分示例商品，展示大额积分 + 少量现金。',
+      description: '高分示例商品，展示大额搭币 + 少量现金。',
     },
     {
       title: '词搭子贴纸包',

@@ -35,6 +35,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.hotgis.wordbuddy.ui.design.PhoneSizedChrome
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
 import com.hotgis.wordbuddy.ui.lookup.Stellar
@@ -79,34 +80,36 @@ fun MainBottomBar(
     onSelect: (MainTab) -> Unit,
     stellar: Boolean = false,
 ) {
-    if (stellar) {
-        StellarBottomBar(
-            selected = selected,
-            onSelect = onSelect,
-        )
-        return
-    }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(HwColors.Background)
-            .windowInsetsPadding(WindowInsets.navigationBars),
-    ) {
-        HorizontalDivider(thickness = 0.5.dp, color = HwColors.Divider)
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(48.sdp()),
-        ) {
-            mainTabs.forEach { spec ->
-                BottomTabItem(
-                    label = spec.label,
-                    selected = selected == spec.tab,
-                    selectedIcon = spec.selectedIcon,
-                    unselectedIcon = spec.unselectedIcon,
-                    onClick = { onSelect(spec.tab) },
-                    modifier = Modifier.weight(1f),
-                )
+    PhoneSizedChrome {
+        if (stellar) {
+            StellarBottomBar(
+                selected = selected,
+                onSelect = onSelect,
+            )
+        } else {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(HwColors.Background)
+                    .windowInsetsPadding(WindowInsets.navigationBars),
+            ) {
+                HorizontalDivider(thickness = 0.5.dp, color = HwColors.Divider)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.sdp()),
+                ) {
+                    mainTabs.forEach { spec ->
+                        BottomTabItem(
+                            label = spec.label,
+                            selected = selected == spec.tab,
+                            selectedIcon = spec.selectedIcon,
+                            unselectedIcon = spec.unselectedIcon,
+                            onClick = { onSelect(spec.tab) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
             }
         }
     }

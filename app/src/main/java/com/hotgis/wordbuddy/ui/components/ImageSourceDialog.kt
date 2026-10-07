@@ -548,5 +548,5 @@ fun ImageActionRow(
 }
 
 private fun String.needsPointRecharge(): Boolean =
-    contains("积分不足") || contains("购买积分") || contains("请先充值") ||
+    contains("搭币不足") || contains("购买搭币") || contains("请先充值") ||
         contains("配图次数不足") || contains("购买配图")

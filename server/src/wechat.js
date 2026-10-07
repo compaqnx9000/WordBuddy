@@ -129,12 +129,12 @@ function sceneReportInfos(sceneId) {
   if (sceneId === '1005') {
     return [
       { info_type: '岗位类型', info_content: '平台用户' },
-      { info_type: '报酬说明', info_content: '积分提现' },
+      { info_type: '报酬说明', info_content: '搭币提现' },
     ]
   }
   return [
-    { info_type: '活动名称', info_content: '词搭子积分提现' },
-    { info_type: '奖励说明', info_content: '积分兑换现金' },
+    { info_type: '活动名称', info_content: '词搭子搭币提现' },
+    { info_type: '奖励说明', info_content: '搭币兑换现金' },
   ]
 }
 
@@ -189,7 +189,7 @@ export async function transferToWechat({
   outBillNo,
   amountFen,
   openid,
-  remark = '积分提现',
+  remark = '搭币提现',
 } = {}) {
   const cfg = wechatConfig()
   if (!cfg.transferReady) {
@@ -292,7 +292,7 @@ export async function createWechatAppPrepay({
   const body = {
     appid: cfg.appId,
     mchid: cfg.mchId,
-    description: String(description || '词搭子积分').slice(0, 127),
+    description: String(description || '词搭子搭币').slice(0, 127),
     out_trade_no: tradeNo,
     notify_url: String(notifyUrl || cfg.notifyUrl).slice(0, 255),
     amount: { total, currency: 'CNY' },

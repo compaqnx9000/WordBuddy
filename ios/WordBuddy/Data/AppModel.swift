@@ -397,7 +397,7 @@ final class AppModel: ObservableObject {
         do {
             let balance = try await api.purchasePointsSimulated(token: session.token, packageId: packageId, channel: channel)
             applyPoints(balance)
-            banner = "已到账 \(points) 积分"
+            banner = "已到账 \(points) 搭币"
         } catch {
             if !noteSessionError(error) {
                 banner = error.localizedDescription
@@ -436,8 +436,8 @@ final class AppModel: ObservableObject {
             let apiError = error as? APIError
             let message: String
             if apiError?.httpCode == 402 || apiError?.code == "INSUFFICIENT_POINTS" {
-                let raw = apiError?.message ?? "积分不足"
-                message = raw.contains("购买") ? raw : raw + "，请先购买积分"
+                let raw = apiError?.message ?? "搭币不足"
+                message = raw.contains("购买") ? raw : raw + "，请先购买搭币"
             } else {
                 message = friendlyImageMessage(apiError?.message ?? error.localizedDescription)
             }
@@ -658,7 +658,7 @@ final class AppModel: ObservableObject {
                 checkIn.checkedInToday = true
                 checkIn.totalPoints = outcome.totalPoints
                 checkIn.streakDays = outcome.streakDays
-                banner = "签到成功，+\(outcome.pointsEarned) 积分"
+                banner = "签到成功，+\(outcome.pointsEarned) 搭币"
             }
         } catch {
             if !noteSessionError(error) {
@@ -698,7 +698,7 @@ final class AppModel: ObservableObject {
         case .rewarded:
             await claimRewardVideo()
         case .skipped:
-            banner = "需看完广告才能领积分"
+            banner = "需看完广告才能领搭币"
         case .failed(let message):
             banner = message
         }
@@ -713,7 +713,7 @@ final class AppModel: ObservableObject {
             if claim.offer.totalPoints > 0 {
                 checkIn.totalPoints = claim.offer.totalPoints
             }
-            banner = "获得 \(claim.points) 积分，今日剩余 \(claim.offer.remaining)/\(claim.offer.dailyLimit)"
+            banner = "获得 \(claim.points) 搭币，今日剩余 \(claim.offer.remaining)/\(claim.offer.dailyLimit)"
         } catch {
             if !noteSessionError(error) {
                 banner = error.localizedDescription
@@ -729,7 +729,7 @@ final class AppModel: ObservableObject {
         do {
             let outcome = try await api.makeupCheckIn(token: session.token, date: date)
             checkIn = outcome.state
-            banner = outcome.already ? "该日已经签到过了" : "已补签 \(date)，+\(outcome.pointsEarned) 积分"
+            banner = outcome.already ? "该日已经签到过了" : "已补签 \(date)，+\(outcome.pointsEarned) 搭币"
         } catch {
             if !noteSessionError(error) {
                 banner = error.localizedDescription

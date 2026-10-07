@@ -418,7 +418,7 @@ struct GiftItem: Identifiable, Equatable {
     }
 
     var priceLabel: String {
-        cashFen > 0 ? "\(pointsCost)积分 + \(cashYuan)元" : "\(pointsCost)积分"
+        cashFen > 0 ? "\(pointsCost)搭币 + \(cashYuan)元" : "\(pointsCost)搭币"
     }
 
     var redeemedLabel: String {
@@ -450,7 +450,7 @@ struct GiftOrder: Identifiable, Equatable {
     }
 
     var priceLabel: String {
-        cashFen > 0 ? "\(pointsSpent)积分 + \(cashYuan)元" : "\(pointsSpent)积分"
+        cashFen > 0 ? "\(pointsSpent)搭币 + \(cashYuan)元" : "\(pointsSpent)搭币"
     }
 }
 
@@ -486,6 +486,24 @@ struct WithdrawConfig: Equatable {
     var pointsCost: Int
     var note: String
     var channels: [WithdrawChannel]
+}
+
+struct PointsLedgerEntry: Identifiable, Equatable {
+    var id: String
+    var delta: Int
+    var balanceAfter: Int?
+    var reason: String
+    var title: String
+    var detail: String?
+    var createdAt: String?
+}
+
+struct PointsLedgerPage: Equatable {
+    var balance: Int
+    var total: Int
+    var page: Int
+    var pageSize: Int
+    var items: [PointsLedgerEntry]
 }
 
 struct WithdrawalItem: Identifiable, Equatable {

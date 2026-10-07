@@ -116,6 +116,7 @@ import com.hotgis.wordbuddy.data.VocabEntry
 import com.hotgis.wordbuddy.ui.VocabUiState
 import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
 import com.hotgis.wordbuddy.ui.components.StellarInputDialog
+import com.hotgis.wordbuddy.ui.design.PhoneSizedChrome
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
 import com.hotgis.wordbuddy.ui.lookup.LocalStellar
@@ -1801,6 +1802,7 @@ private fun NotebookBottomBar(
     onToggleHide: () -> Unit,
     onRecite: () -> Unit,
 ) {
+    PhoneSizedChrome {
     val line = Stellar.Cyan.copy(alpha = 0.20f)
     Column(
         Modifier
@@ -1835,6 +1837,7 @@ private fun NotebookBottomBar(
                 modifier = Modifier.weight(1f),
             )
         }
+    }
     }
 }
 

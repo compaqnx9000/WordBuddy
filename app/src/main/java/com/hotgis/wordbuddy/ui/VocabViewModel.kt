@@ -830,7 +830,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     api?.code == "INSUFFICIENT_IMAGE_CREDITS" ->
                         api.message?.takeIf { it.isNotBlank() } ?: "配图次数不足，请先购买配图"
                     api?.httpCode == 402 || api?.code == "INSUFFICIENT_POINTS" ->
-                        (api.message?.takeIf { it.isNotBlank() } ?: "积分不足") + "，请先购买积分"
+                        (api.message?.takeIf { it.isNotBlank() } ?: "搭币不足") + "，请先购买搭币"
                     raw != null && (raw.contains("超时") || raw.contains("timeout", ignoreCase = true)) ->
                         "生图超时，请稍后再试"
                     else -> raw

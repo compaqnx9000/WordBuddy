@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { pool, query } from './db.js'
 import { adjustPoints, aiImagePointsCost } from './points.js'
 import { adjustImageCredits, findImageCreditPackage } from './imageCredits.js'
-import { alipayConfig, buildAppPayOrderInfo, verifyNotify } from './alipay.js'
+import { alipayConfig, buildAppPayOrderInfo, callAlipay, verifyNotify } from './alipay.js'
 import { createWechatAppPrepay, parseWechatPayNotify, wechatConfig } from './wechat.js'
 
 function defaultPackages() {
@@ -12,7 +12,7 @@ function defaultPackages() {
   return [
     {
       id: 'test',
-      title: '积分充值',
+      title: '搭币充值',
       subtitle: `测试价 ¥${yuan}，可生成 1 次 AI 配图`,
       priceFen,
       points: cost,
@@ -30,7 +30,7 @@ export function listPointPackages() {
         return parsed
           .map((item) => ({
             id: String(item.id || '').trim(),
-            title: String(item.title || '积分包').trim().slice(0, 40),
+            title: String(item.title || '搭币包').trim().slice(0, 40),
             subtitle: String(item.subtitle || '').trim().slice(0, 80),
             priceFen: Math.max(1, Number(item.priceFen) || 0),
             points: Math.max(1, Number(item.points) || 0),
@@ -72,7 +72,13 @@ function mapOrder(row) {
     amountYuan: (amountFen / 100).toFixed(2),
     status: row.status,
     statusLabel:
-      row.status === 'paid' ? '已支付' : row.status === 'closed' ? '已关闭' : '待支付',
+      row.status === 'paid'
+        ? '已支付'
+        : row.status === 'refunded'
+          ? '已退款'
+          : row.status === 'closed'
+            ? '已关闭'
+            : '待支付',
     grantKind: row.grant_kind === 'images' ? 'images' : 'points',
     payChannel: channel,
     alipayTradeNo: row.alipay_trade_no || null,
@@ -148,7 +154,7 @@ export async function createPointOrder({ userId, packageId, channel = 'alipay' }
       outTradeNo,
       subject: grantKind === 'images' ? `词搭子-助记配图${pkg.points}张` : `词搭子-${pkg.title}`,
       totalAmountYuan: (pkg.priceFen / 100).toFixed(2),
-      body: grantKind === 'images' ? `${pkg.points}张助记配图，仅可用于单词配图` : `${pkg.points}积分`,
+      body: grantKind === 'images' ? `${pkg.points}张助记配图，仅可用于单词配图` : `${pkg.points}搭币`,
     })
     if (!built.ok) return { ok: false, error: built.error }
     orderInfo = built.orderInfo
@@ -276,10 +282,157 @@ export async function simulatePayOrder({ userId, orderId }) {
   })
 }
 
+export async function confirmAlipayOrder(row) {
+  if (!row) return { ok: false, error: '订单不存在' }
+  if (row.status === 'paid') return { ok: true, already: true, order: mapOrder(row) }
+  if (row.pay_channel && row.pay_channel !== 'alipay') return { ok: false, error: '不是支付宝订单' }
+  const result = await callAlipay('alipay.trade.query', { out_trade_no: row.out_trade_no })
+  const data = result.data || {}
+  if (data.code !== '10000') {
+    return { ok: false, pending: true, error: data.sub_msg || data.msg || '尚未支付' }
+  }
+  const tradeStatus = String(data.trade_status || '')
+  if (tradeStatus !== 'TRADE_SUCCESS' && tradeStatus !== 'TRADE_FINISHED') {
+    return { ok: false, pending: true, error: '尚未支付' }
+  }
+  const paidYuan = Number(data.total_amount)
+  return fulfillPaidOrder({
+    outTradeNo: row.out_trade_no,
+    alipayTradeNo: data.trade_no,
+    providerTradeNo: data.trade_no,
+    paidAmountFen: Number.isFinite(paidYuan) ? Math.round(paidYuan * 100) : null,
+  })
+}
+
+/** Ask Alipay about recent pending orders so a missed notify still credits the user. */
+export async function syncPendingAlipayOrders(userId) {
+  const rows = (
+    await query(
+      `SELECT * FROM point_orders
+       WHERE user_id = $1 AND status = 'pending'
+         AND (pay_channel = 'alipay' OR pay_channel IS NULL)
+         AND created_at > now() - interval '2 days'
+       ORDER BY id DESC
+       LIMIT 5`,
+      [userId],
+    )
+  ).rows
+  let last = null
+  for (const row of rows) {
+    try {
+      last = await confirmAlipayOrder(row)
+    } catch (error) {
+      console.error('[alipay] confirm', row.id, error)
+    }
+  }
+  return last
+}
+
+function yuanFromFen(fen) {
+  return (Math.max(0, Number(fen) || 0) / 100).toFixed(2)
+}
+
+/** Full Alipay refund of one paid image-credit order. Claws back unused credits only. */
+export async function refundImageCreditOrder({ orderId, reason } = {}) {
+  const id = Number(orderId)
+  if (!Number.isFinite(id) || id <= 0) return { ok: false, error: '订单不存在' }
+  const note = String(reason || '用户热线退款').trim().slice(0, 80) || '用户热线退款'
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const row = (
+      await client.query('SELECT * FROM point_orders WHERE id = $1 FOR UPDATE', [id])
+    ).rows[0]
+    if (!row) {
+      await client.query('ROLLBACK')
+      return { ok: false, error: '订单不存在' }
+    }
+    if (row.grant_kind !== 'images') {
+      await client.query('ROLLBACK')
+      return { ok: false, error: '这笔不是配图订单' }
+    }
+    if (row.status === 'refunded') {
+      await client.query('ROLLBACK')
+      return { ok: false, error: '这笔订单已经退过款' }
+    }
+    if (row.status !== 'paid') {
+      await client.query('ROLLBACK')
+      return { ok: false, error: '只有已支付的订单可以退款' }
+    }
+    const channel = row.pay_channel || 'alipay'
+    if (channel !== 'alipay') {
+      await client.query('ROLLBACK')
+      return { ok: false, error: '目前只能退支付宝订单' }
+    }
+    const amountFen = Number(row.amount_fen || 0)
+    if (!Number.isFinite(amountFen) || amountFen <= 0) {
+      await client.query('ROLLBACK')
+      return { ok: false, error: '订单金额不正确' }
+    }
+    const outRequestNo = `rf${row.id}`
+    const result = await callAlipay('alipay.trade.refund', {
+      out_trade_no: row.out_trade_no,
+      refund_amount: yuanFromFen(amountFen),
+      refund_reason: note,
+      out_request_no: outRequestNo,
+    })
+    const data = result.data || {}
+    if (!result.ok || String(data.code || '') !== '10000') {
+      await client.query('ROLLBACK')
+      return { ok: false, error: data.sub_msg || data.msg || result.error || '支付宝退款失败' }
+    }
+    const user = (
+      await client.query('SELECT image_credits FROM users WHERE id = $1 FOR UPDATE', [row.user_id])
+    ).rows[0]
+    const balance = Math.max(0, Number(user?.image_credits || 0))
+    const granted = Math.max(0, Number(row.points || 0))
+    const clawback = Math.min(balance, granted)
+    const next = balance - clawback
+    if (clawback > 0) {
+      await client.query('UPDATE users SET image_credits = $2 WHERE id = $1', [row.user_id, next])
+      await client.query(
+        `INSERT INTO image_credit_ledger (user_id, delta, balance_after, reason, ref_type, ref_id)
+         VALUES ($1, $2, $3, 'refund', 'point_order', $4)`,
+        [row.user_id, -clawback, next, String(row.id)],
+      )
+    }
+    const updated = (
+      await client.query(
+        `UPDATE point_orders
+         SET status = 'refunded',
+             refund_amount_fen = $2,
+             refund_reason = $3,
+             refunded_credits = $4,
+             refund_request_no = $5,
+             refunded_at = now(),
+             updated_at = now()
+         WHERE id = $1
+         RETURNING *`,
+        [row.id, amountFen, note, clawback, outRequestNo],
+      )
+    ).rows[0]
+    await client.query('COMMIT')
+    return {
+      ok: true,
+      order: mapOrder(updated),
+      refundedFen: amountFen,
+      clawedCredits: clawback,
+      grantedCredits: granted,
+      imageCredits: next,
+    }
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
 export async function handleAlipayNotify(params) {
   const cfg = alipayConfig()
   if (!cfg.configured) return { ok: false, reply: 'failure' }
   if (!verifyNotify(params, cfg.alipayPublicKey)) {
+    console.error('[alipay/notify] verify failed', String(params.out_trade_no || ''))
     return { ok: false, reply: 'failure' }
   }
   const tradeStatus = String(params.trade_status || '')

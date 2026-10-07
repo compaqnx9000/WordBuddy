@@ -254,7 +254,7 @@ struct AccountProfileView: View {
             if showInvite {
                 ProfileFormDialog(
                     title: "填写邀请码",
-                    subtitle: "注册时漏填可在此补填一次。填写成功后你将获得 \(inviteInfo?.inviteeReward ?? 5000) 积分，且之后不可更改。",
+                    subtitle: "注册时漏填可在此补填一次。填写成功后你将获得 \(inviteInfo?.inviteeReward ?? 5000) 搭币，且之后不可更改。",
                     busy: busy,
                     error: dialogError,
                     confirmTitle: "确认填写",
@@ -1192,7 +1192,7 @@ private struct ShippingDialog: View {
                 Text("收货地址")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(Theme.cyanSoft)
-                Text("用于积分兑礼发货，请填写真实可联系的信息。")
+                Text("用于搭币兑礼发货，请填写真实可联系的信息。")
                     .font(.footnote)
                     .foregroundStyle(Theme.onSurfaceVariant)
                 labeled("收件人") {

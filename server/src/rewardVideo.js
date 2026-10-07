@@ -23,7 +23,7 @@ export async function getRewardVideoPoints() {
 
 export async function setRewardVideoPoints(points) {
   const n = clampPoints(points)
-  if (n == null) return { ok: false, error: `积分须为 1～${REWARD_VIDEO_POINTS_MAX} 的整数` }
+  if (n == null) return { ok: false, error: `搭币须为 1～${REWARD_VIDEO_POINTS_MAX} 的整数` }
   await query(
     `INSERT INTO app_settings (key, value, updated_at)
      VALUES ($1, $2, now())
@@ -94,7 +94,7 @@ export async function claimRewardVideo(userId) {
     })
     if (!credited.ok) {
       await client.query('ROLLBACK')
-      return { ok: false, error: credited.error || '积分发放失败' }
+      return { ok: false, error: credited.error || '搭币发放失败' }
     }
     await client.query(
       `INSERT INTO reward_video_grants (user_id, grant_date, points)

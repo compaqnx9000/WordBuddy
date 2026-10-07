@@ -549,6 +549,37 @@ class WordBuddyApi {
         parseCheckIn(root.optJSONObject("checkIn"))
     }
 
+    suspend fun fetchPointsLedger(token: String, page: Int = 1): PointsLedgerPage = withContext(Dispatchers.IO) {
+        val root = request("GET", "/me/points-ledger?page=$page&pageSize=30", auth = token)
+        val items = root.optJSONArray("items") ?: org.json.JSONArray()
+        PointsLedgerPage(
+            balance = root.optInt("balance").coerceAtLeast(0),
+            total = root.optInt("total").coerceAtLeast(0),
+            page = root.optInt("page", page).coerceAtLeast(1),
+            pageSize = root.optInt("pageSize", 30).coerceAtLeast(1),
+            items = buildList {
+                for (i in 0 until items.length()) {
+                    val obj = items.optJSONObject(i) ?: continue
+                    add(
+                        PointsLedgerEntry(
+                            id = obj.optString("id"),
+                            delta = obj.optInt("delta"),
+                            balanceAfter = if (obj.has("balanceAfter") && !obj.isNull("balanceAfter")) {
+                                obj.optInt("balanceAfter")
+                            } else {
+                                null
+                            },
+                            reason = obj.optString("reason"),
+                            title = obj.optString("title").ifBlank { "搭币变动" },
+                            detail = obj.optString("detail").trim().takeIf { it.isNotEmpty() && !it.equals("null", true) },
+                            createdAt = obj.optString("createdAt").takeIf { it.isNotBlank() },
+                        ),
+                    )
+                }
+            },
+        )
+    }
+
     suspend fun fetchRewardVideo(token: String): RewardVideoOffer = withContext(Dispatchers.IO) {
         val root = request("GET", "/me/reward-video", auth = token)
         parseRewardVideo(root.optJSONObject("rewardVideo"))
@@ -940,7 +971,7 @@ class WordBuddyApi {
             streakDays = obj.optInt("streakDays", 0).coerceAtLeast(0),
             lastCheckInDate = last,
             checkedInToday = checkedInToday,
-            todayReward = obj.optInt("todayReward", 1).coerceIn(1, 7),
+            todayReward = obj.optInt("todayReward", 10).coerceAtLeast(1),
             recentDates = recentDates,
             imageCredits = obj.optInt("imageCredits", 0).coerceAtLeast(0),
         )
@@ -1184,9 +1215,16 @@ class WordBuddyApi {
             )
         }
 
-    suspend fun getPointOrder(token: String, orderId: Long): PointOrder = withContext(Dispatchers.IO) {
+    suspend fun getPointOrder(token: String, orderId: Long): PointOrderLookup = withContext(Dispatchers.IO) {
         val root = request("GET", "/me/point-orders/$orderId", auth = token)
-        parsePointOrder(root.optJSONObject("order") ?: JSONObject())
+        PointOrderLookup(
+            order = parsePointOrder(root.optJSONObject("order") ?: JSONObject()),
+            imageCredits = if (root.has("imageCredits") && !root.isNull("imageCredits")) {
+                root.optInt("imageCredits").coerceAtLeast(0)
+            } else {
+                null
+            },
+        )
     }
 
     private fun parsePointOrder(obj: JSONObject): PointOrder = PointOrder(

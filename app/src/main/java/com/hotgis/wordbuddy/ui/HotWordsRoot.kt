@@ -97,6 +97,7 @@ import com.hotgis.wordbuddy.ui.gifts.BuyPointsScreen
 import com.hotgis.wordbuddy.ui.gifts.GiftDetailScreen
 import com.hotgis.wordbuddy.ui.gifts.GiftOrdersScreen
 import com.hotgis.wordbuddy.ui.gifts.PointsMallScreen
+import com.hotgis.wordbuddy.ui.gifts.PointsLedgerScreen
 import com.hotgis.wordbuddy.ui.gifts.PointsWithdrawScreen
 import com.hotgis.wordbuddy.ui.profile.AccountProfileScreen
 import com.hotgis.wordbuddy.ui.profile.ProfileScreen
@@ -134,6 +135,7 @@ fun HotWordsRoot(
     var showBuyPoints by remember { mutableStateOf(false) }
     var showGiftOrders by remember { mutableStateOf(false) }
     var showPointsWithdraw by remember { mutableStateOf(false) }
+    var showPointsLedger by remember { mutableStateOf(false) }
     var showAccountProfile by remember { mutableStateOf(false) }
     var showShortsLookup by remember { mutableStateOf(false) }
     var shortsFullscreen by remember { mutableStateOf(false) }
@@ -490,6 +492,10 @@ fun HotWordsRoot(
                 pendingExit = false
                 giftDetailId = null
             }
+            showPointsLedger -> {
+                pendingExit = false
+                showPointsLedger = false
+            }
             showPointsWithdraw -> {
                 pendingExit = false
                 showPointsWithdraw = false
@@ -587,6 +593,7 @@ fun HotWordsRoot(
                 showKuaishouTool ||
                 showGiftOrders ||
                 showPointsWithdraw ||
+                showPointsLedger ||
                 giftDetailId != null ||
                 overlay == Overlay.Card ||
                 overlay == Overlay.Settings ||
@@ -799,6 +806,7 @@ fun HotWordsRoot(
                         !showKuaishouTool &&
                         !showGiftOrders &&
                         !showPointsWithdraw &&
+                        !showPointsLedger &&
                         giftDetailId == null
                     ) {
                         MainBottomBar(
@@ -818,6 +826,7 @@ fun HotWordsRoot(
                                 showKuaishouTool = false
                                 showGiftOrders = false
                                 showPointsWithdraw = false
+                                showPointsLedger = false
                                 giftDetailId = null
                                 tab = it
                             },
@@ -942,6 +951,19 @@ fun HotWordsRoot(
                         },
                         onLogin = {
                             loginHint = "登录后可兑换礼品"
+                            showLogin = true
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .hotWordsScreen(padding, consumeStatusBars = false),
+                    )
+                }
+                showPointsLedger -> {
+                    PointsLedgerScreen(
+                        token = session?.token,
+                        onBack = { showPointsLedger = false },
+                        onLogin = {
+                            loginHint = "登录后可查看搭币明细"
                             showLogin = true
                         },
                         modifier = Modifier
@@ -1440,6 +1462,7 @@ fun HotWordsRoot(
                             onClaimRewardVideo = viewModel::claimRewardVideo,
                             onOpenPointsMall = { showPointsMall = true },
                             onOpenWithdraw = { showPointsWithdraw = true },
+                            onOpenPointsLedger = { showPointsLedger = true },
                             onOpenBuyPoints = { openBuyPoints() },
                             onOpenShortFavorites = {
                                 if (session == null) {

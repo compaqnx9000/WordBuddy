@@ -260,7 +260,7 @@ async function createMnemonicImage({ word, meaningHint, provider, userId = null,
   } else if (cost > 0) {
     const balance = await getPointsBalance(userId)
     if (balance < cost) {
-      const err = fail(402, `积分不足，还差 ${cost - balance} 分`)
+      const err = fail(402, `搭币不足，还差 ${cost - balance} 搭币`)
       err.code = 'INSUFFICIENT_POINTS'
       err.need = cost
       err.balance = balance
@@ -299,7 +299,7 @@ async function createMnemonicImage({ word, meaningHint, provider, userId = null,
       refId: `${provider}:${key}`,
     })
     if (!debited.ok) {
-      const err = fail(402, debited.error || '积分不足')
+      const err = fail(402, debited.error || '搭币不足')
       err.code = debited.code || 'INSUFFICIENT_POINTS'
       err.need = debited.need
       err.balance = debited.balance

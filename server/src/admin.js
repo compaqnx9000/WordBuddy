@@ -34,6 +34,7 @@ import {
   normalizeKeywords,
   validateKeywords,
 } from './shorts.js'
+import { refundImageCreditOrder } from './pointOrders.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -258,8 +259,8 @@ adminRouter.get('/overview', adminRequired, async (_req, res) => {
             shipping_name, shipping_phone, shipping_detail,
             image_credits,
             COALESCE((
-              SELECT SUM(l.delta)::int FROM image_credit_ledger l
-              WHERE l.user_id = users.id AND l.reason = 'purchase' AND l.delta > 0
+              SELECT SUM(o.points)::int FROM point_orders o
+              WHERE o.user_id = users.id AND o.grant_kind = 'images' AND o.status = 'paid'
             ), 0) AS image_credits_purchased,
             (password_hash IS NOT NULL) AS has_password,
             (SELECT count(*)::int FROM user_devices d WHERE d.user_id = users.id) AS device_count
@@ -534,8 +535,8 @@ adminRouter.get('/users', adminRequired, async (req, res) => {
            u.deletion_requested_at, u.deletion_due_at,
            u.image_credits,
            COALESCE((
-             SELECT SUM(l.delta)::int FROM image_credit_ledger l
-             WHERE l.user_id = u.id AND l.reason = 'purchase' AND l.delta > 0
+             SELECT SUM(o.points)::int FROM point_orders o
+             WHERE o.user_id = u.id AND o.grant_kind = 'images' AND o.status = 'paid'
            ), 0) AS image_credits_purchased,
            (u.password_hash IS NOT NULL) AS has_password,
            (SELECT count(*)::int FROM notebooks n WHERE n.owner_user_id = u.id) AS notebook_count,
@@ -565,8 +566,8 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
               deletion_requested_at, deletion_due_at,
               image_credits,
               COALESCE((
-                SELECT SUM(l.delta)::int FROM image_credit_ledger l
-                WHERE l.user_id = users.id AND l.reason = 'purchase' AND l.delta > 0
+                SELECT SUM(o.points)::int FROM point_orders o
+                WHERE o.user_id = users.id AND o.grant_kind = 'images' AND o.status = 'paid'
               ), 0) AS image_credits_purchased,
               (password_hash IS NOT NULL) AS has_password,
               (SELECT count(*)::int FROM user_devices d WHERE d.user_id = users.id) AS device_count
@@ -648,7 +649,8 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
       [id],
     ),
     query(
-      `SELECT id, package_id, points, amount_fen, status, pay_channel, paid_at, created_at
+      `SELECT id, package_id, points, amount_fen, status, pay_channel, paid_at, created_at,
+              refunded_at, refund_amount_fen, refunded_credits, refund_reason
        FROM point_orders
        WHERE user_id = $1 AND grant_kind = 'images'
        ORDER BY id DESC LIMIT 40`,
@@ -712,13 +714,53 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
         amountFen,
         amountYuan: (amountFen / 100).toFixed(2),
         status,
-        statusLabel: status === 'paid' ? '已支付' : status === 'closed' ? '已关闭' : '待支付',
+        statusLabel:
+          status === 'paid'
+            ? '已支付'
+            : status === 'refunded'
+              ? '已退款'
+              : status === 'closed'
+                ? '已关闭'
+                : '待支付',
         payChannel: row.pay_channel || null,
         paidAt: iso(row.paid_at),
         createdAt: iso(row.created_at),
+        refundedAt: iso(row.refunded_at),
+        refundedFen: row.refund_amount_fen == null ? null : Number(row.refund_amount_fen),
+        refundedCredits: row.refunded_credits == null ? null : Number(row.refunded_credits),
+        refundReason: row.refund_reason || null,
       }
     }),
   })
+})
+
+adminRouter.post('/point-orders/:id/refund', adminRequired, async (req, res) => {
+  try {
+    const result = await refundImageCreditOrder({
+      orderId: Number(req.params.id),
+      reason: req.body?.reason,
+    })
+    if (!result.ok) {
+      res.status(400).json({ error: result.error || '退款失败' })
+      return
+    }
+    await audit(req, 'refund_image_order', 'point_order', req.params.id, {
+      refundedFen: result.refundedFen,
+      clawedCredits: result.clawedCredits,
+      grantedCredits: result.grantedCredits,
+      imageCredits: result.imageCredits,
+    })
+    res.json({
+      ok: true,
+      refundedFen: result.refundedFen,
+      clawedCredits: result.clawedCredits,
+      grantedCredits: result.grantedCredits,
+      imageCredits: result.imageCredits,
+    })
+  } catch (error) {
+    console.error('[admin/refund]', error)
+    res.status(500).json({ error: '退款失败' })
+  }
 })
 
 adminRouter.patch('/users/:id', adminRequired, async (req, res) => {

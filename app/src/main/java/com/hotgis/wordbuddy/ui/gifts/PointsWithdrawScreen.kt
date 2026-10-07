@@ -218,7 +218,7 @@ fun PointsWithdrawScreen(
                 Icon(Icons.AutoMirrored.Outlined.ArrowBackIos, contentDescription = "返回", tint = Stellar.OnSurface)
             }
             Text(
-                text = "积分提现",
+                text = "搭币提现",
                 color = Stellar.CyanSoft,
                 fontSize = 18.ssp(),
                 fontWeight = FontWeight.Bold,
@@ -274,7 +274,7 @@ fun PointsWithdrawScreen(
                         .clip(RoundedCornerShape(16.sdp()))
                         .padding(16.sdp()),
                 ) {
-                    Text("可用积分", color = Stellar.OnSurfaceVariant, fontSize = 13.ssp())
+                    Text("可用搭币", color = Stellar.OnSurfaceVariant, fontSize = 13.ssp())
                     Spacer(Modifier.height(6.sdp()))
                     Text(
                         text = "$totalPoints",
@@ -421,7 +421,7 @@ fun PointsWithdrawScreen(
                             )
                             Spacer(Modifier.height(4.sdp()))
                             Text(
-                                text = "${tier.pointsCost} 积分",
+                                text = "${tier.pointsCost} 搭币",
                                 color = if (affordable) Stellar.OnSurfaceVariant else Stellar.Pink,
                                 fontSize = 12.ssp(),
                             )
@@ -455,7 +455,7 @@ fun PointsWithdrawScreen(
                             val picked = tier ?: return@clickable
                             when {
                                 picked.pointsCost > totalPoints -> {
-                                    Toast.makeText(context, "积分不足", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "搭币不足", Toast.LENGTH_SHORT).show()
                                 }
                                 alreadyToday -> {
                                     Toast.makeText(context, "今天已经提现过一次，请明天再试", Toast.LENGTH_SHORT).show()
@@ -540,7 +540,7 @@ fun PointsWithdrawScreen(
         val channelName = if (channel == "wechat") "微信" else "支付宝"
         StellarConfirmDialog(
             title = "确认提现",
-            message = "将消耗 ${selectedTier.pointsCost} 积分，向${channelName}账号「${maskPayoutAccount(selectedAccount)}」发放 ${selectedTier.label}（¥${selectedTier.amountYuan}）。每天只能提现一次。",
+            message = "将消耗 ${selectedTier.pointsCost} 搭币，向${channelName}账号「${maskPayoutAccount(selectedAccount)}」发放 ${selectedTier.label}（¥${selectedTier.amountYuan}）。每天只能提现一次。",
             confirmText = if (submitting) "提交中…" else "确认",
             dismissText = "取消",
             onDismiss = { if (!submitting) confirmOpen = false },

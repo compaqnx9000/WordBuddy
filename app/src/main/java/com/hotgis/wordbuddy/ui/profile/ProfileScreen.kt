@@ -46,6 +46,7 @@ import androidx.compose.material.icons.outlined.EventAvailable
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.PlayCircle
+import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import java.time.LocalDate
 import java.time.YearMonth
 import android.content.Intent
@@ -137,6 +138,7 @@ fun ProfileScreen(
     },
     onOpenPointsMall: () -> Unit = {},
     onOpenWithdraw: () -> Unit = {},
+    onOpenPointsLedger: () -> Unit = {},
     onOpenBuyPoints: () -> Unit = {},
     onOpenShortFavorites: () -> Unit = {},
     onOpenTools: () -> Unit = {},
@@ -302,12 +304,12 @@ fun ProfileScreen(
                     .onSuccess { claim ->
                         Toast.makeText(
                             context,
-                            "获得 ${claim.pointsEarned} 积分，今日剩余 ${claim.offer.remaining}/${claim.offer.dailyLimit}",
+                            "获得 ${claim.pointsEarned} 搭币，今日剩余 ${claim.offer.remaining}/${claim.offer.dailyLimit}",
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
                     .onFailure {
-                        Toast.makeText(context, it.message ?: "积分发放失败", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, it.message ?: "搭币发放失败", Toast.LENGTH_LONG).show()
                     }
                 act.runOnUiThread { RewardVideoController.preload(act) }
             }
@@ -324,7 +326,7 @@ fun ProfileScreen(
                     override fun onClosed() {
                         if (!rewarded) {
                             checkInBusy = false
-                            Toast.makeText(context, "需看完广告才能领积分", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "需看完广告才能领搭币", Toast.LENGTH_SHORT).show()
                         }
                     }
                     override fun onFailed(reason: String) {
@@ -457,9 +459,9 @@ fun ProfileScreen(
         StellarConfirmDialog(
             title = if (makeupDay != null) "补签成功" else "签到成功",
             message = if (makeupDay != null) {
-                "补签 ${makeupDay.monthValue}月${makeupDay.dayOfMonth}日成功，该日连续第 ${success.streakAtDate.coerceAtLeast(1)} 天，获得 ${success.pointsEarned} 积分\n当前累计 ${success.totalPoints} 分"
+                "补签 ${makeupDay.monthValue}月${makeupDay.dayOfMonth}日成功，该日连续第 ${success.streakAtDate.coerceAtLeast(1)} 天，获得 ${success.pointsEarned} 搭币\n当前累计 ${success.totalPoints} 搭币"
             } else {
-                "连续第 ${success.streakDays} 天，获得 ${success.pointsEarned} 积分\n当前累计 ${success.totalPoints} 分"
+                "连续第 ${success.streakDays} 天，获得 ${success.pointsEarned} 搭币\n当前累计 ${success.totalPoints} 搭币"
             },
             confirmText = "太棒了",
             dismissText = "",
@@ -471,7 +473,7 @@ fun ProfileScreen(
         val makeupPoints = CheckInStore.makeupReward(checkIn, date)
         StellarConfirmDialog(
             title = "补签 ${date.monthValue}月${date.dayOfMonth}日",
-            message = "观看完整激励视频后即可完成补签，并获得 $makeupPoints 积分。",
+            message = "观看完整激励视频后即可完成补签，并获得 $makeupPoints 搭币。",
             confirmText = "观看广告",
             dismissText = "取消",
             onDismiss = { if (!checkInBusy) makeupConfirmDate = null },
@@ -594,7 +596,7 @@ fun ProfileScreen(
                 ProfileMenuRow(
                     icon = Icons.Outlined.PlayCircle,
                     iconTint = Stellar.Gold,
-                    title = "看视频领积分",
+                    title = "看视频领搭币",
                     trailing = if (!loggedIn) {
                         "登录后每日 ${rewardVideo.dailyLimit} 次"
                     } else {
@@ -606,8 +608,8 @@ fun ProfileScreen(
                 ProfileMenuRow(
                     icon = Icons.Outlined.CardGiftcard,
                     iconTint = Stellar.Gold,
-                    title = "积分兑礼",
-                    trailing = "可用 ${checkIn.totalPoints} 分",
+                    title = "搭币兑礼",
+                    trailing = "可用 ${checkIn.totalPoints} 搭币",
                     onClick = onOpenPointsMall,
                 )
                 ProfileMenuDivider()
@@ -615,9 +617,19 @@ fun ProfileScreen(
                     icon = Icons.Outlined.Payments,
                     iconTint = Stellar.Pink,
                     title = "支付宝提现",
-                    trailing = "可用 ${checkIn.totalPoints} 分",
+                    trailing = "可用 ${checkIn.totalPoints} 搭币",
                     onClick = {
                         if (loggedIn) onOpenWithdraw() else onLogin()
+                    },
+                )
+                ProfileMenuDivider()
+                ProfileMenuRow(
+                    icon = Icons.AutoMirrored.Outlined.ReceiptLong,
+                    iconTint = Stellar.Cyan,
+                    title = "搭币明细",
+                    trailing = if (!loggedIn) "登录后查看" else "收入与支出",
+                    onClick = {
+                        if (loggedIn) onOpenPointsLedger() else onLogin()
                     },
                 )
                 ProfileMenuDivider()
@@ -633,7 +645,7 @@ fun ProfileScreen(
                     icon = Icons.Outlined.PersonAdd,
                     iconTint = Stellar.Cyan,
                     title = "邀请好友",
-                    trailing = "各得积分",
+                    trailing = "各得搭币",
                     onClick = {
                         val id = buddyId?.trim().orEmpty()
                         if (id.isBlank()) {
@@ -865,15 +877,15 @@ private fun DailyCheckInCard(
                 )
                 Text(
                     text = when {
-                        !loggedIn -> "登录后签到，积分将同步到云端"
+                        !loggedIn -> "登录后签到，搭币将同步到云端"
                         monthGrid && state.streakDays > 0 ->
-                            "已连签 ${state.streakDays} 天 · 本月日历可补签 · 累计 ${state.totalPoints} 分"
+                            "已连签 ${state.streakDays} 天 · 本月日历可补签 · 累计 ${state.totalPoints} 搭币"
                         monthGrid ->
-                            "本月日期一览，漏签可看广告补签 · 累计 ${state.totalPoints} 分"
+                            "本月日期一览，漏签可看广告补签 · 累计 ${state.totalPoints} 搭币"
                         state.streakDays > 0 ->
-                            "已连签 ${state.streakDays} 天 · 左右滑动查看本月 · 累计 ${state.totalPoints} 分"
+                            "已连签 ${state.streakDays} 天 · 左右滑动查看本月 · 累计 ${state.totalPoints} 搭币"
                         else ->
-                            "左右滑动查看本月，漏签可看广告补签 · 累计 ${state.totalPoints} 分"
+                            "左右滑动查看本月，漏签可看广告补签 · 累计 ${state.totalPoints} 搭币"
                     },
                     color = Stellar.OnSurfaceVariant.copy(alpha = 0.9f),
                     fontSize = 12.ssp(),
@@ -1135,7 +1147,7 @@ private fun CheckInDayCell(
             Text(
                 text = when {
                     slot.claimed -> "已领取"
-                    slot.isClaimTarget -> "+${slot.reward}分"
+                    slot.isClaimTarget -> "+${slot.reward}搭币"
                     slot.canMakeup -> "补签"
                     slot.isFuture -> "待签到"
                     else -> "未签"
@@ -1165,9 +1177,9 @@ private fun ProfileHeroCard(
     val loggedIn = !phone.isNullOrBlank()
     val titleName = if (loggedIn) userName else "未登录"
     val statsText = if (loggedIn) {
-        "已收藏 $wordCount 词 · 积分 $totalPoints"
+        "已收藏 $wordCount 词 · 搭币 $totalPoints"
     } else {
-        "登录后同步收藏与积分"
+        "登录后同步收藏与搭币"
     }
     val cardShape = RoundedCornerShape(20.sdp())
     Column(

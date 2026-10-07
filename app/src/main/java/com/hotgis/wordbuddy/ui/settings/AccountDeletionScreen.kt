@@ -298,7 +298,7 @@ fun AccountDeletionScreen(
                     if (step == DeletionStep.Verify) {
                         Text(
                             text = if (forceMode) {
-                                "强行注销会立即删除账号，积分、生词本等全部清空，不可恢复。"
+                                "强行注销会立即删除账号，搭币、生词本等全部清空，不可恢复。"
                             } else {
                                 "跳过原因并注销也可以。提交后有 ${status?.cooldownDays ?: 7} 天冷静期，期间可随时撤销。"
                             },
@@ -376,7 +376,7 @@ private fun NoticeStep(
         Spacer(Modifier.height(14.dp))
         NoticeLine("无法继续登录本账号，搭子号与资料将被删除")
         NoticeLine("生词本、收藏、学习记录与助记无法找回")
-        NoticeLine("剩余积分视为自愿放弃；也可勾选强行注销立即删除")
+        NoticeLine("剩余搭币视为自愿放弃；也可勾选强行注销立即删除")
         NoticeLine("普通注销有 7 天冷静期；强行注销验证后立即生效")
         NoticeLine("相关日志依法可能保留不少于 6 个月")
     }
@@ -461,7 +461,7 @@ private fun CheckStep(
         }
         if ((status?.remainingPoints ?: 0) > 0) {
             Text(
-                text = "当前剩余 ${status?.remainingPoints} 积分，注销后视为放弃。",
+                text = "当前剩余 ${status?.remainingPoints} 搭币，注销后视为放弃。",
                 color = Stellar.OnSurfaceVariant,
                 fontSize = 13.ssp(),
                 modifier = Modifier.fillMaxWidth(),
@@ -477,7 +477,7 @@ private fun CheckStep(
     ) {
         DeletionCheckBox(checked = forceAgree, onChecked = onForceAgree)
         Text(
-            text = "我同意强行注销：放弃积分、未完成兑换/提现及全部账号权益，验证后立即删除，不可恢复。",
+            text = "我同意强行注销：放弃搭币、未完成兑换/提现及全部账号权益，验证后立即删除，不可恢复。",
             color = Stellar.Pink,
             fontSize = 13.ssp(),
             lineHeight = 20.ssp(),

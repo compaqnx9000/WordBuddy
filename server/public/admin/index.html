@@ -211,8 +211,8 @@
       <button class="nav" data-page="logins" onclick="go('logins')">登录记录</button>
       <button class="nav" data-page="sms" onclick="go('sms')">短信记录</button>
       <button class="nav" data-page="notebooks" onclick="go('notebooks')">词书 / 生词本</button>
-      <button class="nav" data-page="checkins" onclick="go('checkins')">签到积分</button>
-      <button class="nav" data-page="gifts" onclick="go('gifts')">积分兑礼</button>
+      <button class="nav" data-page="checkins" onclick="go('checkins')">签到搭币</button>
+      <button class="nav" data-page="gifts" onclick="go('gifts')">搭币兑礼</button>
       <button class="nav" data-page="giftOrders" onclick="go('giftOrders')">兑换订单</button>
       <button class="nav" data-page="withdrawals" onclick="go('withdrawals')">提现记录</button>
       <button class="nav" data-page="shorts" onclick="go('shorts')">短视频</button>
@@ -240,8 +240,8 @@ const titles = {
   logins: ['登录记录', '验证码 / 密码登录，成功与失败'],
   sms: ['短信记录', '验证码发送与是否已核销（不展示明文验证码）'],
   notebooks: ['词书 / 生词本', '系统词书可下架与改词；用户生词本可查看删除'],
-  checkins: ['签到积分', '用户累计积分、连续签到、每日签到明细，以及奖励视频每次积分'],
-  gifts: ['积分兑礼', '栏目显示、礼品归属分类、库存与积分价格'],
+  checkins: ['签到搭币', '用户累计搭币、连续签到、每日签到明细，以及奖励视频每次搭币'],
+  gifts: ['搭币兑礼', '栏目显示、礼品归属分类、库存与搭币价格'],
   giftOrders: ['兑换订单', '用户兑换记录与发货状态'],
   withdrawals: ['提现记录', '按手机号、昵称、搭子号或用户 ID 查询每笔提现'],
   shorts: ['短视频', '视频维护，以及用户在口语/单词/听力的累计停留'],
@@ -258,7 +258,7 @@ async function saveRewardVideoPoints() {
   const raw = document.getElementById('rvPoints')?.value;
   try {
     const data = await api('/reward-video', { method: 'PUT', body: JSON.stringify({ pointsPerWatch: Number(raw) }) });
-    alert('已保存：每次 +' + data.pointsPerWatch + ' 积分，下次看完视频立即生效');
+    alert('已保存：每次 +' + data.pointsPerWatch + ' 搭币，下次看完视频立即生效');
   } catch (e) {
     alert(e.message || '保存失败');
   }
@@ -582,7 +582,7 @@ function renderCockpit(d) {
     ['人均观看', fmtDuration(avgMs)],
     [`${periodWord}签到`, fmtCount(checkins)],
     [`${periodWord}兑礼`, fmtCount(orders)],
-    ['兑礼积分', fmtCount(giftPoints)],
+    ['兑礼搭币', fmtCount(giftPoints)],
     ['待处理提现', `${fmtCount(summary.withdrawalsPending)}笔`],
     ['登录成功', fmtCount(loginOk)],
     ['登录失败', fmtCount(loginFail)],
@@ -615,7 +615,7 @@ function renderCockpit(d) {
       </div>
       <div class="chart-card">
         <h3>签到与兑礼</h3>
-        <p class="note">签到是人次，兑礼是订单数。本期兑礼消耗 ${fmtCount(giftPoints)} 积分。</p>
+        <p class="note">签到是人次，兑礼是订单数。本期兑礼消耗 ${fmtCount(giftPoints)} 搭币。</p>
         <div class="legend">${engageChart.legend}</div>
         ${engageChart.svg}
       </div>
@@ -651,7 +651,7 @@ async function render() {
           <div class="stat"><b>${d.stats.userNotebookCount}</b><span>用户生词本</span></div>
           <div class="stat"><b>${d.stats.sms24h}</b><span>近 24 小时短信</span></div>
           <div class="stat"><b>${d.stats.checkInToday ?? 0}</b><span>今日签到</span></div>
-          <div class="stat"><b>${d.stats.checkInUsers ?? 0}</b><span>有积分用户</span></div>
+          <div class="stat"><b>${d.stats.checkInUsers ?? 0}</b><span>有搭币用户</span></div>
         </div>
         <h3>最近注册</h3>
         ${userTable(d.recentUsers)}`;
@@ -737,12 +737,12 @@ async function render() {
         <td><input id="lvMall${row.level}" type="number" min="0" max="90" value="${row.mallDiscountPercent}" style="max-width:72px" /></td>
       </tr>`).join('');
       const rvBar = `<div class="card" style="width:100%;max-width:none;margin:0 0 16px;padding:18px 20px">
-        <h1 style="font-size:18px">激励广告积分</h1>
-        <p class="sub" style="margin:0 0 12px">用户看完一条激励视频后获得的积分。保存后，下一次看完立即按新数值发放。</p>
+        <h1 style="font-size:18px">激励广告搭币</h1>
+        <p class="sub" style="margin:0 0 12px">用户看完一条激励视频后获得的搭币。保存后，下一次看完立即按新数值发放。</p>
         <div class="toolbar" style="margin:0">
           <label style="margin:0">每次获得</label>
           <input id="rvPoints" type="number" min="1" max="100000" value="${Number(rv.pointsPerWatch) || 1500}" style="max-width:120px" />
-          <span class="sub" style="margin:0">积分</span>
+          <span class="sub" style="margin:0">搭币</span>
           <button class="btn" onclick="saveRewardVideoPoints()">保存</button>
           <span class="sub" style="margin:0">每天可看次数由等级规则决定</span>
         </div>
@@ -763,12 +763,12 @@ async function render() {
         const d = await api(`/checkins/logs?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
         el.innerHTML = rvBar + `
           <div class="toolbar">
-            <button class="btn ${state.checkInView==='users'?'':'ghost'}" onclick="go('checkins',{checkInView:'users',page:1})">积分排行</button>
+            <button class="btn ${state.checkInView==='users'?'':'ghost'}" onclick="go('checkins',{checkInView:'users',page:1})">搭币排行</button>
             <button class="btn" onclick="go('checkins',{checkInView:'logs',page:1})">签到明细</button>
             <input id="checkinQ" style="max-width:240px" placeholder="搜索手机号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('checkins',{q:this.value,page:1,checkInView:'logs'})" />
             <button class="btn" onclick="go('checkins',{q:document.getElementById('checkinQ').value,page:1,checkInView:'logs'})">搜索</button>
           </div>
-          <table><thead><tr><th>头像</th><th>手机号</th><th>签到日期</th><th>连续天数</th><th>当日积分</th><th>记录时间</th><th></th></tr></thead>
+          <table><thead><tr><th>头像</th><th>手机号</th><th>签到日期</th><th>连续天数</th><th>当日搭币</th><th>记录时间</th><th></th></tr></thead>
           <tbody>${d.items.map(r => `<tr>
             <td>${avatarCell(r.avatarUrl)}</td>
             <td>${esc(r.phone)}</td>
@@ -785,15 +785,15 @@ async function render() {
           <div class="stats">
             <div class="stat"><b>${d.stats.checkInToday}</b><span>今日签到（${esc(d.stats.today)}）</span></div>
             <div class="stat"><b>${d.stats.userCount}</b><span>有签到用户</span></div>
-            <div class="stat"><b>${d.stats.totalPoints}</b><span>积分总量</span></div>
+            <div class="stat"><b>${d.stats.totalPoints}</b><span>搭币总量</span></div>
           </div>
           <div class="toolbar">
-            <button class="btn" onclick="go('checkins',{checkInView:'users',page:1})">积分排行</button>
+            <button class="btn" onclick="go('checkins',{checkInView:'users',page:1})">搭币排行</button>
             <button class="btn ghost" onclick="go('checkins',{checkInView:'logs',page:1})">签到明细</button>
             <input id="checkinQ" style="max-width:240px" placeholder="搜索手机号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('checkins',{q:this.value,page:1,checkInView:'users'})" />
             <button class="btn" onclick="go('checkins',{q:document.getElementById('checkinQ').value,page:1,checkInView:'users'})">搜索</button>
           </div>
-          <table><thead><tr><th>头像</th><th>手机号</th><th>等级</th><th>累计积分</th><th>连续天数</th><th>最近签到</th><th>今日</th><th></th></tr></thead>
+          <table><thead><tr><th>头像</th><th>手机号</th><th>等级</th><th>累计搭币</th><th>连续天数</th><th>最近签到</th><th>今日</th><th></th></tr></thead>
           <tbody>${d.items.map(r => `<tr>
             <td>${avatarCell(r.avatarUrl)}</td>
             <td>${esc(r.phone)}</td>
@@ -836,7 +836,7 @@ async function render() {
             : `<span style="font-size:22px">${esc(g.coverEmoji||'🎁')}</span>`}</td>
           <td>${esc(g.title)}<div class="sub">${esc(g.subtitle||'')}</div></td>
           <td>${esc(catLabels(g))}</td>
-          <td><b>${g.pointsCost}</b> 积分${g.cashFen>0?` + ${g.cashYuan}元`:''}</td>
+          <td><b>${g.pointsCost}</b> 搭币${g.cashFen>0?` + ${g.cashYuan}元`:''}</td>
           <td>${g.stock < 0 ? '<span class="tag">不限</span>' : (g.stock === 0 ? '<span class="tag bad">0</span>' : esc(String(g.stock)))}</td>
           <td>${g.redeemedCount}</td>
           <td><span class="tag ${g.published?'':'bad'}">${g.published?'上架':'下架'}</span>${g.needAddress?' · 需地址':''}</td>
@@ -859,7 +859,7 @@ async function render() {
           <td>${fmt(o.createdAt)}</td>
           <td>${esc(o.phone||'—')}<div class="sub">#${o.userId}</div></td>
           <td>${esc(o.coverEmoji||'')} ${esc(o.giftTitle)}</td>
-          <td>${o.pointsSpent} 积分${o.cashFen>0?` + ${o.cashYuan}元`:''}</td>
+          <td>${o.pointsSpent} 搭币${o.cashFen>0?` + ${o.cashYuan}元`:''}</td>
           <td><span class="tag">${esc(orderStatusLabel(o.status))}</span></td>
           <td>${o.addressDetail?esc((o.addressName||'')+' '+ (o.addressPhone||'')+' '+o.addressDetail):'—'}</td>
           <td>
@@ -884,7 +884,7 @@ async function render() {
           </select>
           <button class="btn" onclick="go('withdrawals',{q:document.querySelector('main input').value,page:1})">搜索</button>
         </div>
-        <p class="note">共 ${fmtCount(sum.total)} 笔 · 已到账 ${fmtCount(sum.successCount)} 笔 / ${successYuan} 元 / ${fmtCount(sum.successPoints)} 积分 · 处理中 ${fmtCount(sum.pendingCount)} · 失败 ${fmtCount(sum.failedCount)}</p>
+        <p class="note">共 ${fmtCount(sum.total)} 笔 · 已到账 ${fmtCount(sum.successCount)} 笔 / ${successYuan} 元 / ${fmtCount(sum.successPoints)} 搭币 · 处理中 ${fmtCount(sum.pendingCount)} · 失败 ${fmtCount(sum.failedCount)}</p>
         ${withdrawalTable(d.items, true)}
         ${pager(d.total)}`;
     } else if (state.page === 'shorts') {
@@ -988,7 +988,7 @@ async function render() {
 function withdrawalTable(items, showUser) {
   const cols = showUser ? 8 : 7;
   return `<table><thead><tr>
-    <th>时间</th>${showUser ? '<th>用户</th>' : ''}<th>渠道</th><th>收款账号</th><th>金额</th><th>积分</th><th>状态</th><th>单号 / 说明</th>
+    <th>时间</th>${showUser ? '<th>用户</th>' : ''}<th>渠道</th><th>收款账号</th><th>金额</th><th>搭币</th><th>状态</th><th>单号 / 说明</th>
   </tr></thead><tbody>${(items || []).map((w) => `<tr>
     <td>${fmt(w.createdAt)}${w.updatedAt && w.updatedAt !== w.createdAt ? `<div class="sub">更新 ${fmt(w.updatedAt)}</div>` : ''}</td>
     ${showUser ? `<td>${esc(w.phone || '—')}<div class="sub">${esc(w.nickname || '—')} · #${w.userId}</div>${w.buddyId ? `<div class="sub">${esc(w.buddyId)}</div>` : ''}
@@ -1079,7 +1079,7 @@ async function openUser(id) {
         <p class="sub" style="margin:8px 0 0">手机 ${esc(u.phone)} · 搭子号 ${esc(u.buddyId || '—')}</p>
         <p class="sub" style="margin:6px 0 0">注册 ${fmt(u.createdAt)} · 最近登录 ${fmt(u.lastLoginAt)} · 改密 ${fmt(u.passwordChangedAt)}</p>
         <p class="sub" style="margin:6px 0 0">最近设备：${esc(u.lastDeviceLabel || '—')} · ${esc(u.lastIpLocation || '归属地未知')}${u.lastIp ? ' · ' + esc(u.lastIp) : ''}</p>
-        <p class="sub" style="margin:6px 0 0">签到积分：累计 <b>${d.checkIn?.totalPoints ?? 0}</b> · 连续 ${d.checkIn?.streakDays ?? 0} 天 · 最近 ${esc(d.checkIn?.lastCheckInDate || '—')}</p>
+        <p class="sub" style="margin:6px 0 0">签到搭币：累计 <b>${d.checkIn?.totalPoints ?? 0}</b> · 连续 ${d.checkIn?.streakDays ?? 0} 天 · 最近 ${esc(d.checkIn?.lastCheckInDate || '—')}</p>
         <p class="sub" style="margin:6px 0 0">助记配图：已购买 <b>${u.imageCreditsPurchased ?? 0}</b> 张 · 还可生成 <b>${u.imageCreditsRemaining ?? 0}</b> 张</p>
       </div>
     </div>
@@ -1113,25 +1113,26 @@ async function openUser(id) {
       <td>${lastDeviceId===dev.id?'<span class="tag">最近登录</span>':''}</td>
     </tr>`).join('') || '<tr><td colspan="7">暂无设备记录（用户下次登录后会出现）</td></tr>'}</tbody></table>
     <h3>签到记录</h3>
-    <table><thead><tr><th>日期</th><th>连续天数</th><th>获得积分</th><th>记录时间</th></tr></thead>
+    <table><thead><tr><th>日期</th><th>连续天数</th><th>获得搭币</th><th>记录时间</th></tr></thead>
     <tbody>${(d.checkInLogs||[]).map(r => `<tr>
       <td>${esc(r.checkInDate)}</td><td>${r.streakDays}</td><td>+${r.pointsEarned}</td><td>${fmt(r.createdAt)}</td>
     </tr>`).join('') || '<tr><td colspan="4">暂无签到</td></tr>'}</tbody></table>
     <h3>提现记录</h3>
-    <p class="sub">共 ${d.withdrawalSummary?.total ?? 0} 笔 · 已到账 ${d.withdrawalSummary?.successCount ?? 0} 笔 / ${((d.withdrawalSummary?.successFen || 0) / 100).toFixed(2)} 元 / ${d.withdrawalSummary?.successPoints ?? 0} 积分 · 处理中 ${d.withdrawalSummary?.pendingCount ?? 0} · 失败 ${d.withdrawalSummary?.failedCount ?? 0}
+    <p class="sub">共 ${d.withdrawalSummary?.total ?? 0} 笔 · 已到账 ${d.withdrawalSummary?.successCount ?? 0} 笔 / ${((d.withdrawalSummary?.successFen || 0) / 100).toFixed(2)} 元 / ${d.withdrawalSummary?.successPoints ?? 0} 搭币 · 处理中 ${d.withdrawalSummary?.pendingCount ?? 0} · 失败 ${d.withdrawalSummary?.failedCount ?? 0}
       <button class="btn ghost small" onclick="closeModal();go('withdrawals',{q:'${esc(u.phone)}',page:1,withdrawStatus:''})">查看全部</button>
     </p>
     ${withdrawalTable(d.withdrawals, false)}
     <h3>配图购买</h3>
-    <p class="sub">已支付到账 ${u.imageCreditsPurchased ?? 0} 张 · 当前还可生成 ${u.imageCreditsRemaining ?? 0} 张。未支付的订单不计已购买。</p>
-    <table><thead><tr><th>时间</th><th>档位</th><th>张数</th><th>金额</th><th>状态</th></tr></thead>
+    <p class="sub">已支付未退款 ${u.imageCreditsPurchased ?? 0} 张 · 当前还可生成 ${u.imageCreditsRemaining ?? 0} 张。退款会把这笔钱原路退回支付宝，并扣回这笔订单里还没用掉的张数。</p>
+    <table><thead><tr><th>时间</th><th>档位</th><th>张数</th><th>金额</th><th>状态</th><th></th></tr></thead>
     <tbody>${(d.imageOrders||[]).map(o => `<tr>
       <td>${fmt(o.paidAt || o.createdAt)}</td>
       <td>${esc(o.title || o.packageId || '—')}</td>
       <td>${o.credits} 张</td>
       <td>¥${esc(o.amountYuan)}</td>
-      <td><span class="tag ${o.status === 'paid' ? '' : 'bad'}">${esc(o.statusLabel)}</span></td>
-    </tr>`).join('') || '<tr><td colspan="5">暂无购买记录</td></tr>'}</tbody></table>
+      <td><span class="tag ${o.status === 'paid' ? '' : 'bad'}">${esc(o.statusLabel)}</span>${o.status === 'refunded' && o.refundedCredits != null ? `<div class="sub" style="margin:4px 0 0">扣回 ${o.refundedCredits} 张</div>` : ''}</td>
+      <td>${o.status === 'paid' ? `<button class="btn danger small" onclick="refundImageOrder(${o.id}, ${u.id}, '${esc(o.amountYuan)}', ${Number(o.credits) || 0}, ${Number(u.imageCreditsRemaining) || 0})">退款</button>` : '—'}</td>
+    </tr>`).join('') || '<tr><td colspan="6">暂无购买记录</td></tr>'}</tbody></table>
     <h3>生词本</h3>
     <table><thead><tr><th>名称</th><th>词数</th><th>创建</th><th></th></tr></thead>
     <tbody>${d.notebooks.map(n => `<tr>
@@ -1161,6 +1162,56 @@ async function openUser(id) {
     <div style="margin-top:16px"><button class="btn ghost" onclick="closeModal()">关闭</button></div>`);
 }
 
+let refundDraft = null;
+let refundBusy = false;
+function refundImageOrder(orderId, userId, amountYuan, credits, remaining) {
+  const granted = Math.max(0, Number(credits) || 0);
+  const left = Math.max(0, Number(remaining) || 0);
+  const claw = Math.min(left, granted);
+  const used = Math.max(0, granted - claw);
+  refundDraft = { orderId, userId, amountYuan: String(amountYuan), claw };
+  const usedLine = used > 0
+    ? `<p class="sub">其中 ${used} 张已经用掉，钱仍全额退回，这几张不再追回。</p>`
+    : '';
+  showModal(`<h2>确认退款</h2>
+    <p>将把 <b>¥${esc(amountYuan)}</b> 原路退回支付宝，并扣回 <b>${claw}</b> 张配图（本单 ${granted} 张，用户还剩 ${left} 张）。</p>
+    ${usedLine}
+    <label>退款原因</label>
+    <input id="refundReason" value="用户热线退款" />
+    <div style="margin-top:16px;display:flex;gap:8px">
+      <button class="btn ghost" type="button" onclick="cancelRefund()">取消</button>
+      <button class="btn danger" type="button" id="refundConfirmBtn" onclick="confirmRefund()">确认退款</button>
+    </div>`, { closeOnBackdrop: false });
+}
+function cancelRefund() {
+  const userId = refundDraft && refundDraft.userId;
+  refundDraft = null;
+  refundBusy = false;
+  if (userId) openUser(userId);
+  else closeModal();
+}
+async function confirmRefund() {
+  if (!refundDraft || refundBusy) return;
+  refundBusy = true;
+  const draft = refundDraft;
+  const btn = document.getElementById('refundConfirmBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '退款中…'; }
+  const reason = (document.getElementById('refundReason')?.value || '').trim() || '用户热线退款';
+  try {
+    const data = await api('/point-orders/' + draft.orderId + '/refund', {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+    refundDraft = null;
+    alert('已退款 ¥' + (Number(data.refundedFen || 0) / 100).toFixed(2) + '，扣回 ' + (data.clawedCredits || 0) + ' 张，剩余 ' + (data.imageCredits ?? 0) + ' 张');
+    openUser(draft.userId);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '确认退款'; }
+    alert(e.message);
+  } finally {
+    refundBusy = false;
+  }
+}
 async function saveUser(id) {
   try {
     const body = {
@@ -1267,7 +1318,7 @@ async function editGiftCategories() {
     const d = await api('/gift-categories');
     const items = d.items || [];
     showModal(`<h2>兑礼栏目设置</h2>
-      <p class="sub">控制 App「积分兑礼」顶部 5 个栏目是否显示；至少保留一个可见。</p>
+      <p class="sub">控制 App「搭币兑礼」顶部 5 个栏目是否显示；至少保留一个可见。</p>
       <table><thead><tr><th>栏目</th><th>显示名称</th><th>排序</th><th>显示</th></tr></thead>
       <tbody>${items.map((c, i) => `<tr>
         <td><code>${esc(c.id)}</code></td>
@@ -1319,10 +1370,10 @@ async function editGift(g) {
     <label>封面底色（无图时备用）</label><input id="gColor" value="${esc(item.coverColor||'#1B6CA8')}" />
     <label>显示在哪些栏目（可多选）</label>
     <div id="gCats" style="padding:8px 0">${giftCategoryChecks(selected)}</div>
-    <label>积分</label><input id="gPts" type="number" value="${item.pointsCost||0}" />
+    <label>搭币</label><input id="gPts" type="number" value="${item.pointsCost||0}" />
     <label>现金（元）</label><input id="gCash" type="number" step="0.01" value="${item.cashYuan||0}" />
     <label>原价（元，可空）</label><input id="gOrig" type="number" step="0.01" value="${item.originalPriceYuan||''}" />
-    <label>积分抵扣展示（元，可空）</label><input id="gOff" type="number" step="0.01" value="${item.pointsOffsetYuan||''}" />
+    <label>搭币抵扣展示（元，可空）</label><input id="gOff" type="number" step="0.01" value="${item.pointsOffsetYuan||''}" />
     <label>库存（-1 不限）</label><input id="gStock" type="number" value="${item.stock??-1}" />
     <label>排序</label><input id="gSort" type="number" value="${item.sortOrder||0}" />
     <label>说明</label><textarea id="gDesc" rows="3">${esc(item.description||'')}</textarea>
