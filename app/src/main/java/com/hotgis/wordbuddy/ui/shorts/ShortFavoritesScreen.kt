@@ -315,7 +315,7 @@ private fun FavoriteCard(
             Icon(
                 if (selected) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
                 contentDescription = if (selected) "取消选择" else "选择",
-                tint = if (selected) Stellar.Cyan else Color.White,
+                tint = if (selected && !Stellar.isLight) Stellar.Cyan else Color.White,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(8.sdp())

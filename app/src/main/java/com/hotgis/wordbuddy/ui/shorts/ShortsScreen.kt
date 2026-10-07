@@ -555,13 +555,17 @@ private fun ShortVideoPage(
                     verticalArrangement = Arrangement.spacedBy(8.sdp()),
                 ) {
                     clip.relatedWords.take(20).forEach { word ->
+                        // Light themes keep a white chip under the dark accent.
+                        // Dark themes paint the chip with the accent so it shows on a black video.
+                        val chipLight = Stellar.isLight
                         Text(
                             text = word,
-                            color = Stellar.Cyan,
+                            color = if (chipLight) Stellar.Cyan else Stellar.OnPrimary,
                             fontSize = 12.ssp(),
+                            fontWeight = FontWeight.SemiBold,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(14.sdp()))
-                                .background(Color.White.copy(alpha = 0.12f))
+                                .background(if (chipLight) Color.White.copy(alpha = 0.94f) else Stellar.Cyan)
                                 .clickable { onOpenWord(word) }
                                 .padding(horizontal = 10.sdp(), vertical = 5.sdp()),
                         )

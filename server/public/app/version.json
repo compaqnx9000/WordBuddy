@@ -1,8 +1,8 @@
 {
-  "versionCode": 168,
-  "versionName": "1.77",
+  "versionCode": 170,
+  "versionName": "1.79",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "我的二维码去掉说明文字；偏好设置去掉「AI 自动生成配图」。",
-  "releasedAt": "2026-10-06T13:50:00.000Z"
+  "notes": "短视频单词胶囊改用各主题强调色，深色主题下也能看出胶囊。",
+  "releasedAt": "2026-10-07T02:28:00.000Z"
 }

@@ -396,10 +396,13 @@ private struct ShortPage: View {
                         } label: {
                             Text(word)
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(Theme.cyan)
+                                .foregroundStyle(Theme.isLight ? Theme.cyan : Theme.onPrimary)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
-                                .background(.white.opacity(0.12), in: Capsule())
+                                .background(
+                                    Theme.isLight ? Color.white.opacity(0.94) : Theme.cyan,
+                                    in: Capsule()
+                                )
                         }
                         .buttonStyle(.plain)
                     }
