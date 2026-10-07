@@ -50,6 +50,7 @@ final class AppModel: ObservableObject {
     @Published var dailyReminder = true
     @Published var podcastPlayWhenScreenOff = false
     @Published var shortsMetaVisibleDefault = true
+    @Published var shortVideoLoop = false
     @Published var biometricLogin = false
     @Published var biometricUnlocked = false
     private var activityTask: Task<Void, Never>?
@@ -83,6 +84,7 @@ final class AppModel: ObservableObject {
         dailyReminder = SettingsStore.dailyReminder
         podcastPlayWhenScreenOff = SettingsStore.podcastPlayWhenScreenOff
         shortsMetaVisibleDefault = SettingsStore.shortsMetaVisibleDefault
+        shortVideoLoop = SettingsStore.shortVideoLoop
         biometricLogin = SettingsStore.biometricLogin
         defaultNotebookId = SettingsStore.defaultNotebookId
         session = SessionStore.load()
@@ -351,6 +353,11 @@ final class AppModel: ObservableObject {
     func setShortsMetaVisibleDefault(_ value: Bool) {
         shortsMetaVisibleDefault = value
         SettingsStore.shortsMetaVisibleDefault = value
+    }
+
+    func setShortVideoLoop(_ value: Bool) {
+        shortVideoLoop = value
+        SettingsStore.shortVideoLoop = value
     }
 
     func setBiometricLogin(_ value: Bool) {

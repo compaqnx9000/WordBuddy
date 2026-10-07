@@ -35,6 +35,7 @@ class SettingsStore(context: Context) {
             biometricLogin = prefs.getBoolean(KEY_BIOMETRIC_LOGIN, false),
             podcastPlayWhenScreenOff = prefs.getBoolean(KEY_PODCAST_SCREEN_OFF, false),
             shortsMetaVisibleDefault = prefs.getBoolean(KEY_SHORTS_META_DEFAULT, true),
+            shortVideoLoop = prefs.getBoolean(KEY_SHORT_VIDEO_LOOP, false),
         )
     }
 
@@ -56,6 +57,7 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_BIOMETRIC_LOGIN, settings.biometricLogin)
             .putBoolean(KEY_PODCAST_SCREEN_OFF, settings.podcastPlayWhenScreenOff)
             .putBoolean(KEY_SHORTS_META_DEFAULT, settings.shortsMetaVisibleDefault)
+            .putBoolean(KEY_SHORT_VIDEO_LOOP, settings.shortVideoLoop)
             .apply()
     }
 
@@ -90,5 +92,6 @@ class SettingsStore(context: Context) {
         const val KEY_BIOMETRIC_LOGIN = "biometric_login"
         const val KEY_PODCAST_SCREEN_OFF = "podcast_play_when_screen_off"
         const val KEY_SHORTS_META_DEFAULT = "shorts_meta_visible_default"
+        const val KEY_SHORT_VIDEO_LOOP = "short_video_loop"
     }
 }

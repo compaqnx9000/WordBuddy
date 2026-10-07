@@ -16,10 +16,6 @@ struct AboutWordBuddyView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
 
-    private var versionCode: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-    }
-
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -46,7 +42,7 @@ struct AboutWordBuddyView: View {
         .alert("检测更新", isPresented: $showUpdate) {
             Button("知道了", role: .cancel) {}
         } message: {
-            Text("当前版本 \(versionName)（\(versionCode)）\n\n已是最新版本。")
+            Text("当前版本 \(versionName)\n\n已是最新版本。")
         }
     }
 

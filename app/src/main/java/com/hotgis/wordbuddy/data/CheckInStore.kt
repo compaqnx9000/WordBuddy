@@ -28,6 +28,8 @@ data class CheckInState(
     val todayReward: Int = 1,
     /** Real check-in dates (yyyy-MM-dd) in the recent window from server logs. */
     val recentDates: List<String> = emptyList(),
+    /** Purchased mnemonic-image uses. Not withdrawable and not spendable in the mall. */
+    val imageCredits: Int = 0,
 )
 
 sealed class CheckInResult {

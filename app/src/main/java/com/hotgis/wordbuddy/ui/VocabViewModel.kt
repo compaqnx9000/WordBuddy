@@ -814,18 +814,21 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 val token = _session.value?.token
                 if (token.isNullOrBlank()) error("请先登录后再生成配图")
                 val settings = _ui.value.settings
-                val bytes = api.generateMnemonicImage(
+                val generated = api.generateMnemonicImage(
                     token = token,
                     word = entry.text,
                     meaningHint = meaningHint.ifBlank { entry.definitions.firstOrNull()?.label },
                     provider = settings.imageProvider.apiValue,
                 )
-                repo.updateImageBlob(id, bytes)
+                if (generated.imageCredits != null) setImageCredits(generated.imageCredits)
+                repo.updateImageBlob(id, generated.bytes)
                 syncLookupImage(id)
             }.onFailure { error ->
                 val api = error as? com.hotgis.wordbuddy.data.ApiException
                 val raw = error.message?.takeIf { it.isNotBlank() }
                 val detail = when {
+                    api?.code == "INSUFFICIENT_IMAGE_CREDITS" ->
+                        api.message?.takeIf { it.isNotBlank() } ?: "配图次数不足，请先购买配图"
                     api?.httpCode == 402 || api?.code == "INSUFFICIENT_POINTS" ->
                         (api.message?.takeIf { it.isNotBlank() } ?: "积分不足") + "，请先购买积分"
                     raw != null && (raw.contains("超时") || raw.contains("timeout", ignoreCase = true)) ->
@@ -2471,6 +2474,10 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setImageCredits(count: Int) {
+        _checkIn.value = _checkIn.value.copy(imageCredits = count.coerceAtLeast(0))
+    }
+
     fun refreshCheckIn() {
         val token = _session.value?.token
         if (token.isNullOrBlank()) {
@@ -2489,7 +2496,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     _checkIn.value = remote
                 }
                 .onFailure {
-                    _checkIn.value = checkInStore.load()
+                    _checkIn.value = checkInStore.load().copy(imageCredits = _checkIn.value.imageCredits)
                 }
         }
         refreshRewardVideo()
@@ -2532,7 +2539,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             streakDays = current.streakDays,
             lastCheckInDate = current.lastCheckInDate,
         )
-        _checkIn.value = checkInStore.load()
+        _checkIn.value = checkInStore.load().copy(imageCredits = current.imageCredits)
     }
 
     fun performCheckIn(onResult: (CheckInResult) -> Unit) {
@@ -2554,6 +2561,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                             _checkIn.value = remote
                         }
                         .onFailure {
+                            val kept = _checkIn.value.imageCredits
                             when (result) {
                                 is CheckInResult.Success -> {
                                     checkInStore.applyRemoteRaw(
@@ -2561,9 +2569,9 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                                         streakDays = result.streakDays,
                                         lastCheckInDate = CheckInStore.todayShanghai().toString(),
                                     )
-                                    _checkIn.value = checkInStore.load()
+                                    _checkIn.value = checkInStore.load().copy(imageCredits = kept)
                                 }
-                                else -> _checkIn.value = checkInStore.load()
+                                else -> _checkIn.value = checkInStore.load().copy(imageCredits = kept)
                             }
                         }
                     onResult(result)

@@ -668,7 +668,7 @@ private struct AvatarSourceDialog: View {
                 Text("更换头像")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(Theme.cyanSoft)
-                Text("自拍一张，或从相册选择图片，保存后会同步到服务器。")
+                Text("自拍一张，或从相册选择图片。")
                     .font(.footnote)
                     .foregroundStyle(Theme.onSurfaceVariant)
                 avatarSourceRow(icon: "camera", title: "拍照", action: onCamera)

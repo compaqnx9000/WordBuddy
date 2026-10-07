@@ -66,7 +66,7 @@ export async function getDeletionRow(userId) {
 export async function evaluateDeletionConditions(userId) {
   const user = (
     await query(
-      `SELECT id, phone, created_at, password_changed_at, phone_changed_at
+      `SELECT id, phone, created_at, password_changed_at, phone_changed_at, image_credits
        FROM users WHERE id = $1`,
       [userId],
     )
@@ -108,16 +108,16 @@ export async function evaluateDeletionConditions(userId) {
   const orderCount = Number(pendingOrders.rows[0]?.n || 0)
   const withdrawCount = Number(pendingWithdrawals.rows[0]?.n || 0)
   const remainingPoints = Number(checkIn.rows[0]?.total_points || 0)
+  const imageCredits = Math.max(0, Number(user.image_credits || 0))
   const settlementOk = orderCount === 0 && withdrawCount === 0
   const settlementBits = []
   if (orderCount > 0) settlementBits.push(`还有 ${orderCount} 笔礼品订单未完成`)
   if (withdrawCount > 0) settlementBits.push(`还有 ${withdrawCount} 笔提现处理中`)
   if (settlementOk) {
-    settlementBits.push(
-      remainingPoints > 0
-        ? `剩余 ${remainingPoints} 积分将视为自愿放弃并清零`
-        : '没有未完成的兑换或提现',
-    )
+    const forfeits = []
+    if (remainingPoints > 0) forfeits.push(`剩余 ${remainingPoints} 积分将视为自愿放弃并清零`)
+    if (imageCredits > 0) forfeits.push(`剩余 ${imageCredits} 张助记配图将视为自愿放弃并清零`)
+    settlementBits.push(forfeits.length ? forfeits.join('；') : '没有未完成的兑换或提现')
   }
 
   const conditions = [

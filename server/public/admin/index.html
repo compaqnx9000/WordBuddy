@@ -1015,6 +1015,7 @@ function shippingText(u) {
 function userTable(items, actions) {
   return `<table><thead><tr>
     <th>头像</th><th>ID</th><th>手机号</th><th>昵称</th><th>搭子号</th><th>邮箱</th><th>性别</th><th>地区</th><th>等级</th>
+    <th>已购配图</th><th>剩余配图</th>
     <th>注册时间</th><th>最近登录</th><th>归属地</th><th>设备数</th>
     <th>登录次数</th>${actions?'<th></th>':''}
   </tr></thead><tbody>${items.map(u => `<tr>
@@ -1027,6 +1028,8 @@ function userTable(items, actions) {
     <td>${genderHtml(u.gender)}</td>
     <td>${esc(u.region || '—')}</td>
     <td><span class="tag">Lv.${u.level ?? 0}</span></td>
+    <td>${u.imageCreditsPurchased ?? 0} 张</td>
+    <td><b>${u.imageCreditsRemaining ?? 0}</b> 张</td>
     <td>${fmt(u.createdAt)}</td>
     <td>${fmt(u.lastLoginAt)}<div class="sub">${methodLabel(u.lastLoginMethod)}</div></td>
     <td>${esc(u.lastIpLocation || '—')}${u.lastIp?`<div class="sub">${esc(u.lastIp)}</div>`:''}</td>
@@ -1077,6 +1080,7 @@ async function openUser(id) {
         <p class="sub" style="margin:6px 0 0">注册 ${fmt(u.createdAt)} · 最近登录 ${fmt(u.lastLoginAt)} · 改密 ${fmt(u.passwordChangedAt)}</p>
         <p class="sub" style="margin:6px 0 0">最近设备：${esc(u.lastDeviceLabel || '—')} · ${esc(u.lastIpLocation || '归属地未知')}${u.lastIp ? ' · ' + esc(u.lastIp) : ''}</p>
         <p class="sub" style="margin:6px 0 0">签到积分：累计 <b>${d.checkIn?.totalPoints ?? 0}</b> · 连续 ${d.checkIn?.streakDays ?? 0} 天 · 最近 ${esc(d.checkIn?.lastCheckInDate || '—')}</p>
+        <p class="sub" style="margin:6px 0 0">助记配图：已购买 <b>${u.imageCreditsPurchased ?? 0}</b> 张 · 还可生成 <b>${u.imageCreditsRemaining ?? 0}</b> 张</p>
       </div>
     </div>
     <h3>账号资料</h3>
@@ -1118,6 +1122,16 @@ async function openUser(id) {
       <button class="btn ghost small" onclick="closeModal();go('withdrawals',{q:'${esc(u.phone)}',page:1,withdrawStatus:''})">查看全部</button>
     </p>
     ${withdrawalTable(d.withdrawals, false)}
+    <h3>配图购买</h3>
+    <p class="sub">已支付到账 ${u.imageCreditsPurchased ?? 0} 张 · 当前还可生成 ${u.imageCreditsRemaining ?? 0} 张。未支付的订单不计已购买。</p>
+    <table><thead><tr><th>时间</th><th>档位</th><th>张数</th><th>金额</th><th>状态</th></tr></thead>
+    <tbody>${(d.imageOrders||[]).map(o => `<tr>
+      <td>${fmt(o.paidAt || o.createdAt)}</td>
+      <td>${esc(o.title || o.packageId || '—')}</td>
+      <td>${o.credits} 张</td>
+      <td>¥${esc(o.amountYuan)}</td>
+      <td><span class="tag ${o.status === 'paid' ? '' : 'bad'}">${esc(o.statusLabel)}</span></td>
+    </tr>`).join('') || '<tr><td colspan="5">暂无购买记录</td></tr>'}</tbody></table>
     <h3>生词本</h3>
     <table><thead><tr><th>名称</th><th>词数</th><th>创建</th><th></th></tr></thead>
     <tbody>${d.notebooks.map(n => `<tr>

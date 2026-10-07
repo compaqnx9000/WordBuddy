@@ -942,6 +942,7 @@ class WordBuddyApi {
             checkedInToday = checkedInToday,
             todayReward = obj.optInt("todayReward", 1).coerceIn(1, 7),
             recentDates = recentDates,
+            imageCredits = obj.optInt("imageCredits", 0).coerceAtLeast(0),
         )
     }
 
@@ -1080,7 +1081,7 @@ class WordBuddyApi {
         word: String,
         meaningHint: String?,
         provider: String,
-    ): ByteArray = withContext(Dispatchers.IO) {
+    ): MnemonicImageResult = withContext(Dispatchers.IO) {
         val root = request(
             method = "POST",
             path = "/mnemonic-images",
@@ -1088,17 +1089,25 @@ class WordBuddyApi {
             body = JSONObject()
                 .put("word", word)
                 .put("meaningHint", meaningHint.orEmpty())
-                .put("provider", provider),
+                .put("provider", provider)
+                .put("billing", "image_credits"),
             connectTimeoutMs = 8_000,
             readTimeoutMs = 20_000,
         )
         val encoded = root.optString("imageBase64")
         if (encoded.isBlank()) throw ApiException("服务器没有返回图片")
-        android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
+        MnemonicImageResult(
+            bytes = android.util.Base64.decode(encoded, android.util.Base64.DEFAULT),
+            imageCredits = if (root.has("imageCredits") && !root.isNull("imageCredits")) {
+                root.optInt("imageCredits").coerceAtLeast(0)
+            } else {
+                null
+            },
+        )
     }
 
     suspend fun fetchPointPackages(): PointPackagesPayload = withContext(Dispatchers.IO) {
-        val root = request("GET", "/point-packages", auth = null)
+        val root = request("GET", "/image-credit-packages", auth = null)
         val items = root.optJSONArray("items") ?: JSONArray()
         PointPackagesPayload(
             items = buildList {
@@ -1111,7 +1120,8 @@ class WordBuddyApi {
                             subtitle = obj.optString("subtitle"),
                             priceFen = obj.optInt("priceFen"),
                             points = obj.optInt("points"),
-                            badge = obj.optString("badge").trim().takeIf { it.isNotEmpty() },
+                            credits = obj.optInt("credits", obj.optInt("points")).coerceAtLeast(0),
+                            badge = obj.optString("badge").trim().takeIf { it.isNotEmpty() && !it.equals("null", ignoreCase = true) },
                         ),
                     )
                 }
@@ -1165,6 +1175,12 @@ class WordBuddyApi {
             PointOrderPayResult(
                 order = parsePointOrder(root.optJSONObject("order") ?: JSONObject()),
                 balance = if (root.has("balance") && !root.isNull("balance")) root.optInt("balance") else null,
+                imageCredits = if (root.has("imageCredits") && !root.isNull("imageCredits")) {
+                    root.optInt("imageCredits").coerceAtLeast(0)
+                } else {
+                    null
+                },
+                grantKind = root.optString("grantKind").ifBlank { "images" },
             )
         }
 

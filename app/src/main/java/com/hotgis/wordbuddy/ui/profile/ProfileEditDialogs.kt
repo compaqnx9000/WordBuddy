@@ -759,7 +759,7 @@ fun AvatarSourceDialog(
             )
             Spacer(Modifier.height(8.sdp()))
             Text(
-                text = "自拍一张，或从相册选择图片，保存后会同步到服务器。",
+                text = "自拍一张，或从相册选择图片。",
                 color = Stellar.OnSurfaceVariant.copy(alpha = 0.92f),
                 fontSize = 15.ssp(),
             )

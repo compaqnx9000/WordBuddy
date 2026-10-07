@@ -194,6 +194,8 @@ data class StudySettings(
     val podcastPlayWhenScreenOff: Boolean = false,
     /** Default visibility of short-video caption/meta block. Per-video override still allowed. */
     val shortsMetaVisibleDefault: Boolean = true,
+    /** Replay the current short when it ends. Off by default. */
+    val shortVideoLoop: Boolean = false,
 )
 
 data class LookupResult(
@@ -207,9 +209,14 @@ data class PointPackage(
     val subtitle: String = "",
     val priceFen: Int,
     val points: Int,
+    val credits: Int = points,
     val badge: String? = null,
 ) {
-    val amountYuan: String get() = "%.2f".format(priceFen / 100.0)
+    val amountYuan: String
+        get() {
+            val yuan = priceFen / 100.0
+            return if (priceFen % 100 == 0) yuan.toInt().toString() else "%.2f".format(yuan)
+        }
 }
 
 data class PointPackagesPayload(
@@ -252,4 +259,11 @@ data class PointPurchaseResult(
 data class PointOrderPayResult(
     val order: PointOrder,
     val balance: Int?,
+    val imageCredits: Int? = null,
+    val grantKind: String = "points",
+)
+
+data class MnemonicImageResult(
+    val bytes: ByteArray,
+    val imageCredits: Int?,
 )

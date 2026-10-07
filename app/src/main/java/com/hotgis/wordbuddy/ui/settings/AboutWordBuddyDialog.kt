@@ -145,8 +145,8 @@ fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
                         detailDismiss = "稍后"
                         pendingUpdate = info
                         detailMessage = buildString {
-                            append("当前版本 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）\n")
-                            append("最新版本 ${info.versionName}（${info.versionCode}）\n\n")
+                            append("当前版本 ${BuildConfig.VERSION_NAME}\n")
+                            append("最新版本 ${info.versionName}\n\n")
                             if (info.notes.isNotBlank()) {
                                 append(info.notes)
                                 append("\n\n")
@@ -159,7 +159,7 @@ fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
                         detailDismiss = ""
                         pendingUpdate = null
                         detailMessage =
-                            "当前版本 ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）\n\n已是最新版本。"
+                            "当前版本 ${BuildConfig.VERSION_NAME}\n\n已是最新版本。"
                     }
                 }
                 .onFailure { error ->

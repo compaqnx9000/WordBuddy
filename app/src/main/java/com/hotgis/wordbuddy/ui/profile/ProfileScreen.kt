@@ -36,7 +36,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.CardGiftcard
@@ -584,10 +584,10 @@ fun ProfileScreen(
         val rightMenus: @Composable () -> Unit = {
             ProfileMenuCard {
                 ProfileMenuRow(
-                    icon = Icons.Outlined.AccountBalanceWallet,
+                    icon = Icons.Outlined.AutoAwesome,
                     iconTint = Stellar.Pink,
-                    title = "充值积分",
-                    trailing = "测试价 ¥0.10",
+                    title = "购买配图",
+                    trailing = if (!loggedIn) "10 张 ¥1" else "剩余 ${checkIn.imageCredits} 张",
                     onClick = onOpenBuyPoints,
                 )
                 ProfileMenuDivider()

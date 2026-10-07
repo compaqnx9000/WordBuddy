@@ -1435,6 +1435,13 @@ struct SettingsView: View {
                 subtitle: "关闭后播放时默认藏文案，仍可单击点开",
                 isOn: Binding(get: { model.shortsMetaVisibleDefault }, set: { model.setShortsMetaVisibleDefault($0) })
             )
+            preferenceDivider()
+            preferenceToggle(
+                icon: "repeat",
+                title: "循环播放当前短视频",
+                subtitle: "停留在同一条时播完再从头播，默认关闭",
+                isOn: Binding(get: { model.shortVideoLoop }, set: { model.setShortVideoLoop($0) })
+            )
             if !favoriteNotebooks.isEmpty {
                 preferenceDivider()
                 VStack(alignment: .leading, spacing: 8) {

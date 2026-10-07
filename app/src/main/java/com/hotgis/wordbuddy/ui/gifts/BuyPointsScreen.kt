@@ -2,7 +2,6 @@ package com.hotgis.wordbuddy.ui.gifts
 
 import android.app.Activity
 import android.widget.Toast
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,7 +25,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBackIosNew
-import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -41,20 +39,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.hotgis.wordbuddy.R
-import com.hotgis.wordbuddy.auth.WeChatAuth
 import com.hotgis.wordbuddy.data.WordBuddyApi
 import com.hotgis.wordbuddy.data.PointPackage
 import com.hotgis.wordbuddy.data.PointPurchaseResult
 import com.hotgis.wordbuddy.pay.AlipayPayHelper
-import com.hotgis.wordbuddy.pay.WeChatPayHelper
-import com.hotgis.wordbuddy.pay.WeChatPayParams
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
 import com.hotgis.wordbuddy.ui.lookup.Stellar
@@ -65,16 +56,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val WechatGreen = Color(0xFF07C160)
-private val AlipayBlue = Color(0xFF1677FF)
-
 @Composable
 fun BuyPointsScreen(
-    totalPoints: Int,
+    imageCredits: Int,
     authToken: String?,
     onBack: () -> Unit,
     onLogin: () -> Unit,
-    onPointsUpdated: (Int) -> Unit = {},
+    onCreditsUpdated: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -82,29 +70,23 @@ fun BuyPointsScreen(
     val api = remember { WordBuddyApi() }
     val scope = rememberCoroutineScope()
     var packages by remember { mutableStateOf<List<PointPackage>>(emptyList()) }
-    var aiCost by remember { mutableStateOf(5) }
     var sandbox by remember { mutableStateOf(true) }
     var alipayReady by remember { mutableStateOf(true) }
-    var wechatReady by remember { mutableStateOf(false) }
-    var channel by remember { mutableStateOf("wechat") }
     var loading by remember { mutableStateOf(true) }
     var buyingId by remember { mutableStateOf<String?>(null) }
-    var balance by remember { mutableStateOf(totalPoints) }
+    var balance by remember { mutableStateOf(imageCredits) }
+
+    LaunchedEffect(imageCredits) {
+        balance = imageCredits
+    }
 
     LaunchedEffect(Unit) {
         loading = true
         runCatching { api.fetchPointPackages() }
             .onSuccess {
                 packages = it.items
-                aiCost = it.aiImagePointsCost
                 sandbox = it.sandbox
                 alipayReady = it.alipayReady || it.sandbox
-                wechatReady = it.wechatReady
-                channel = when {
-                    it.wechatReady -> "wechat"
-                    alipayReady -> "alipay"
-                    else -> "alipay"
-                }
             }
             .onFailure {
                 Toast.makeText(context, it.message ?: "加载失败", Toast.LENGTH_SHORT).show()
@@ -122,18 +104,14 @@ fun BuyPointsScreen(
             Toast.makeText(context, "无法调起支付", Toast.LENGTH_SHORT).show()
             return
         }
-        if (channel == "wechat" && !wechatReady) {
-            Toast.makeText(context, "微信支付尚未开通", Toast.LENGTH_SHORT).show()
-            return
-        }
-        if (channel == "alipay" && !alipayReady) {
+        if (!alipayReady) {
             Toast.makeText(context, "支付宝支付尚未开通", Toast.LENGTH_SHORT).show()
             return
         }
         buyingId = pkg.id
         scope.launch {
             val created = runCatching {
-                withContext(Dispatchers.IO) { api.createPointOrder(token, pkg.id, channel) }
+                withContext(Dispatchers.IO) { api.createPointOrder(token, pkg.id, "alipay") }
             }.getOrElse {
                 Toast.makeText(context, it.message ?: "下单失败", Toast.LENGTH_SHORT).show()
                 buyingId = null
@@ -142,10 +120,10 @@ fun BuyPointsScreen(
             val paid = payOrder(activity, api, token, created)
             buyingId = null
             if (paid == null) return@launch
-            if (paid.balance != null) {
-                balance = paid.balance
-                onPointsUpdated(paid.balance)
-                Toast.makeText(context, "已到账 ${pkg.points} 积分", Toast.LENGTH_SHORT).show()
+            if (paid.imageCredits != null) {
+                balance = paid.imageCredits
+                onCreditsUpdated(paid.imageCredits)
+                Toast.makeText(context, "已到账 ${pkg.credits} 张配图", Toast.LENGTH_SHORT).show()
             } else {
                 repeat(8) {
                     delay(900)
@@ -155,12 +133,12 @@ fun BuyPointsScreen(
                         }
                     }.getOrNull()
                     if (order?.status == "paid") {
-                        Toast.makeText(context, "支付成功，积分已到账", Toast.LENGTH_SHORT).show()
-                        onPointsUpdated(-1)
+                        Toast.makeText(context, "支付成功，配图次数已到账", Toast.LENGTH_SHORT).show()
+                        onCreditsUpdated(-1)
                         return@launch
                     }
                 }
-                Toast.makeText(context, "支付结果确认中，稍后下拉刷新积分", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "支付结果确认中，请稍后查看剩余配图", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -188,7 +166,7 @@ fun BuyPointsScreen(
                     .padding(10.sdp()),
             )
             Text(
-                text = "购买积分",
+                text = "购买配图",
                 color = Stellar.OnSurface,
                 fontSize = 20.ssp(),
                 fontWeight = FontWeight.Bold,
@@ -215,29 +193,20 @@ fun BuyPointsScreen(
                         )
                         .padding(16.sdp()),
                 ) {
-                    Text("当前积分", color = Stellar.OnSurfaceVariant, fontSize = 13.ssp())
+                    Text("剩余配图", color = Stellar.OnSurfaceVariant, fontSize = 13.ssp())
                     Text(
-                        text = "$balance",
+                        text = "$balance 张",
                         color = Stellar.Cyan,
                         fontSize = 32.ssp(),
                         fontWeight = FontWeight.Bold,
                     )
                     Spacer(Modifier.height(8.sdp()))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Outlined.AutoAwesome,
-                            contentDescription = null,
-                            tint = Stellar.Gold,
-                            modifier = Modifier.size(18.sdp()),
-                        )
-                        Spacer(Modifier.width(6.sdp()))
-                        Text(
-                            text = "AI 生图每次消耗 $aiCost 积分（缓存图不扣）",
-                            color = Stellar.OnSurfaceVariant,
-                            fontSize = 12.ssp(),
-                        )
-                    }
-                    if (sandbox && channel == "alipay") {
+                    Text(
+                        text = "只能用来给单词生成助记配图，不能提现、兑礼或转给别人。生成成功扣 1 张，看过的缓存图不扣。",
+                        color = Stellar.OnSurfaceVariant,
+                        fontSize = 12.ssp(),
+                    )
+                    if (sandbox) {
                         Spacer(Modifier.height(6.sdp()))
                         Text(
                             text = "支付宝当前为沙箱：点购买会直接到账，不调起真实支付。",
@@ -252,37 +221,30 @@ fun BuyPointsScreen(
                 Text(
                     text = "支付方式",
                     color = Stellar.OnSurface,
-                    fontSize = 14.ssp(),
+                    fontSize = 15.ssp(),
                     fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.height(8.sdp()))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.sdp())) {
-                    PayChannelChip(
-                        title = "微信",
-                        iconRes = R.drawable.ic_wechat,
-                        accent = WechatGreen,
-                        selected = channel == "wechat",
-                        enabled = wechatReady,
-                        onClick = { channel = "wechat" },
-                        modifier = Modifier.weight(1f),
-                    )
-                    PayChannelChip(
-                        title = "支付宝",
-                        iconRes = R.drawable.ic_alipay,
-                        accent = AlipayBlue,
-                        selected = channel == "alipay",
-                        enabled = alipayReady,
-                        onClick = { channel = "alipay" },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                if (!wechatReady) {
-                    Spacer(Modifier.height(6.sdp()))
+            }
+            item {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.sdp()))
+                        .border(1.dp, Stellar.Cyan, RoundedCornerShape(14.sdp()))
+                        .background(Stellar.Cyan.copy(alpha = 0.12f))
+                        .padding(14.sdp()),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    WithdrawChannelBadge(channelId = "alipay", size = 36.sdp())
+                    Spacer(Modifier.width(12.sdp()))
                     Text(
-                        text = "微信支付待商户证书配置完成后可用",
-                        color = Stellar.OnSurfaceVariant.copy(alpha = 0.75f),
-                        fontSize = 11.ssp(),
+                        text = "支付宝",
+                        color = Stellar.OnSurface,
+                        fontSize = 16.ssp(),
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f),
                     )
+                    Text("已选", color = Stellar.Cyan, fontSize = 13.ssp())
                 }
             }
 
@@ -293,7 +255,7 @@ fun BuyPointsScreen(
                     }
                 }
                 packages.isEmpty() -> item {
-                    Text("暂无积分包", color = Stellar.OnSurfaceVariant, fontSize = 14.ssp())
+                    Text("暂无配图档位", color = Stellar.OnSurfaceVariant, fontSize = 14.ssp())
                 }
                 else -> items(packages, key = { it.id }) { pkg ->
                     PackageCard(
@@ -305,57 +267,6 @@ fun BuyPointsScreen(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun PayChannelChip(
-    title: String,
-    iconRes: Int,
-    accent: Color,
-    selected: Boolean,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier
-            .clip(RoundedCornerShape(12.sdp()))
-            .border(
-                1.dp,
-                when {
-                    !enabled -> Stellar.Outline.copy(alpha = 0.25f)
-                    selected -> accent
-                    else -> Stellar.Outline.copy(alpha = 0.35f)
-                },
-                RoundedCornerShape(12.sdp()),
-            )
-            .background(
-                when {
-                    !enabled -> Stellar.SurfaceHigh.copy(alpha = 0.5f)
-                    selected -> accent.copy(alpha = 0.12f)
-                    else -> Stellar.SurfaceContainer
-                },
-            )
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.sdp(), vertical = 10.sdp()),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
-    ) {
-        Image(
-            painter = painterResource(iconRes),
-            contentDescription = null,
-            modifier = Modifier.size(22.sdp()),
-            contentScale = ContentScale.Fit,
-            alpha = if (enabled) 1f else 0.4f,
-        )
-        Spacer(Modifier.width(8.sdp()))
-        Text(
-            text = title,
-            color = if (enabled) Stellar.OnSurface else Stellar.OnSurfaceVariant.copy(alpha = 0.55f),
-            fontSize = 14.ssp(),
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-        )
     }
 }
 
@@ -398,7 +309,7 @@ private fun PackageCard(
             }
             Spacer(Modifier.height(4.sdp()))
             Text(
-                text = "${pkg.points} 积分${if (pkg.subtitle.isNotBlank()) " · ${pkg.subtitle}" else ""}",
+                text = pkg.subtitle.ifBlank { "${pkg.credits} 张助记配图" },
                 color = Stellar.OnSurfaceVariant,
                 fontSize = 12.ssp(),
             )
@@ -431,7 +342,7 @@ private fun PackageCard(
     }
 }
 
-private data class PaidOutcome(val balance: Int?)
+private data class PaidOutcome(val balance: Int?, val imageCredits: Int? = null)
 
 private suspend fun payOrder(
     activity: Activity,
@@ -439,50 +350,6 @@ private suspend fun payOrder(
     token: String,
     created: PointPurchaseResult,
 ): PaidOutcome? {
-    if (created.channel == "wechat") {
-        val wx = created.wechatPay
-        if (wx == null || wx.prepayId.isBlank()) {
-            Toast.makeText(activity, "微信下单失败", Toast.LENGTH_SHORT).show()
-            return null
-        }
-        if (!WeChatAuth.isConfigured()) {
-            Toast.makeText(activity, "微信尚未配置", Toast.LENGTH_SHORT).show()
-            return null
-        }
-        val result = runCatching {
-            WeChatPayHelper.pay(
-                activity,
-                WeChatPayParams(
-                    appId = wx.appId,
-                    partnerId = wx.partnerId,
-                    prepayId = wx.prepayId,
-                    packageValue = wx.packageValue,
-                    nonceStr = wx.nonceStr,
-                    timeStamp = wx.timeStamp,
-                    sign = wx.sign,
-                ),
-            ).await()
-        }.getOrElse {
-            Toast.makeText(activity, it.message ?: "调起微信支付失败", Toast.LENGTH_SHORT).show()
-            return null
-        }
-        return when {
-            result.success -> PaidOutcome(null)
-            result.cancelled -> {
-                Toast.makeText(activity, "已取消支付", Toast.LENGTH_SHORT).show()
-                null
-            }
-            else -> {
-                Toast.makeText(
-                    activity,
-                    result.errStr?.takeIf { it.isNotBlank() } ?: "支付未完成",
-                    Toast.LENGTH_SHORT,
-                ).show()
-                null
-            }
-        }
-    }
-
     if (created.sandbox || created.orderInfo.isNullOrBlank()) {
         val sim = runCatching {
             withContext(Dispatchers.IO) { api.simulatePointOrderPay(token, created.orderId) }
@@ -490,7 +357,7 @@ private suspend fun payOrder(
             Toast.makeText(activity, it.message ?: "支付失败", Toast.LENGTH_SHORT).show()
             return null
         }
-        return PaidOutcome(sim.balance)
+        return PaidOutcome(sim.balance, sim.imageCredits)
     }
     val result = runCatching {
         AlipayPayHelper.pay(activity, created.orderInfo)

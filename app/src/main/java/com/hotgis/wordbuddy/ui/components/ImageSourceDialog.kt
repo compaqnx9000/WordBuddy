@@ -182,7 +182,7 @@ private fun StellarImageSourceDialog(
                     if (onBuyPoints != null && error.needsPointRecharge()) {
                         Spacer(Modifier.height(6.sdp()))
                         Text(
-                            text = "去充值",
+                            text = "去购买",
                             color = Stellar.Cyan,
                             fontSize = 14.ssp(),
                             fontWeight = FontWeight.SemiBold,
@@ -408,7 +408,7 @@ private fun ClassicImageSourceDialog(
                 if (onBuyPoints != null && error.needsPointRecharge()) {
                     Spacer(Modifier.height(6.sdp()))
                     Text(
-                        text = "去充值",
+                        text = "去购买",
                         color = HwColors.AccentBlue,
                         fontSize = 14.ssp(),
                         fontWeight = FontWeight.SemiBold,
@@ -548,4 +548,5 @@ fun ImageActionRow(
 }
 
 private fun String.needsPointRecharge(): Boolean =
-    contains("积分不足") || contains("购买积分") || contains("请先充值")
+    contains("积分不足") || contains("购买积分") || contains("请先充值") ||
+        contains("配图次数不足") || contains("购买配图")

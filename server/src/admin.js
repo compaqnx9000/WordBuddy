@@ -86,6 +86,8 @@ function mapUser(row) {
     deviceCount: Number(row.device_count || 0),
     level: Math.min(7, Math.max(0, Number.isFinite(Number(row.user_level)) ? Number(row.user_level) : 0)),
     validDays: row.valid_days == null ? null : Math.max(0, Number(row.valid_days) || 0),
+    imageCreditsPurchased: Math.max(0, Number(row.image_credits_purchased || 0)),
+    imageCreditsRemaining: Math.max(0, Number(row.image_credits || 0)),
     nickname: row.nickname || null,
     gender: row.gender || null,
     region: row.region || null,
@@ -254,6 +256,11 @@ adminRouter.get('/overview', adminRequired, async (_req, res) => {
             last_device_label, last_device_platform, last_ip, last_ip_location, user_level,
             nickname, gender, region, buddy_id, signature, email,
             shipping_name, shipping_phone, shipping_detail,
+            image_credits,
+            COALESCE((
+              SELECT SUM(l.delta)::int FROM image_credit_ledger l
+              WHERE l.user_id = users.id AND l.reason = 'purchase' AND l.delta > 0
+            ), 0) AS image_credits_purchased,
             (password_hash IS NOT NULL) AS has_password,
             (SELECT count(*)::int FROM user_devices d WHERE d.user_id = users.id) AS device_count
      FROM users ORDER BY created_at DESC LIMIT 8`,
@@ -525,6 +532,11 @@ adminRouter.get('/users', adminRequired, async (req, res) => {
            u.nickname, u.gender, u.region, u.buddy_id, u.signature, u.email,
            u.shipping_name, u.shipping_phone, u.shipping_detail,
            u.deletion_requested_at, u.deletion_due_at,
+           u.image_credits,
+           COALESCE((
+             SELECT SUM(l.delta)::int FROM image_credit_ledger l
+             WHERE l.user_id = u.id AND l.reason = 'purchase' AND l.delta > 0
+           ), 0) AS image_credits_purchased,
            (u.password_hash IS NOT NULL) AS has_password,
            (SELECT count(*)::int FROM notebooks n WHERE n.owner_user_id = u.id) AS notebook_count,
            (SELECT count(*)::int FROM words w
@@ -551,6 +563,11 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
               nickname, gender, region, buddy_id, signature, email,
               shipping_name, shipping_phone, shipping_detail,
               deletion_requested_at, deletion_due_at,
+              image_credits,
+              COALESCE((
+                SELECT SUM(l.delta)::int FROM image_credit_ledger l
+                WHERE l.user_id = users.id AND l.reason = 'purchase' AND l.delta > 0
+              ), 0) AS image_credits_purchased,
               (password_hash IS NOT NULL) AS has_password,
               (SELECT count(*)::int FROM user_devices d WHERE d.user_id = users.id) AS device_count
        FROM users WHERE id = $1`,
@@ -564,7 +581,7 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
   const perk = await syncUserLevel(id)
   user.user_level = perk.level
   user.valid_days = perk.validDays
-  const [notebooks, logins, passwords, sms, devices, checkIn, checkInLogs, shortFavorites, withdrawals, withdrawalSummary] =
+  const [notebooks, logins, passwords, sms, devices, checkIn, checkInLogs, shortFavorites, withdrawals, withdrawalSummary, imageOrders] =
     await Promise.all([
     query(
       `SELECT n.id, n.kind, n.slug, n.name, n.published, n.sort_order, n.owner_user_id, n.created_at,
@@ -630,6 +647,13 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
        FROM withdrawals WHERE user_id = $1`,
       [id],
     ),
+    query(
+      `SELECT id, package_id, points, amount_fen, status, pay_channel, paid_at, created_at
+       FROM point_orders
+       WHERE user_id = $1 AND grant_kind = 'images'
+       ORDER BY id DESC LIMIT 40`,
+      [id],
+    ),
   ])
   const checkInRow = checkIn.rows[0]
   res.json({
@@ -677,6 +701,23 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
       successFen: Number(withdrawalSummary.rows[0]?.success_fen || 0),
       successPoints: Number(withdrawalSummary.rows[0]?.success_points || 0),
     },
+    imageOrders: imageOrders.rows.map((row) => {
+      const amountFen = Math.max(0, Number(row.amount_fen || 0))
+      const status = row.status || 'pending'
+      return {
+        id: Number(row.id),
+        packageId: row.package_id,
+        title: { img10: '10 张', img100: '100 张', img500: '500 张' }[row.package_id] || `${Number(row.points || 0)} 张`,
+        credits: Number(row.points || 0),
+        amountFen,
+        amountYuan: (amountFen / 100).toFixed(2),
+        status,
+        statusLabel: status === 'paid' ? '已支付' : status === 'closed' ? '已关闭' : '待支付',
+        payChannel: row.pay_channel || null,
+        paidAt: iso(row.paid_at),
+        createdAt: iso(row.created_at),
+      }
+    }),
   })
 })
 

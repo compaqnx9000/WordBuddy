@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { pool, query } from './db.js'
 import { adjustPoints, aiImagePointsCost } from './points.js'
+import { adjustImageCredits, findImageCreditPackage } from './imageCredits.js'
 import { alipayConfig, buildAppPayOrderInfo, verifyNotify } from './alipay.js'
 import { createWechatAppPrepay, parseWechatPayNotify, wechatConfig } from './wechat.js'
 
@@ -72,6 +73,7 @@ function mapOrder(row) {
     status: row.status,
     statusLabel:
       row.status === 'paid' ? '已支付' : row.status === 'closed' ? '已关闭' : '待支付',
+    grantKind: row.grant_kind === 'images' ? 'images' : 'points',
     payChannel: channel,
     alipayTradeNo: row.alipay_trade_no || null,
     providerTradeNo: row.provider_trade_no || row.alipay_trade_no || null,
@@ -88,8 +90,10 @@ function newOutTradeNo(userId) {
 }
 
 export async function createPointOrder({ userId, packageId, channel = 'alipay' }) {
-  const pkg = listPointPackages().find((p) => p.id === packageId)
-  if (!pkg) return { ok: false, error: '积分包不存在' }
+  const imagePkg = findImageCreditPackage(packageId)
+  const pkg = imagePkg || listPointPackages().find((p) => p.id === packageId)
+  if (!pkg) return { ok: false, error: '商品不存在' }
+  const grantKind = imagePkg ? 'images' : 'points'
   const ch = String(channel || 'alipay').trim().toLowerCase()
   if (ch !== 'alipay' && ch !== 'wechat') {
     return { ok: false, error: '请选择微信支付或支付宝' }
@@ -111,17 +115,17 @@ export async function createPointOrder({ userId, packageId, channel = 'alipay' }
   const row = (
     await query(
       `INSERT INTO point_orders
-         (user_id, package_id, out_trade_no, points, amount_fen, status, pay_channel)
-       VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+         (user_id, package_id, out_trade_no, points, amount_fen, status, pay_channel, grant_kind)
+       VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
        RETURNING *`,
-      [userId, pkg.id, outTradeNo, pkg.points, pkg.priceFen, ch],
+      [userId, pkg.id, outTradeNo, pkg.points, pkg.priceFen, ch, grantKind],
     )
   ).rows[0]
 
   if (ch === 'wechat') {
     const built = await createWechatAppPrepay({
       outTradeNo,
-      description: `词搭子-${pkg.title}`,
+      description: grantKind === 'images' ? `词搭子-助记配图${pkg.points}张` : `词搭子-${pkg.title}`,
       amountFen: pkg.priceFen,
       attach: String(row.id),
     })
@@ -142,9 +146,9 @@ export async function createPointOrder({ userId, packageId, channel = 'alipay' }
   if (!sandbox && ali.configured) {
     const built = buildAppPayOrderInfo({
       outTradeNo,
-      subject: `词搭子-${pkg.title}`,
+      subject: grantKind === 'images' ? `词搭子-助记配图${pkg.points}张` : `词搭子-${pkg.title}`,
       totalAmountYuan: (pkg.priceFen / 100).toFixed(2),
-      body: `${pkg.points}积分`,
+      body: grantKind === 'images' ? `${pkg.points}张助记配图，仅可用于单词配图` : `${pkg.points}积分`,
     })
     if (!built.ok) return { ok: false, error: built.error }
     orderInfo = built.orderInfo
@@ -204,14 +208,24 @@ export async function fulfillPaidOrder({
       await client.query('ROLLBACK')
       return { ok: false, error: '订单状态不可支付' }
     }
-    const credited = await adjustPoints({
-      userId: row.user_id,
-      delta: Number(row.points),
-      reason: 'purchase',
-      refType: 'point_order',
-      refId: row.id,
-      client,
-    })
+    const imageOrder = row.grant_kind === 'images'
+    const credited = imageOrder
+      ? await adjustImageCredits({
+          userId: row.user_id,
+          delta: Number(row.points),
+          reason: 'purchase',
+          refType: 'point_order',
+          refId: row.id,
+          client,
+        })
+      : await adjustPoints({
+          userId: row.user_id,
+          delta: Number(row.points),
+          reason: 'purchase',
+          refType: 'point_order',
+          refId: row.id,
+          client,
+        })
     if (!credited.ok) {
       await client.query('ROLLBACK')
       return credited
@@ -230,7 +244,13 @@ export async function fulfillPaidOrder({
       )
     ).rows[0]
     await client.query('COMMIT')
-    return { ok: true, order: mapOrder(updated), balance: credited.balance }
+    return {
+      ok: true,
+      order: mapOrder(updated),
+      balance: imageOrder ? null : credited.balance,
+      imageCredits: imageOrder ? credited.balance : null,
+      grantKind: imageOrder ? 'images' : 'points',
+    }
   } catch (error) {
     await client.query('ROLLBACK')
     throw error

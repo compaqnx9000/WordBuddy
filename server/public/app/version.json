@@ -1,8 +1,8 @@
 {
-  "versionCode": 170,
-  "versionName": "1.79",
+  "versionCode": 173,
+  "versionName": "1.82",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "短视频单词胶囊改用各主题强调色，深色主题下也能看出胶囊。",
-  "releasedAt": "2026-10-07T02:28:00.000Z"
+  "notes": "10 张配图档的优惠标显示为省 ¥0。",
+  "releasedAt": "2026-10-07T12:10:00.000Z"
 }

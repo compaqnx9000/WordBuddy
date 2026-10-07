@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
     deletion_requested_at TIMESTAMPTZ,
     deletion_due_at TIMESTAMPTZ,
     deletion_reason TEXT,
+    image_credits INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -404,6 +405,7 @@ CREATE TABLE IF NOT EXISTS point_orders (
     alipay_trade_no TEXT,
     pay_channel TEXT,
     provider_trade_no TEXT,
+    grant_kind TEXT NOT NULL DEFAULT 'points',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     paid_at TIMESTAMPTZ
@@ -414,6 +416,20 @@ CREATE INDEX IF NOT EXISTS point_orders_user
 
 CREATE INDEX IF NOT EXISTS point_orders_status
     ON point_orders (status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS image_credit_ledger (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    delta INTEGER NOT NULL,
+    balance_after INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    ref_type TEXT,
+    ref_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS image_credit_ledger_user
+    ON image_credit_ledger (user_id, id DESC);
 
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,

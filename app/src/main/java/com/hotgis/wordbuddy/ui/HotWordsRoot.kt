@@ -209,7 +209,7 @@ fun HotWordsRoot(
 
     fun openBuyPoints() {
         if (session == null) {
-            loginHint = "登录后可充值积分"
+            loginHint = "登录后可购买配图"
             showLogin = true
             return
         }
@@ -840,6 +840,7 @@ fun HotWordsRoot(
                             authToken = session?.token,
                             playbackEnabled = !showShortsLookup,
                             metaVisibleDefault = ui.settings.shortsMetaVisibleDefault,
+                            loopCurrent = ui.settings.shortVideoLoop,
                             onBack = { favoritePlaying = null },
                             onRequireLogin = {
                                 loginHint = "登录后可收藏短视频"
@@ -985,17 +986,15 @@ fun HotWordsRoot(
                 }
                 showBuyPoints -> {
                     BuyPointsScreen(
-                        totalPoints = checkIn.totalPoints,
+                        imageCredits = checkIn.imageCredits,
                         authToken = session?.token,
                         onBack = { showBuyPoints = false },
                         onLogin = {
-                            loginHint = "登录后可购买积分"
+                            loginHint = "登录后可购买配图"
                             showLogin = true
                         },
-                        onPointsUpdated = { bal ->
-                            if (bal >= 0) {
-                                // Refresh check-in so mall / me page show new balance.
-                            }
+                        onCreditsUpdated = { credits ->
+                            if (credits >= 0) viewModel.setImageCredits(credits)
                             viewModel.refreshCheckIn()
                         },
                         modifier = Modifier
@@ -1218,6 +1217,7 @@ fun HotWordsRoot(
                             authToken = session?.token,
                             playbackEnabled = !showShortsLookup,
                             metaVisibleDefault = ui.settings.shortsMetaVisibleDefault,
+                            loopCurrent = ui.settings.shortVideoLoop,
                             fullscreen = shortsFullscreen,
                             onFullscreenChange = { shortsFullscreen = it },
                             onOpenWord = { word ->

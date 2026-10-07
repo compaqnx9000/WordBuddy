@@ -1,5 +1,6 @@
 import { query } from './db.js'
 import { adjustPoints, aiImagePointsCost, getPointsBalance } from './points.js'
+import { adjustImageCredits, getImageCredits } from './imageCredits.js'
 
 const inflight = new Map()
 const IMAGE_BUDGET_MS = 18_000
@@ -225,10 +226,11 @@ async function loadCached(key, provider, sense) {
   return null
 }
 
-async function createMnemonicImage({ word, meaningHint, provider, userId = null }) {
+async function createMnemonicImage({ word, meaningHint, provider, userId = null, billing = 'points' }) {
   const key = wordKey(word)
   if (!key) throw fail(400, '请填写单词')
   const sense = meaningKey(meaningHint)
+  const useCredits = billing === 'image_credits'
   const cached = await loadCached(key, provider, sense)
   if (cached) {
     return {
@@ -236,14 +238,26 @@ async function createMnemonicImage({ word, meaningHint, provider, userId = null 
       provider,
       cached: true,
       pointsSpent: 0,
-      pointsCost: aiImagePointsCost(),
-      balance: userId ? await getPointsBalance(userId) : null,
+      pointsCost: useCredits ? 0 : aiImagePointsCost(),
+      creditsSpent: 0,
+      balance: userId && !useCredits ? await getPointsBalance(userId) : null,
+      imageCredits: userId && useCredits ? await getImageCredits(userId) : null,
     }
   }
 
-  const cost = aiImagePointsCost()
+  const cost = useCredits ? 1 : aiImagePointsCost()
   if (cost > 0 && !userId) throw fail(401, '请先登录后再生成配图')
-  if (cost > 0) {
+  if (useCredits) {
+    const balance = await getImageCredits(userId)
+    if (balance < 1) {
+      const err = fail(402, '配图次数不足，还差 1 张')
+      err.code = 'INSUFFICIENT_IMAGE_CREDITS'
+      err.need = 1
+      err.balance = balance
+      err.imageCredits = balance
+      throw err
+    }
+  } else if (cost > 0) {
     const balance = await getPointsBalance(userId)
     if (balance < cost) {
       const err = fail(402, `积分不足，还差 ${cost - balance} 分`)
@@ -257,8 +271,26 @@ async function createMnemonicImage({ word, meaningHint, provider, userId = null 
 
   const bytes = await renderMnemonic(provider, word, meaningHint)
 
-  let balanceAfter = userId ? await getPointsBalance(userId) : null
-  if (cost > 0) {
+  let balanceAfter = userId && !useCredits ? await getPointsBalance(userId) : null
+  let imageCreditsAfter = userId && useCredits ? await getImageCredits(userId) : null
+  if (useCredits) {
+    const debited = await adjustImageCredits({
+      userId,
+      delta: -1,
+      reason: 'ai_image',
+      refType: 'mnemonic',
+      refId: `${provider}:${key}`,
+    })
+    if (!debited.ok) {
+      const err = fail(402, debited.error || '配图次数不足')
+      err.code = debited.code || 'INSUFFICIENT_IMAGE_CREDITS'
+      err.need = debited.need
+      err.balance = debited.balance
+      err.imageCredits = debited.balance
+      throw err
+    }
+    imageCreditsAfter = debited.balance
+  } else if (cost > 0) {
     const debited = await adjustPoints({
       userId,
       delta: -cost,
@@ -289,9 +321,11 @@ async function createMnemonicImage({ word, meaningHint, provider, userId = null 
     bytes: stored || bytes,
     provider,
     cached: false,
-    pointsSpent: cost,
-    pointsCost: cost,
+    pointsSpent: useCredits ? 0 : cost,
+    pointsCost: useCredits ? 0 : cost,
+    creditsSpent: useCredits ? 1 : 0,
     balance: balanceAfter,
+    imageCredits: imageCreditsAfter,
   }
 }
 
@@ -308,6 +342,7 @@ export function getOrCreateMnemonicImage(input) {
     meaningHint: input.meaningHint,
     provider,
     userId,
+    billing: input.billing === 'image_credits' ? 'image_credits' : 'points',
   }).finally(() => {
     inflight.delete(key)
   })

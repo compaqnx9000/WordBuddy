@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PersonOff
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
@@ -277,6 +278,7 @@ fun AppSettingsScreen(
                     imageProvider = settings.imageProvider,
                     podcastPlayWhenScreenOff = settings.podcastPlayWhenScreenOff,
                     shortsMetaVisibleDefault = settings.shortsMetaVisibleDefault,
+                    shortVideoLoop = settings.shortVideoLoop,
                     onAutoPronounce = { enabled -> onChange { it.copy(speakOnPageChange = enabled) } },
                     onDailyReminder = { enabled ->
                         val handler = onDailyReminderChange
@@ -288,6 +290,9 @@ fun AppSettingsScreen(
                     },
                     onShortsMetaVisibleDefault = { enabled ->
                         onChange { it.copy(shortsMetaVisibleDefault = enabled) }
+                    },
+                    onShortVideoLoop = { enabled ->
+                        onChange { it.copy(shortVideoLoop = enabled) }
                     },
                 )
 
@@ -590,11 +595,13 @@ private fun PreferencesCard(
     imageProvider: ImageGenProvider,
     podcastPlayWhenScreenOff: Boolean,
     shortsMetaVisibleDefault: Boolean,
+    shortVideoLoop: Boolean,
     onAutoPronounce: (Boolean) -> Unit,
     onDailyReminder: (Boolean) -> Unit,
     onImageProvider: (ImageGenProvider) -> Unit,
     onPodcastPlayWhenScreenOff: (Boolean) -> Unit,
     onShortsMetaVisibleDefault: (Boolean) -> Unit,
+    onShortVideoLoop: (Boolean) -> Unit,
 ) {
     Column(
         Modifier
@@ -659,6 +666,15 @@ private fun PreferencesCard(
             checked = shortsMetaVisibleDefault,
             accentOnHover = Stellar.Cyan,
             onChecked = onShortsMetaVisibleDefault,
+        )
+        PreferenceDivider()
+        PreferenceToggle(
+            icon = Icons.Filled.Repeat,
+            title = "循环播放当前短视频",
+            subtitle = "停留在同一条时播完再从头播，默认关闭",
+            checked = shortVideoLoop,
+            accentOnHover = Stellar.Cyan,
+            onChecked = onShortVideoLoop,
         )
         if (notebooks.isNotEmpty()) {
             PreferenceDivider()

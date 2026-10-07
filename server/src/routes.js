@@ -53,6 +53,7 @@ import {
   pointPayConfig,
   simulatePayOrder,
 } from './pointOrders.js'
+import { listImageCreditPackages, getImageCredits, grantSignupImageCredit } from './imageCredits.js'
 import { aiImagePointsCost, grantSignupBonus } from './points.js'
 import { alipayConfig, buildAppAuthInfo, exchangeAlipayAuthCode, fetchAlipayUserProfile } from './alipay.js'
 import {
@@ -532,6 +533,10 @@ router.post('/auth/register', async (req, res) => {
     if (bonus?.ok && !bonus.skipped) {
       console.log(`[signup] user ${user.id} +${bonus.delta}`)
     }
+    const imageCredit = await grantSignupImageCredit(user.id)
+    if (imageCredit?.ok && !imageCredit.skipped) {
+      console.log(`[signup] user ${user.id} +1 image credit`)
+    }
   } catch (err) {
     console.error('[signup] bonus failed', err)
   }
@@ -595,6 +600,7 @@ router.post('/auth/wechat', async (req, res) => {
     ).rows[0]
     try {
       await grantSignupBonus(user.id)
+      await grantSignupImageCredit(user.id)
     } catch (err) {
       console.error('[signup] bonus failed', err)
     }
@@ -647,6 +653,7 @@ router.post('/auth/alipay', async (req, res) => {
       ).rows[0]
       try {
         await grantSignupBonus(user.id)
+        await grantSignupImageCredit(user.id)
       } catch (err) {
         console.error('[signup] bonus failed', err)
       }
@@ -1205,7 +1212,8 @@ function mapUserProfile(row, fallbackUser = {}) {
 
 router.get('/me/checkin', authRequired, async (req, res) => {
   const checkIn = await getUserCheckIn(req.user.id)
-  res.json({ checkIn })
+  const imageCredits = await getImageCredits(req.user.id)
+  res.json({ checkIn: { ...checkIn, imageCredits } })
 })
 
 router.get('/me/reward-video', authRequired, async (req, res) => {
@@ -2523,18 +2531,22 @@ router.post('/me/deletion/cancel', authRequired, async (req, res) => {
 router.post('/mnemonic-images', authRequired, async (req, res) => {
   try {
     const provider = normalizeImageProvider(req.body?.provider)
+    const billing = String(req.body?.billing || '').trim() === 'image_credits' ? 'image_credits' : 'points'
     const result = await getOrCreateMnemonicImage({
       word: req.body?.word,
       meaningHint: req.body?.meaningHint,
       provider,
       userId: req.user.id,
+      billing,
     })
     res.json({
       provider: result.provider,
       cached: result.cached,
       pointsSpent: result.pointsSpent ?? 0,
-      pointsCost: result.pointsCost ?? aiImagePointsCost(),
+      pointsCost: result.pointsCost ?? (billing === 'image_credits' ? 0 : aiImagePointsCost()),
+      creditsSpent: result.creditsSpent ?? 0,
       balance: result.balance ?? null,
+      imageCredits: result.imageCredits ?? null,
       imageBase64: Buffer.from(result.bytes).toString('base64'),
     })
   } catch (error) {
@@ -2544,9 +2556,23 @@ router.post('/mnemonic-images', authRequired, async (req, res) => {
       code: error.code || null,
       need: error.need ?? null,
       balance: error.balance ?? null,
+      imageCredits: error.imageCredits ?? null,
       pointsCost: error.pointsCost ?? aiImagePointsCost(),
     })
   }
+})
+
+router.get('/image-credit-packages', (_req, res) => {
+  const pay = pointPayConfig()
+  const ali = alipayConfig()
+  res.json({
+    items: listImageCreditPackages(),
+    creditsPerImage: 1,
+    sandbox: ali.sandbox,
+    alipayReady: pay.alipayReady || ali.sandbox,
+    wechatReady: pay.wechatReady,
+    channels: pay.channels,
+  })
 })
 
 router.get('/point-packages', (_req, res) => {
@@ -2624,7 +2650,13 @@ router.post('/me/point-orders/:id/simulate-pay', authRequired, async (req, res) 
       res.status(400).json({ error: result.error || '模拟支付失败' })
       return
     }
-    res.json({ ok: true, order: result.order, balance: result.balance ?? null })
+    res.json({
+      ok: true,
+      order: result.order,
+      balance: result.balance ?? null,
+      imageCredits: result.imageCredits ?? null,
+      grantKind: result.grantKind || result.order?.grantKind || 'points',
+    })
   } catch (error) {
     console.error('[point-orders/simulate]', error)
     res.status(500).json({ error: '模拟支付失败' })

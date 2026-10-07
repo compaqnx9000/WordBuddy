@@ -324,7 +324,11 @@ private struct ShortPage: View {
         ZStack {
             Color.black
             if engaged, let url = URL(string: clip.videoUrl) {
-                ShortPlayer(url: url, playing: !userPaused && !pausedForLookup)
+                ShortPlayer(
+                    url: url,
+                    playing: !userPaused && !pausedForLookup,
+                    loop: model.shortVideoLoop
+                )
             } else if let cover = clip.coverUrl, let url = URL(string: cover) {
                 AsyncImage(url: url) { image in
                     image.resizable().scaledToFit()
@@ -509,6 +513,7 @@ private struct ShortActionLabel: View {
 private struct ShortPlayer: UIViewRepresentable {
     var url: URL
     var playing: Bool
+    var loop: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -518,9 +523,10 @@ private struct ShortPlayer: UIViewRepresentable {
         let view = PlayerLayerView()
         let item = AVPlayerItem(url: url)
         let player = AVPlayer(playerItem: item)
-        player.actionAtItemEnd = .none
+        player.actionAtItemEnd = .pause
         context.coordinator.player = player
         context.coordinator.playing = playing
+        context.coordinator.loop = loop
         context.coordinator.observe(item)
         view.playerLayer.player = player
         view.playerLayer.videoGravity = .resizeAspect
@@ -531,10 +537,22 @@ private struct ShortPlayer: UIViewRepresentable {
 
     func updateUIView(_ uiView: PlayerLayerView, context: Context) {
         context.coordinator.playing = playing
+        context.coordinator.loop = loop
+        guard let player = context.coordinator.player else { return }
         if playing {
-            context.coordinator.player?.play()
+            let finished = player.currentItem.map { item in
+                item.duration.isNumeric && item.currentTime() >= item.duration
+            } ?? false
+            if finished {
+                if loop {
+                    player.seek(to: .zero)
+                    player.play()
+                }
+            } else {
+                player.play()
+            }
         } else {
-            context.coordinator.player?.pause()
+            player.pause()
         }
     }
 
@@ -546,6 +564,7 @@ private struct ShortPlayer: UIViewRepresentable {
     final class Coordinator {
         var player: AVPlayer?
         var playing = false
+        var loop = false
         private var token: NSObjectProtocol?
 
         func observe(_ item: AVPlayerItem) {
@@ -554,7 +573,7 @@ private struct ShortPlayer: UIViewRepresentable {
                 object: item,
                 queue: .main
             ) { [weak self] _ in
-                guard let self, self.playing else { return }
+                guard let self, self.playing, self.loop else { return }
                 self.player?.seek(to: .zero)
                 self.player?.play()
             }

@@ -118,6 +118,7 @@ fun ShortsScreen(
     modifier: Modifier = Modifier,
     authToken: String? = null,
     metaVisibleDefault: Boolean = true,
+    loopCurrent: Boolean = false,
     fullscreen: Boolean = false,
     playbackEnabled: Boolean = true,
     onFullscreenChange: (Boolean) -> Unit = {},
@@ -281,6 +282,7 @@ fun ShortsScreen(
                             clip = item.clip,
                             active = playbackEnabled && pagerState.settledPage == page,
                             metaVisibleDefault = metaVisibleDefault,
+                            loopCurrent = loopCurrent,
                             fullscreen = fullscreen,
                             onToggleFullscreen = { onFullscreenChange(!fullscreen) },
                             onOpenWord = onOpenWord,
@@ -452,6 +454,7 @@ private fun ShortVideoPage(
     clip: ShortClip,
     active: Boolean,
     metaVisibleDefault: Boolean,
+    loopCurrent: Boolean = false,
     fullscreen: Boolean = false,
     onToggleFullscreen: () -> Unit = {},
     onOpenWord: (String) -> Unit,
@@ -486,6 +489,7 @@ private fun ShortVideoPage(
         ShortVideoPlayer(
             url = clip.videoUrl,
             playWhenReady = playing,
+            loop = loopCurrent,
             modifier = Modifier.fillMaxSize(),
         )
         Box(
@@ -613,6 +617,7 @@ fun FavoriteClipPlayer(
     onRequireLogin: () -> Unit,
     playbackEnabled: Boolean = true,
     metaVisibleDefault: Boolean = true,
+    loopCurrent: Boolean = false,
     onOpenWord: (String) -> Unit = {},
     onShare: (ShortClip) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -630,6 +635,7 @@ fun FavoriteClipPlayer(
             clip = current,
             active = playbackEnabled,
             metaVisibleDefault = metaVisibleDefault,
+            loopCurrent = loopCurrent,
             onOpenWord = onOpenWord,
             onShare = { onShare(current) },
             onToggleFavorite = {
@@ -721,6 +727,7 @@ private fun ShortAction(
 private fun ShortVideoPlayer(
     url: String,
     playWhenReady: Boolean,
+    loop: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -741,7 +748,7 @@ private fun ShortVideoPlayer(
             .build()
             .apply {
                 setMediaItem(MediaItem.fromUri(url))
-                repeatMode = Player.REPEAT_MODE_ONE
+                repeatMode = Player.REPEAT_MODE_OFF
                 volume = 1f
                 prepare()
             }
@@ -750,6 +757,13 @@ private fun ShortVideoPlayer(
         player.playWhenReady = playWhenReady
         if (playWhenReady && player.playbackState == Player.STATE_IDLE) {
             player.prepare()
+        }
+    }
+    LaunchedEffect(loop, playWhenReady) {
+        player.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        if (loop && playWhenReady && player.playbackState == Player.STATE_ENDED) {
+            player.seekTo(0)
+            player.play()
         }
     }
     DisposableEffect(player, lifecycleOwner) {

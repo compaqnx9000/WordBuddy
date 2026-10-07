@@ -105,6 +105,11 @@ enum SettingsStore {
         set { defaults.set(newValue, forKey: "hotwords_shorts_meta_default") }
     }
 
+    static var shortVideoLoop: Bool {
+        get { defaults.object(forKey: "hotwords_short_video_loop") as? Bool ?? false }
+        set { defaults.set(newValue, forKey: "hotwords_short_video_loop") }
+    }
+
     static var biometricLogin: Bool {
         get { defaults.object(forKey: "hotwords_biometric_login") as? Bool ?? false }
         set { defaults.set(newValue, forKey: "hotwords_biometric_login") }
