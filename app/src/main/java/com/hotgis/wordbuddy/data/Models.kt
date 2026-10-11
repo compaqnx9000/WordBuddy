@@ -102,6 +102,11 @@ data class VocabEntry(
 
 enum class WordFilter { ALL, WORDS, PHRASES }
 
+data class NotebookPage(
+    val items: List<Notebook>,
+    val customOrder: Boolean,
+)
+
 data class Notebook(
     val id: Long,
     val name: String,

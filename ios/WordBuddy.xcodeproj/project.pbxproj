@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A1C0FF1CE0A11A0E00000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1C0FF1CE0A11A0E00000002 /* PrivacyInfo.xcprivacy */; };
 		044CA3FF3C1366736238B792 /* CoreText.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DEFED12F935404679EA1B1DD /* CoreText.framework */; };
 		0835FB1EC5A11824F919D471 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A73EBDC52207E37836A9FD6B /* SessionStore.swift */; };
 		085707CDDD6BA7DA873D6F71 /* WordBuddyAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E12F164337B53251105966D /* WordBuddyAPI.swift */; };
@@ -118,6 +119,7 @@
 		9DFA489311C6EB5ED3F1340F /* AppTrackingTransparency.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppTrackingTransparency.framework; path = System/Library/Frameworks/AppTrackingTransparency.framework; sourceTree = SDKROOT; };
 		9E079760CA09ED21E1A07AFA /* PlaceholderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderView.swift; sourceTree = "<group>"; };
 		A2932AF21B6C22F514F823FE /* NotebookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookView.swift; sourceTree = "<group>"; };
+		A1C0FF1CE0A11A0E00000002 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A48882BF1348027DA8E33E74 /* WordBuddyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WordBuddyApp.swift; sourceTree = "<group>"; };
 		A6CC7AFB45593874C5F02990 /* CoreHaptics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreHaptics.framework; path = System/Library/Frameworks/CoreHaptics.framework; sourceTree = SDKROOT; };
 		A73EBDC52207E37836A9FD6B /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
@@ -154,11 +156,7 @@
 			files = (
 				9C929AEF3ACAA41057CCA836 /* WechatOpenSDK.xcframework in Frameworks */,
 				9557EB43E90170EAD393E6AE /* AlipaySDK.xcframework in Frameworks */,
-				403055575B8C5BD537A7ACB1 /* BUAdSDK.xcframework in Frameworks */,
-				A71B4D428FBF93BA3C0C6145 /* CSJMediation.xcframework in Frameworks */,
 				58864DF08D96D1AD4E72A1C3 /* Security.framework in Frameworks */,
-				2DB56195580169A539FF6A82 /* AdSupport.framework in Frameworks */,
-				A5F9002F8C05978B3A454886 /* AppTrackingTransparency.framework in Frameworks */,
 				0D0F831027602D20F463F703 /* StoreKit.framework in Frameworks */,
 				29114AE2C63F702EC5C7BE03 /* AVFoundation.framework in Frameworks */,
 				430F7DEE6D97FDFCEAA921D6 /* CoreMedia.framework in Frameworks */,
@@ -193,6 +191,7 @@
 		0FD19B68C477B72746515178 /* WordBuddy */ = {
 			isa = PBXGroup;
 			children = (
+				A1C0FF1CE0A11A0E00000002 /* PrivacyInfo.xcprivacy */,
 				611EE180C70A76791EC9BED0 /* Ads */,
 				33EDD9618D33C4F7E407EACC /* App */,
 				DD6584BAFAFB9BBBCEFFDB58 /* Auth */,
@@ -462,7 +461,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7038FA7C3337D623CF88FCC5 /* Assets.xcassets in Resources */,
-				73DF417466B9CC39B9A8E415 /* CSJAdSDK.bundle in Resources */,
+				A1C0FF1CE0A11A0E00000001 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

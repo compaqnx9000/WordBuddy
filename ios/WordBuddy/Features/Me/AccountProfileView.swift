@@ -275,7 +275,7 @@ struct AccountProfileView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("解绑后不能用该账号提现。需要时可以重新绑定。")
+            Text("解绑后需要重新绑定才能再次使用该支付宝账号。")
         }
         .alert("解绑微信", isPresented: $showUnbindWechat) {
             Button("解绑", role: .destructive) {
@@ -283,7 +283,7 @@ struct AccountProfileView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("解绑后不能用该微信提现，也不能用此微信直接登录当前账号。需要时可重新绑定。")
+            Text("解绑后不能再用此微信登录当前账号。需要时可重新绑定。")
         }
     }
 

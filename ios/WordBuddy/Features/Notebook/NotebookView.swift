@@ -15,6 +15,8 @@ struct NotebookView: View {
     @State private var showCards = false
     @State private var cardStart = 0
     @State private var showMore = false
+    @State private var showOrder = false
+    @State private var pendingOrder = false
     @State private var showStats = false
     @State private var selectionMode = false
     @State private var selectedIds: Set<Int64> = []
@@ -65,7 +67,8 @@ struct NotebookView: View {
     }
 
     private var orderedNotebooks: [Notebook] {
-        Self.orderNotebookChips(model.notebooks)
+        if model.notebookOrderCustom { return model.notebooks }
+        return Self.orderNotebookChips(model.notebooks)
     }
 
     private var headerTitle: String {
@@ -159,8 +162,24 @@ struct NotebookView: View {
                 clearSelection()
                 openSwipeId = nil
             }
+            Button("排序") {
+                guard model.session != nil else {
+                    model.showLogin = true
+                    return
+                }
+                pendingOrder = true
+            }
             Button("统计") { showStats = true }
             Button("取消", role: .cancel) {}
+        }
+        .onChange(of: showMore) { _, open in
+            guard !open, pendingOrder else { return }
+            pendingOrder = false
+            showOrder = true
+        }
+        .sheet(isPresented: $showOrder) {
+            NotebookOrderSheet(initial: orderedNotebooks)
+                .environmentObject(model)
         }
         .confirmationDialog(
             "删除选中的 \(selectedCount) 个单词？",
@@ -1482,5 +1501,60 @@ private extension String {
     var nilIfEmpty: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private struct NotebookOrderSheet: View {
+    let initial: [Notebook]
+
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var books: [Notebook] = []
+    @State private var originalIds: [Int64] = []
+    @State private var didCapture = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(books) { book in
+                    HStack(spacing: 10) {
+                        Text(book.name)
+                            .foregroundStyle(Theme.onSurface)
+                        Spacer()
+                        if book.isLocked {
+                            Image(systemName: "lock.fill")
+                                .font(.caption)
+                                .foregroundStyle(Theme.onSurfaceVariant)
+                        }
+                    }
+                    .listRowBackground(Theme.surface)
+                }
+                .onMove { from, to in
+                    books.move(fromOffsets: from, toOffset: to)
+                }
+            }
+            .environment(\.editMode, .constant(.active))
+            .scrollContentBackground(.hidden)
+            .background(Theme.background)
+            .navigationTitle("调整顺序")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+        .presentationDragIndicator(.visible)
+        .onAppear {
+            guard !didCapture else { return }
+            didCapture = true
+            books = initial
+            originalIds = initial.map(\.id)
+        }
+        .onDisappear {
+            let ids = books.map(\.id)
+            guard !ids.isEmpty, ids != originalIds else { return }
+            Task { await model.saveNotebookOrder(ids) }
+        }
     }
 }

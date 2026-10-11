@@ -177,6 +177,7 @@ fun HotWordsRoot(
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val words by viewModel.filteredWords.collectAsStateWithLifecycle()
     val notebooks by viewModel.notebooks.collectAsStateWithLifecycle()
+    val notebookOrderCustom by viewModel.notebookOrderCustom.collectAsStateWithLifecycle()
     val session by viewModel.session.collectAsStateWithLifecycle()
     val accountDeletion by viewModel.accountDeletion.collectAsStateWithLifecycle()
     val accountDeletionBusy by viewModel.accountDeletionBusy.collectAsStateWithLifecycle()
@@ -1281,6 +1282,7 @@ fun HotWordsRoot(
                                 totalCount = activeWordCount,
                                 ui = ui,
                                 notebooks = notebooks,
+                                notebookOrderCustom = notebookOrderCustom,
                                 activeNotebookName = activeNotebookName,
                                 onSelectNotebook = viewModel::selectNotebook,
                                 onCreateNotebookClick = {
@@ -1293,6 +1295,14 @@ fun HotWordsRoot(
                                 },
                                 onDeleteNotebook = { id ->
                                     viewModel.deleteNotebook(id) { message ->
+                                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                onOpenNotebookOrder = {
+                                    requireLogin("调整生词本顺序需要先登录或注册")
+                                },
+                                onReorderNotebooks = { ids ->
+                                    viewModel.saveNotebookOrder(ids) { message ->
                                         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                                     }
                                 },

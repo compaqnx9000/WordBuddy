@@ -18,6 +18,8 @@ enum EarlierWordsResult {
 final class AppModel: ObservableObject {
     @Published var session: UserSession?
     @Published var notebooks: [Notebook] = []
+    /// True when the server stored this user's chip order. Otherwise the client default applies.
+    @Published var notebookOrderCustom = false
     @Published var activeNotebookId: Int64?
     @Published var words: [VocabEntry] = []
     @Published var wordTotal = 0
@@ -1191,14 +1193,16 @@ final class AppModel: ObservableObject {
 
     func loadNotebooks() async {
         do {
-            let items: [Notebook]
+            let page: NotebookList
             if let session {
-                items = try await api.listNotebooks(token: session.token)
+                page = try await api.listNotebooks(token: session.token)
             } else {
-                items = try await api.listCatalogs()
+                page = NotebookList(items: try await api.listCatalogs(), customOrder: false)
             }
-            notebooks = items
+            notebooks = page.items
+            notebookOrderCustom = page.customOrder
             invalidateIeltsOrderCacheIfNeeded()
+            let items = page.items
             let preferred = session?.vocabNotebookId ?? 0
             if let current = activeNotebookId, items.contains(where: { $0.id == current }) {
                 // keep current selection
@@ -1217,6 +1221,27 @@ final class AppModel: ObservableObject {
             }
         } catch {
             handle(error, fallback: "词本加载失败")
+        }
+    }
+
+    func saveNotebookOrder(_ ids: [Int64]) async {
+        guard let session else {
+            showLogin = true
+            return
+        }
+        let byId = Dictionary(uniqueKeysWithValues: notebooks.map { ($0.id, $0) })
+        let known = Set(ids)
+        let next = ids.compactMap { byId[$0] } + notebooks.filter { !known.contains($0.id) }
+        guard !next.isEmpty else { return }
+        notebooks = next
+        notebookOrderCustom = true
+        do {
+            try await api.saveNotebookOrder(token: session.token, ids: next.map(\.id))
+        } catch {
+            await loadNotebooks()
+            if !noteSessionError(error) {
+                banner = "顺序保存失败"
+            }
         }
     }
 

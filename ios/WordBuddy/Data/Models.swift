@@ -63,6 +63,11 @@ struct VocabEntry: Codable, Equatable, Identifiable, Hashable {
     }
 }
 
+struct NotebookList: Equatable {
+    var items: [Notebook]
+    var customOrder: Bool
+}
+
 struct Notebook: Codable, Equatable, Identifiable, Hashable {
     static let defaultId: Int64 = 0
     static let defaultName = "默认生词本"

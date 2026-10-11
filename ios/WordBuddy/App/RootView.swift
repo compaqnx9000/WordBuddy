@@ -103,16 +103,50 @@ struct RootView: View {
                 BiometricLockCover()
             }
         }
+        .onAppear(perform: applyScreenshotLaunchArguments)
         .task {
             await model.bootstrap()
             StudyReminder.sync(enabled: model.dailyReminder)
             updateActivityTracking(phase: scenePhase)
+            applyScreenshotLaunchArguments()
         }
         .alert("提示", isPresented: bannerPresented) {
             Button("好", role: .cancel) { model.banner = nil }
         } message: {
             Text(model.banner ?? "")
         }
+    }
+
+    private func applyScreenshotLaunchArguments() {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        guard let flag = args.firstIndex(of: "-shot-tab"), flag + 1 < args.count else { return }
+        showColdSplash = false
+        let name = args[flag + 1]
+        switch name {
+        case "home":
+            tab = .home
+            if flag + 2 < args.count, !args[flag + 2].hasPrefix("-") {
+                model.pendingLookup = args[flag + 2]
+            }
+        case "notebook":
+            tab = .notebook
+            if flag + 2 < args.count, !args[flag + 2].hasPrefix("-") {
+                let name = args[flag + 2]
+                if let match = model.notebooks.first(where: { $0.name.contains(name) }) {
+                    model.activeNotebookId = match.id
+                }
+            }
+        case "shorts":
+            tab = .shorts
+        case "podcast":
+            tab = .podcast
+        case "me":
+            tab = .me
+        default:
+            break
+        }
+        #endif
     }
 
     private func updateActivityTracking(phase: ScenePhase) {

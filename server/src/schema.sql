@@ -87,6 +87,17 @@ CREATE TABLE IF NOT EXISTS notebooks (
     )
 );
 
+-- Per-user chip order. Catalog sort_order stays global.
+CREATE TABLE IF NOT EXISTS user_notebook_orders (
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    notebook_id BIGINT NOT NULL REFERENCES notebooks (id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (user_id, notebook_id)
+);
+
+CREATE INDEX IF NOT EXISTS user_notebook_orders_user_position
+    ON user_notebook_orders (user_id, position);
+
 CREATE TABLE IF NOT EXISTS words (
     id BIGSERIAL PRIMARY KEY,
     notebook_id BIGINT NOT NULL REFERENCES notebooks (id) ON DELETE CASCADE,

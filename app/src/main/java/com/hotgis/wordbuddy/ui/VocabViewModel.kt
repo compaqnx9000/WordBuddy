@@ -162,6 +162,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private val _ui = MutableStateFlow(VocabUiState())
     val ui: StateFlow<VocabUiState> = _ui.asStateFlow()
     val notebooks: StateFlow<List<Notebook>> = repo.notebooks
+    val notebookOrderCustom = MutableStateFlow(notebookOrderIsCustom())
     private val _session = MutableStateFlow(sessionStore.load())
     val session: StateFlow<UserSession?> = _session.asStateFlow()
     private val _accountDeletion = MutableStateFlow<WordBuddyApi.AccountDeletionStatus?>(null)
@@ -355,9 +356,9 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun bootstrapSession() {
         val current = _session.value ?: return
         val catalogs = runCatching { api.listCatalogs() }.getOrDefault(emptyList())
-        runCatching { api.listNotebooks(current.token) }
-            .onSuccess { books ->
-                publishMergedNotebooks(books, catalogs)
+        runCatching { api.listNotebookPage(current.token) }
+            .onSuccess { page ->
+                publishMergedNotebooks(page.items, catalogs, customOrder = page.customOrder)
                 val merged = repo.notebooks.value
                 val preferred = merged.firstOrNull { it.id == _ui.value.activeNotebookId }
                     ?: merged.firstOrNull { it.id == current.vocabNotebookId }
@@ -385,7 +386,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun bootstrapGuestCatalogs() {
         val server = runCatching { api.listCatalogs() }.getOrDefault(emptyList())
-        publishMergedNotebooks(repo.notebooks.value, server)
+        publishMergedNotebooks(repo.notebooks.value, server, customOrder = false)
         val preferred = repo.notebooks.value.firstOrNull { it.id == _ui.value.activeNotebookId }
             ?: repo.notebooks.value.firstOrNull { it.slug == Notebook.ZHONGKAO_SLUG }
             ?: repo.notebooks.value.firstOrNull()
@@ -400,10 +401,27 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         publishMergedNotebooks(repo.notebooks.value, catalogs)
     }
 
+    private fun notebookOrderPrefs() =
+        getApplication<Application>().getSharedPreferences("hotwords_notebooks", Context.MODE_PRIVATE)
+
+    private fun notebookOrderIsCustom(): Boolean =
+        notebookOrderPrefs().getBoolean("custom", false)
+
+    private fun setNotebookOrderCustom(value: Boolean) {
+        notebookOrderPrefs().edit().putBoolean("custom", value).apply()
+        notebookOrderCustom.value = value
+    }
+
     private suspend fun publishMergedNotebooks(
         existing: List<Notebook>,
         catalogs: List<Notebook>,
+        customOrder: Boolean? = null,
     ) {
+        if (customOrder != null) setNotebookOrderCustom(customOrder)
+        if (customOrder ?: notebookOrderIsCustom()) {
+            publishCustomNotebookOrder(existing, catalogs)
+            return
+        }
         val catalogIds = catalogs.map { it.id }.toSet()
         val catalogSlugs = catalogs.mapNotNull { it.slug }.toSet()
         // Personal notebooks always lead the chip row (newest first), including newly created ones.
@@ -433,6 +451,62 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         reconcileFavoriteNotebook()
         prefetchCatalogHeads(merged.filter { it.isSystem })
         realignVocabNotebookSession()
+    }
+
+    /** Keep a saved chip order. Notebooks the server has not placed yet append at the end. */
+    private suspend fun publishCustomNotebookOrder(
+        ordered: List<Notebook>,
+        catalogs: List<Notebook>,
+    ) {
+        val seenIds = ordered.map { it.id }.toSet()
+        val seenSlugs = ordered.mapNotNull { it.slug }.toSet()
+        val bundled = BuiltInWordbookSeeder.missingNotebooks(catalogs).map { built ->
+            ordered.firstOrNull { it.slug == built.slug } ?: built
+        }
+        val extras = (catalogs + bundled).filter { book ->
+            book.id !in seenIds && (book.slug == null || book.slug !in seenSlugs)
+        }
+        val bySlug = LinkedHashMap<String, Notebook>()
+        val loose = mutableListOf<Notebook>()
+        for (book in extras) {
+            val slug = book.slug
+            if (slug == null) loose.add(book) else bySlug.putIfAbsent(slug, book)
+        }
+        val orderedExtras = CATALOG_CHIP_ORDER.mapNotNull { bySlug.remove(it) } +
+            bySlug.values.sortedWith(compareBy({ it.sortOrder }, { it.id })) +
+            loose
+        val merged = (ordered + orderedExtras).mapIndexed { index, book ->
+            book.copy(sortOrder = index)
+        }
+        invalidateIeltsOrderCache(merged)
+        withContext(Dispatchers.IO) { repo.publishNotebooks(merged) }
+        reconcileFavoriteNotebook()
+        prefetchCatalogHeads(merged.filter { it.isSystem })
+        realignVocabNotebookSession()
+    }
+
+    fun saveNotebookOrder(ids: List<Long>, onError: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val auth = runCatching { token() }.getOrElse {
+                onError(it.message ?: "请先登录")
+                return@launch
+            }
+            val serverIds = ids.filter { it > 0L }
+            if (serverIds.isEmpty()) {
+                onError("还没有可排序的生词本")
+                return@launch
+            }
+            val current = notebooks.value
+            val byId = current.associateBy { it.id }
+            val kept = ids.toSet()
+            val ordered = ids.mapNotNull { byId[it] } + current.filter { it.id !in kept }
+            publishMergedNotebooks(ordered, emptyList(), customOrder = true)
+            runCatching { api.saveNotebookOrder(auth, serverIds) }
+                .onFailure { error ->
+                    refreshNotebookList()
+                    onError(error.message ?: "顺序保存失败")
+                }
+        }
     }
 
     /** The locked personal book. Favorites land here unless the user picked another notebook. */
@@ -2196,8 +2270,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun refreshNotebookList() {
         val catalogs = runCatching { api.listCatalogs() }.getOrDefault(emptyList())
-        val books = api.listNotebooks(token())
-        publishMergedNotebooks(books, catalogs)
+        val page = api.listNotebookPage(token())
+        publishMergedNotebooks(page.items, catalogs, customOrder = page.customOrder)
     }
 
     fun wordCountInNotebook(notebookId: Long): Int =

@@ -25,8 +25,6 @@ targets:
         excludes:
           - Info.plist
           - Pangle-Bridging-Header.h
-      - path: Vendor/Pangle/CSJAdSDK.bundle
-        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hotgis.wordbuddy.ios
@@ -53,15 +51,7 @@ targets:
       - framework: Vendor/AlipaySDK.xcframework
         embed: false
         codeSign: false
-      - framework: Vendor/Pangle/BUAdSDK.xcframework
-        embed: false
-        codeSign: false
-      - framework: Vendor/Pangle/CSJMediation.xcframework
-        embed: false
-        codeSign: false
       - sdk: Security.framework
-      - sdk: AdSupport.framework
-      - sdk: AppTrackingTransparency.framework
       - sdk: StoreKit.framework
       - sdk: AVFoundation.framework
       - sdk: CoreMedia.framework

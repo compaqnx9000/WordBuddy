@@ -402,7 +402,7 @@ private fun AboutLegalFooter(
         AboutLegalLink("《隐私保护指引》", onOpenPrivacy)
         Spacer(Modifier.height(4.sdp()))
         Text(
-            text = "运营者：北京博冠鸿图科技有限公司\n联系电话：18500090601\n客服邮箱：hi@wordbuddy.cc",
+            text = "运营者：北京博冠鸿图科技有限公司\n联系电话：18500090601\n客服邮箱：hi@wordbuddy.cc\nApp备案号：京ICP备2026067138号-1A",
             color = Stellar.OnSurface.copy(alpha = 0.88f),
             fontSize = 12.ssp(),
             textAlign = TextAlign.Center,

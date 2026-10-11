@@ -140,7 +140,7 @@ struct AboutWordBuddyView: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Theme.cyanSoft)
             }
-            Text("运营者：北京博冠鸿图科技有限公司\n联系电话：18500090601\n客服邮箱：hi@wordbuddy.cc")
+            Text("运营者：北京博冠鸿图科技有限公司\n联系电话：18500090601\n客服邮箱：hi@wordbuddy.cc\nApp备案号：京ICP备2026067138号-1A")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.onSurface.opacity(0.88))
                 .multilineTextAlignment(.center)

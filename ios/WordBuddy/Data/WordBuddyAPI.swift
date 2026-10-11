@@ -219,11 +219,24 @@ actor WordBuddyAPI {
         _ = try await request(method: "DELETE", path: "/words/\(id)", auth: token, body: nil)
     }
 
-    func listNotebooks(token: String) async throws -> [Notebook] {
+    func listNotebooks(token: String) async throws -> NotebookList {
         let root = try await request(method: "GET", path: "/notebooks", auth: token, body: nil)
-        return JSONValue.array(root, key: "items").compactMap { item in
+        let items = JSONValue.array(root, key: "items").compactMap { item in
             (item as? [String: Any]).map(parseNotebook)
         }
+        return NotebookList(
+            items: items,
+            customOrder: JSONValue.bool(root, key: "customOrder")
+        )
+    }
+
+    func saveNotebookOrder(token: String, ids: [Int64]) async throws {
+        _ = try await request(
+            method: "PUT",
+            path: "/notebooks/order",
+            auth: token,
+            body: ["ids": ids.map { Int($0) }]
+        )
     }
 
     /// Published system word books (中考 / 高考 / 四级 / 六级). No login required.
@@ -420,9 +433,31 @@ actor WordBuddyAPI {
 
     private func absoluteMediaURL(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
-        if raw.hasPrefix("http://") || raw.hasPrefix("https://") { return raw }
-        if raw.hasPrefix("/") { return baseURL + raw }
-        return raw
+        let absolute: String
+        if raw.hasPrefix("http://") || raw.hasPrefix("https://") {
+            absolute = raw
+        } else if raw.hasPrefix("/") {
+            absolute = baseURL + raw
+        } else {
+            return raw
+        }
+        // AVPlayer rejects cleartext IP URLs (ATS -1022) even with the media
+        // exception. The same /uploads files are served from the HTTPS site.
+        return secureMediaURL(absolute)
+    }
+
+    private func secureMediaURL(_ absolute: String) -> String {
+        guard var components = URLComponents(string: absolute),
+              components.scheme == "http",
+              let host = components.host?.lowercased()
+        else { return absolute }
+        let ours = host == "47.95.111.238" || host == "wordbuddy.cc" || host == "www.wordbuddy.cc"
+        guard ours else { return absolute }
+        components.scheme = "https"
+        if host == "47.95.111.238" {
+            components.host = "wordbuddy.cc"
+        }
+        return components.string ?? absolute
     }
 
     private func pathComponent(_ value: String) -> String {

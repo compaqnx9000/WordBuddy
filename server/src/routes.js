@@ -3,7 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { Router } from 'express'
-import { query } from './db.js'
+import { pool, query } from './db.js'
 import {
   authRequired,
   optionalAuth,
@@ -1694,6 +1694,34 @@ router.get('/catalogs', async (_req, res) => {
   })
 })
 
+const CATALOG_CHIP_SLUGS = ['zhongkao', 'gaokao', 'cet4', 'cet6', 'toefl', 'ielts']
+
+/** Same default as the clients: personal books newest first, then catalogs by slug. */
+function defaultChipOrder(rows) {
+  const users = rows
+    .filter((row) => row.kind === 'user')
+    .sort((a, b) => {
+      const created = new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      if (created !== 0) return created
+      return Number(b.id) - Number(a.id)
+    })
+  const bySlug = new Map()
+  for (const row of rows) {
+    if (row.kind === 'catalog' && row.slug && !bySlug.has(row.slug)) bySlug.set(row.slug, row)
+  }
+  const catalogs = []
+  for (const slug of CATALOG_CHIP_SLUGS) {
+    const row = bySlug.get(slug)
+    if (!row) continue
+    catalogs.push(row)
+    bySlug.delete(slug)
+  }
+  const rest = [...bySlug.values()].sort(
+    (a, b) => a.sort_order - b.sort_order || Number(a.id) - Number(b.id),
+  )
+  return [...users, ...catalogs, ...rest]
+}
+
 router.get('/notebooks', authRequired, async (req, res) => {
   await ensureUserNotebook(req.user.id)
   await ensureDefaultVocabNotebook(req.user.id)
@@ -1710,9 +1738,91 @@ router.get('/notebooks', authRequired, async (req, res) => {
     `,
     [req.user.id],
   )
+  const saved = await query(
+    `
+    SELECT notebook_id
+    FROM user_notebook_orders
+    WHERE user_id = $1
+    ORDER BY position ASC, notebook_id ASC
+    `,
+    [req.user.id],
+  )
+  const customOrder = saved.rows.length > 0
+  let rows = result.rows
+  if (customOrder) {
+    const byId = new Map(rows.map((row) => [String(row.id), row]))
+    const used = new Set()
+    const head = []
+    for (const savedRow of saved.rows) {
+      const book = byId.get(String(savedRow.notebook_id))
+      if (!book || used.has(String(book.id))) continue
+      used.add(String(book.id))
+      head.push(book)
+    }
+    const rest = defaultChipOrder(rows.filter((row) => !used.has(String(row.id))))
+    rows = head.concat(rest)
+  }
   res.json({
-    items: result.rows.map(mapNotebook),
+    items: rows.map(mapNotebook),
+    customOrder,
   })
+})
+
+router.put('/notebooks/order', authRequired, async (req, res) => {
+  const raw = Array.isArray(req.body?.ids) ? req.body.ids : null
+  if (!raw) {
+    res.status(400).json({ error: '请提供顺序' })
+    return
+  }
+  const ids = []
+  const seen = new Set()
+  for (const value of raw) {
+    const id = Number(value)
+    if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue
+    seen.add(id)
+    ids.push(id)
+  }
+  if (!ids.length) {
+    res.status(400).json({ error: '请提供顺序' })
+    return
+  }
+  const visible = await query(
+    `
+    SELECT id
+    FROM notebooks
+    WHERE id = ANY($2::bigint[])
+      AND (
+        (kind = 'catalog' AND published = TRUE)
+        OR (kind = 'user' AND owner_user_id = $1)
+      )
+    `,
+    [req.user.id, ids],
+  )
+  if (visible.rows.length !== ids.length) {
+    res.status(400).json({ error: '包含无效的生词本' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('DELETE FROM user_notebook_orders WHERE user_id = $1', [req.user.id])
+    for (let index = 0; index < ids.length; index += 1) {
+      await client.query(
+        `
+        INSERT INTO user_notebook_orders (user_id, notebook_id, position)
+        VALUES ($1, $2, $3)
+        `,
+        [req.user.id, ids[index], index],
+      )
+    }
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+  res.json({ ok: true })
 })
 
 function mapNotebook(row) {

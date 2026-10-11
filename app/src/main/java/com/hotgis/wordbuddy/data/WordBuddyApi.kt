@@ -1000,12 +1000,23 @@ class WordBuddyApi {
         }
     }
 
-    suspend fun listNotebooks(token: String): List<Notebook> = withContext(Dispatchers.IO) {
+    suspend fun listNotebooks(token: String): List<Notebook> = listNotebookPage(token).items
+
+    suspend fun listNotebookPage(token: String): NotebookPage = withContext(Dispatchers.IO) {
         val root = request("GET", "/notebooks", token)
         val items = root.getJSONArray("items")
-        buildList {
-            for (i in 0 until items.length()) add(parseNotebook(items.getJSONObject(i)))
-        }
+        NotebookPage(
+            items = buildList {
+                for (i in 0 until items.length()) add(parseNotebook(items.getJSONObject(i)))
+            },
+            customOrder = root.optBoolean("customOrder", false),
+        )
+    }
+
+    suspend fun saveNotebookOrder(token: String, ids: List<Long>) = withContext(Dispatchers.IO) {
+        val payload = JSONArray()
+        ids.filter { it > 0L }.forEach { payload.put(it) }
+        request("PUT", "/notebooks/order", token, body = JSONObject().put("ids", payload))
     }
 
     /** Public catalogs (中考 / 高考 / CET) — no login required. */

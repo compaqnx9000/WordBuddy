@@ -165,11 +165,14 @@ fun WordListScreen(
     totalCount: Int,
     ui: VocabUiState,
     notebooks: List<Notebook>,
+    notebookOrderCustom: Boolean = false,
     activeNotebookName: String,
     onSelectNotebook: (Long) -> Unit,
     onCreateNotebookClick: () -> Boolean = { true },
     onCreateNotebook: (String) -> Unit,
     onDeleteNotebook: (Long) -> Unit,
+    onOpenNotebookOrder: () -> Boolean = { true },
+    onReorderNotebooks: (List<Long>) -> Unit = {},
     onMoveEntries: (List<Long>, Long) -> Unit,
     onMoveEntire: (sourceId: Long, targetId: Long, excludeIds: List<Long>) -> Unit = { _, _, _ -> },
     wordCountInNotebook: (Long) -> Int,
@@ -228,7 +231,11 @@ fun WordListScreen(
     var pendingFavoriteEntry by remember { mutableStateOf<VocabEntry?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var showNotebookOrder by remember { mutableStateOf(false) }
     var showStatsDialog by remember { mutableStateOf(false) }
+    val orderedNotebooks = remember(notebooks, notebookOrderCustom) {
+        if (notebookOrderCustom) notebooks else orderNotebookChips(notebooks)
+    }
     var openSwipeId by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(openMoreRequest) {
         if (openMoreRequest > 0) showMoreMenu = true
@@ -424,7 +431,7 @@ fun WordListScreen(
             )
         }
         NotebookSwitcher(
-            notebooks = notebooks,
+            notebooks = orderedNotebooks,
             activeNotebookId = ui.activeNotebookId,
             onSelect = {
                 if (!selectionMode) onSelectNotebook(it)
@@ -891,6 +898,10 @@ fun WordListScreen(
     if (showMoreMenu) {
         NotebookMoreSheet(
             canEdit = totalCount > 0,
+            onReorder = {
+                showMoreMenu = false
+                if (onOpenNotebookOrder()) showNotebookOrder = true
+            },
             onEdit = {
                 showMoreMenu = false
                 selectionMode = true
@@ -905,6 +916,14 @@ fun WordListScreen(
                 showStatsDialog = true
             },
             onDismiss = { showMoreMenu = false },
+        )
+    }
+
+    if (showNotebookOrder) {
+        NotebookOrderDialog(
+            notebooks = orderedNotebooks,
+            onSave = onReorderNotebooks,
+            onDismiss = { showNotebookOrder = false },
         )
     }
 
@@ -932,7 +951,7 @@ private fun NotebookSwitcher(
     val chipHeight = 36.sdp()
     val chipRadius = 18.sdp()
     val chipShape = RoundedCornerShape(chipRadius)
-    val orderedNotebooks = remember(notebooks) { orderNotebookChips(notebooks) }
+    val orderedNotebooks = notebooks
     Row(
         Modifier
             .fillMaxWidth()
@@ -1192,6 +1211,7 @@ private fun MoveToNotebookDialog(
 private fun NotebookMoreSheet(
     canEdit: Boolean,
     onEdit: () -> Unit,
+    onReorder: () -> Unit,
     onStats: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -1246,6 +1266,12 @@ private fun NotebookMoreSheet(
                 )
                 Spacer(Modifier.height(8.sdp()))
                 NotebookMoreAction(
+                    label = "排序",
+                    enabled = true,
+                    onClick = onReorder,
+                )
+                Spacer(Modifier.height(8.sdp()))
+                NotebookMoreAction(
                     label = "统计",
                     enabled = true,
                     onClick = onStats,
@@ -1288,6 +1314,132 @@ private fun NotebookMoreAction(
             .padding(vertical = 14.sdp()),
         textAlign = TextAlign.Center,
     )
+}
+
+@Composable
+private fun NotebookOrderDialog(
+    notebooks: List<Notebook>,
+    onSave: (List<Long>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var books by remember { mutableStateOf(notebooks) }
+    val listState = rememberLazyListState()
+    val dragDropState = rememberDragDropState(listState) { from, to ->
+        books = books.toMutableList().apply { add(to, removeAt(from)) }
+    }
+    fun finish() {
+        if (books.map { it.id } != notebooks.map { it.id }) onSave(books.map { it.id })
+        onDismiss()
+    }
+    val shape = RoundedCornerShape(topStart = 22.sdp(), topEnd = 22.sdp())
+    Dialog(
+        onDismissRequest = { finish() },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            Modifier.fillMaxSize(),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.78f)
+                    .shadow(
+                        elevation = 20.dp,
+                        shape = shape,
+                        ambientColor = Stellar.Cyan.copy(alpha = 0.28f),
+                        spotColor = Stellar.Cyan.copy(alpha = 0.22f),
+                    )
+                    .clip(shape)
+                    .background(Stellar.SurfaceContainer.copy(alpha = 0.98f))
+                    .border(1.dp, Stellar.Cyan.copy(alpha = 0.35f), shape)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    .padding(horizontal = 16.sdp(), vertical = 16.sdp()),
+            ) {
+                Box(
+                    Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .width(36.sdp())
+                        .height(4.sdp())
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(Stellar.Outline.copy(alpha = 0.55f)),
+                )
+                Spacer(Modifier.height(14.sdp()))
+                Text(
+                    text = "调整顺序",
+                    color = Stellar.CyanSoft,
+                    fontSize = 18.ssp(),
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(6.sdp()))
+                Text(
+                    text = "按住一行拖动。系统词书也可以调整位置。",
+                    color = Stellar.OnSurfaceVariant,
+                    fontSize = 13.ssp(),
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(12.sdp()))
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .dragContainer(dragDropState),
+                ) {
+                    itemsIndexed(books, key = { _, book -> book.id }) { index, book ->
+                        DraggableItem(dragDropState = dragDropState, index = index) { dragging ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(52.sdp()),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "☰",
+                                    color = Stellar.OnSurfaceVariant,
+                                    fontSize = 18.ssp(),
+                                    modifier = Modifier.padding(end = 12.sdp()),
+                                )
+                                Text(
+                                    text = book.name,
+                                    color = if (dragging) Stellar.Cyan else Stellar.CyanSoft,
+                                    fontSize = 16.ssp(),
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (book.isLocked) {
+                                    Icon(
+                                        Icons.Filled.Lock,
+                                        contentDescription = null,
+                                        tint = Stellar.OnSurfaceVariant,
+                                        modifier = Modifier.size(16.sdp()),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.sdp()))
+                Text(
+                    text = "完成",
+                    color = Stellar.CyanSoft,
+                    fontSize = 17.ssp(),
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.sdp()))
+                        .background(Stellar.SurfaceHigh)
+                        .clickable { finish() }
+                        .padding(vertical = 14.sdp()),
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+    }
 }
 
 @Composable
