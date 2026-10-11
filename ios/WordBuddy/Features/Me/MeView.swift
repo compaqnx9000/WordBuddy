@@ -103,7 +103,7 @@ struct MeView: View {
         .sheet(isPresented: $showHelp) {
             infoSheet(
                 title: "帮助与反馈",
-                body: "词搭子用于查词、生词本、卡片背诵、短视频和播客。底部五个 Tab 即可使用这些功能。登录后可以同步生词、签到和搭币兑礼。\n\n遇到问题请发邮件至 hi@wordbuddy.cc，或拨打 18500090601。也可在「关于词搭子」中查看《隐私保护指引》。"
+                body: "你的词搭子用于查词、生词本、卡片背诵、短视频和播客。底部五个 Tab 即可使用这些功能。登录后可以同步生词、签到和搭币兑礼。\n\n遇到问题请发邮件至 hi@wordbuddy.cc，或拨打 18500090601。也可在「关于你的词搭子」中查看《隐私保护指引》。"
             )
         }
         .fullScreenCover(isPresented: $showAbout) {
@@ -505,7 +505,7 @@ struct MeView: View {
             .buttonStyle(.plain)
             menuDivider()
             Button { showAbout = true } label: {
-                menuRowLabel("info.circle", Theme.cyan, "关于词搭子", "v\(appVersion)")
+                menuRowLabel("info.circle", Theme.cyan, "关于你的词搭子", "v\(appVersion)")
             }
             .buttonStyle(.plain)
             menuDivider()
@@ -1872,7 +1872,7 @@ enum StudyReminder {
 
     private static func schedule(_ center: UNUserNotificationCenter) {
         let content = UNMutableNotificationContent()
-        content.title = "词搭子"
+        content.title = "你的词搭子"
         content.body = "提醒你坚持背单词"
         var date = DateComponents()
         date.hour = 20

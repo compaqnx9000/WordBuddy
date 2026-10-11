@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh-Hans</string>
 	<key>CFBundleDisplayName</key>
-	<string>词搭子</string>
+	<string>你的词搭子</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -55,11 +55,11 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>用于拍摄头像并同步到词搭子账号。</string>
+	<string>用于拍摄头像并同步到你的词搭子账号。</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>用于打开应用时验证面容，确认是你本人。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>用于从相册选择头像并同步到词搭子账号。</string>
+	<string>用于从相册选择头像并同步到你的词搭子账号。</string>
 	<key>NSUserTrackingUsageDescription</key>
 	<string>用于向你展示更相关的开屏、短视频和激励视频广告。你可以拒绝，不影响查词和生词本。</string>
 	<key>SKAdNetworkItems</key>

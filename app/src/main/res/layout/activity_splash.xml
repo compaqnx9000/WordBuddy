@@ -16,7 +16,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="词搭子"
+            android:text="你的词搭子"
             android:textColor="#E8F7F9"
             android:textSize="28sp"
             android:textStyle="bold" />

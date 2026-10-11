@@ -66,7 +66,7 @@ object ShortShareHelper {
     fun buildShareText(clip: ShortClip, inviteCode: String, page: String = watchPageUrl(clip, inviteCode)): String {
         val code = inviteCode.trim()
         return buildString {
-            append("【词搭子】")
+            append("【你的词搭子】")
             append(clip.title.ifBlank { "英语短视频" })
             append('\n')
             if (clip.caption.isNotBlank()) {

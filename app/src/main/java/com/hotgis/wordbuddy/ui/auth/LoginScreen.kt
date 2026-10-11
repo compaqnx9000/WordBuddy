@@ -445,7 +445,7 @@ internal fun BrandMark() {
             )
             Image(
                 painter = painterResource(R.drawable.ic_wordbuddy_logo),
-                contentDescription = "词搭子",
+                contentDescription = "你的词搭子",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .shadow(
@@ -460,7 +460,7 @@ internal fun BrandMark() {
         }
         Spacer(Modifier.height(16.sdp()))
         Text(
-            text = "词搭子",
+            text = "你的词搭子",
             color = Stellar.CyanSoft,
             fontSize = 28.ssp(),
             fontWeight = FontWeight.Bold,

@@ -101,7 +101,7 @@ final class ColdSplashController: UIViewController, BUSplashAdDelegate {
         super.viewDidLoad()
         view.backgroundColor = UIColor(red: 0.05, green: 0.07, blue: 0.10, alpha: 1)
         let title = UILabel()
-        title.text = "词搭子"
+        title.text = "你的词搭子"
         title.textColor = .white
         title.font = .systemFont(ofSize: 34, weight: .semibold)
         title.translatesAutoresizingMaskIntoConstraints = false

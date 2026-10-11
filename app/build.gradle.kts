@@ -39,16 +39,14 @@ android {
         applicationId = "com.hotgis.wordbuddy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 178
-        versionName = "1.87"
+        versionCode = 181
+        versionName = "1.90"
         ndk {
             // Pangle AAR only ships armeabi-v7a / arm64-v8a (no x86_64).
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
-        // Domain https://wordbuddy.cc is blocked until ICP 备案; use server IP for now.
-        // Port 80 via nginx (8787 may be blocked by cloud security group).
-        buildConfigField("String", "API_BASE_URL", "\"http://47.95.111.238\"")
-        buildConfigField("String", "API_FALLBACK_URL", "\"http://47.95.111.238:8787\"")
+        buildConfigField("String", "API_BASE_URL", "\"https://wordbuddy.cc\"")
+        buildConfigField("String", "API_FALLBACK_URL", "\"https://www.wordbuddy.cc\"")
         buildConfigField("String", "CSJ_APP_ID", "\"${escapeBuildConfig(csjAppId)}\"")
         buildConfigField("String", "CSJ_SPLASH_CODE_ID", "\"${escapeBuildConfig(csjSplashCodeId)}\"")
         buildConfigField(
@@ -79,8 +77,8 @@ android {
     buildTypes {
         debug {
             // Emulator and physical debug builds both use the Aliyun cloud API.
-            buildConfigField("String", "API_BASE_URL", "\"http://47.95.111.238\"")
-            buildConfigField("String", "API_FALLBACK_URL", "\"http://47.95.111.238:8787\"")
+            buildConfigField("String", "API_BASE_URL", "\"https://wordbuddy.cc\"")
+            buildConfigField("String", "API_FALLBACK_URL", "\"https://www.wordbuddy.cc\"")
         }
         release {
             isMinifyEnabled = false

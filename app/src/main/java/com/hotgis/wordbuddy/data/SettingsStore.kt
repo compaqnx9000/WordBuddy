@@ -23,7 +23,7 @@ class SettingsStore(context: Context) {
             autoPlayIntervalMs = prefs.getLong(KEY_AUTO_PLAY_MS, 2500L),
             loop = prefs.getBoolean(KEY_LOOP, true),
             speakOnPageChange = prefs.getBoolean(KEY_SPEAK_ON_PAGE, true),
-            dailyReminder = prefs.getBoolean(KEY_DAILY_REMINDER, true),
+            dailyReminder = prefs.getBoolean(KEY_DAILY_REMINDER, false),
             aiImageAutoGen = prefs.getBoolean(KEY_AI_IMAGE, false),
             imageProvider = runCatching {
                 ImageGenProvider.valueOf(prefs.getString(KEY_IMAGE_PROVIDER, ImageGenProvider.Pollinations.name).orEmpty())

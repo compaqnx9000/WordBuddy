@@ -321,7 +321,7 @@ struct ShortClip: Identifiable, Equatable, Hashable {
             URLQueryItem(name: "title", value: title.isEmpty ? "英语短视频" : title),
         ]
         let page = parts?.string ?? "\(WordBuddyAPI.primaryBase)/watch"
-        var lines = ["【词搭子】\(title.isEmpty ? "英语短视频" : title)"]
+        var lines = ["【你的词搭子】\(title.isEmpty ? "英语短视频" : title)"]
         let captionText = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         if !captionText.isEmpty { lines.append(captionText) }
         if !code.isEmpty { lines.append("邀请码：\(code)") }

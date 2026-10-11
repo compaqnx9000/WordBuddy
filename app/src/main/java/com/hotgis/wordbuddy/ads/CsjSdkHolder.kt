@@ -58,7 +58,7 @@ object CsjSdkHolder {
         try {
             val config = TTAdConfig.Builder()
                 .appId(BuildConfig.CSJ_APP_ID)
-                .appName("词搭子")
+                .appName("你的词搭子")
                 .titleBarTheme(TTAdConstant.TITLE_BAR_THEME_DARK)
                 .allowShowNotify(true)
                 .debug(BuildConfig.DEBUG)
@@ -78,10 +78,16 @@ object CsjSdkHolder {
                     object : TTCustomController() {
                         override fun isCanUseLocation(): Boolean = false
                         override fun isCanUsePhoneState(): Boolean = false
-                        override fun isCanUseWifiState(): Boolean = true
+                        override fun getDevImei(): String = ""
+                        override fun isCanUseWifiState(): Boolean = false
+                        override fun getMacAddress(): String = ""
                         override fun isCanUseWriteExternal(): Boolean = false
+                        override fun isCanUseAndroidId(): Boolean = false
+                        override fun getAndroidId(): String = ""
                         override fun alist(): Boolean = false
-                        override fun isCanUseAndroidId(): Boolean = true
+                        override fun isCanUsePermissionRecordAudio(): Boolean = false
+                        override fun userPrivacyConfig(): MutableMap<String, Any> =
+                            hashMapOf("installUninstallListen" to "0")
                     },
                 )
                 .build()

@@ -6,8 +6,11 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.DisplayMetrics
 import android.util.Log
+import android.util.TypedValue
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.core.view.WindowCompat
@@ -23,6 +26,7 @@ import com.bytedance.sdk.openadsdk.mediation.ad.MediationSplashRequestInfo
 import com.hotgis.wordbuddy.BuildConfig
 import com.hotgis.wordbuddy.MainActivity
 import com.hotgis.wordbuddy.R
+import com.hotgis.wordbuddy.ui.settings.LegalDocuments
 
 /**
  * Cold-start entry: privacy consent → Pangle init → splash ad → [MainActivity].
@@ -59,16 +63,9 @@ class SplashActivity : ComponentActivity() {
     }
 
     private fun showPrivacyDialog() {
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("服务协议和隐私政策")
-            .setMessage(
-                "欢迎使用词搭子！\n\n" +
-                    "我们非常重视你的个人信息和隐私保护。为保障产品功能与服务正常运行，" +
-                    "请你在使用前仔细阅读并充分理解《软件许可及服务协议》《隐私保护指引摘要》" +
-                    "《隐私保护指引》。\n\n" +
-                    "你可在应用内「我的 → 关于词搭子」随时查看上述全文。\n\n" +
-                    "点击「同意」即表示你已阅读并同意上述内容；点击「不同意」将退出应用。",
-            )
+            .setMessage(PRIVACY_CONSENT_MESSAGE)
             .setCancelable(false)
             .setPositiveButton("同意") { _, _ ->
                 PrivacyConsentStore.setAccepted(this, true)
@@ -77,6 +74,28 @@ class SplashActivity : ComponentActivity() {
             .setNegativeButton("不同意") { _, _ ->
                 finish()
             }
+            .setNeutralButton("查看全文", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                showPrivacyFullText()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun showPrivacyFullText() {
+        val text = TextView(this).apply {
+            this.text = LegalDocuments.privacy
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, pad)
+        }
+        val scroll = ScrollView(this).apply { addView(text) }
+        AlertDialog.Builder(this)
+            .setTitle(LegalDocuments.PRIVACY_TITLE)
+            .setView(scroll)
+            .setPositiveButton("返回", null)
             .show()
     }
 
@@ -251,6 +270,16 @@ class SplashActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "SplashActivity"
+        private const val PRIVACY_CONSENT_MESSAGE =
+            "欢迎使用你的词搭子。\n\n" +
+                "在你点击「同意」之前，我们不会初始化广告 SDK，也不会读取设备标识。\n\n" +
+                "同意之后，为实现开屏、短视频和激励视频广告，本应用会接入穿山甲（GroMore）。" +
+                "仅在加载或展示一条广告时读取一次 OAID，用于广告投放、频次控制和反作弊，" +
+                "不会在后台按固定周期重复采集。\n\n" +
+                "我们已关闭，且不会收集：IMEI、IMSI、设备 MAC 地址、软件安装列表、精确位置、" +
+                "通讯录、通话记录、日历、短信、本机号码、录音。\n\n" +
+                "相机和相册只在你主动更换头像，或把视频保存到相册时才会申请，不会在首次打开时弹出。\n\n" +
+                "点击「不同意」将退出应用。可先点「查看全文」阅读《隐私保护指引》。"
         // Cold start + mediation config pull often needs >3.5s on first launch.
         private const val SPLASH_TIMEOUT_MS = 8000
     }

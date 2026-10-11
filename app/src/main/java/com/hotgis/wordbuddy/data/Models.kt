@@ -181,7 +181,7 @@ data class StudySettings(
     val autoPlayIntervalMs: Long = 2500L,
     val loop: Boolean = true,
     val speakOnPageChange: Boolean = true,
-    val dailyReminder: Boolean = true,
+    val dailyReminder: Boolean = false,
     val aiImageAutoGen: Boolean = false,
     val imageProvider: ImageGenProvider = ImageGenProvider.Pollinations,
     val fontScale: Float = FontSizeOption.Normal.scale,

@@ -145,7 +145,7 @@ fun LookupScreen(
         ) {
             HomeProfileHeader(
                 onBack = onBack,
-                title = if (onBack != null) "词搭子" else null,
+                title = if (onBack != null) "你的词搭子" else null,
             )
             Column(
                 Modifier

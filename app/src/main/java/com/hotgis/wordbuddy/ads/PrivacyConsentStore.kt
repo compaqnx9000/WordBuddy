@@ -8,7 +8,7 @@ import android.content.Context
  */
 object PrivacyConsentStore {
     private const val PREFS = "wordbuddy_privacy"
-    private const val KEY_ACCEPTED = "privacy_accepted_v1"
+    private const val KEY_ACCEPTED = "privacy_accepted_v2"
 
     fun hasAccepted(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

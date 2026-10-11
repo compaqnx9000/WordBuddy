@@ -23,7 +23,7 @@ struct LookupView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 ZStack {
-                    Text("词搭子")
+                    Text("你的词搭子")
                         .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(Theme.cyanSoft)
                     if onClose != nil {

@@ -331,14 +331,6 @@ fun HotWordsRoot(
         StudyReminder.sync(context, enabled = true)
     }
 
-    var askedDailyReminder by remember { mutableStateOf(false) }
-    LaunchedEffect(ui.settings.dailyReminder) {
-        if (!ui.settings.dailyReminder || notificationsAllowed()) return@LaunchedEffect
-        if (askedDailyReminder) return@LaunchedEffect
-        askedDailyReminder = true
-        reminderPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-    }
-
     LaunchedEffect(session) {
         if (session != null) {
             val cameFromLogin = showLogin

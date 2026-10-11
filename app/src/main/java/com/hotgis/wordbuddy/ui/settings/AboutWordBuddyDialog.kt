@@ -213,7 +213,7 @@ fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
                             detailDismiss = ""
                             pendingUpdate = null
                             detailMessage =
-                                "词搭子帮你查词、收藏、卡片背诵。\n\n" +
+                                "你的词搭子帮你查词、收藏、卡片背诵。\n\n" +
                                     "· 首页快速查词，查看音标、释义与例句\n" +
                                     "· 收藏到生词本，支持导入导出\n" +
                                     "· 卡片模式复习，可朗读与切换英音美音\n" +
@@ -308,7 +308,7 @@ private fun AboutTopBar(onBack: () -> Unit) {
             )
         }
         Text(
-            text = "关于词搭子",
+            text = "关于你的词搭子",
             modifier = Modifier.align(Alignment.Center),
             color = Stellar.CyanSoft,
             fontSize = 20.ssp(),
@@ -322,7 +322,7 @@ private fun AboutBrandHeader() {
     val logoShape = RoundedCornerShape(22.sdp())
     Image(
         painter = painterResource(R.drawable.ic_wordbuddy_logo),
-        contentDescription = "词搭子",
+        contentDescription = "你的词搭子",
         contentScale = ContentScale.Fit,
         modifier = Modifier
             .shadow(
@@ -336,7 +336,7 @@ private fun AboutBrandHeader() {
     )
     Spacer(Modifier.height(16.sdp()))
     Text(
-        text = "词搭子",
+        text = "你的词搭子",
         color = Stellar.CyanSoft,
         fontSize = 24.ssp(),
         fontWeight = FontWeight.Bold,

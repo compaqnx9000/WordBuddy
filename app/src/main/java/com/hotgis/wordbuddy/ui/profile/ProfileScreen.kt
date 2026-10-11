@@ -696,7 +696,7 @@ fun ProfileScreen(
                 ProfileMenuRow(
                     icon = Icons.Outlined.Info,
                     iconTint = Stellar.Cyan,
-                    title = "关于词搭子",
+                    title = "关于你的词搭子",
                     trailing = "v${BuildConfig.VERSION_NAME}",
                     onClick = { showAbout = true },
                 )

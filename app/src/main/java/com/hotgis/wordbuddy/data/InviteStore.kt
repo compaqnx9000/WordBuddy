@@ -32,7 +32,7 @@ class InviteStore(context: Context) {
 
         fun shareText(buddyId: String): String {
             val id = buddyId.trim()
-            return "我在用「词搭子」背单词，邀请你一起来！\n邀请码：$id\n打开链接注册：${inviteUrl(id)}"
+            return "我在用「你的词搭子」背单词，邀请你一起来！\n邀请码：$id\n打开链接注册：${inviteUrl(id)}"
         }
     }
 }

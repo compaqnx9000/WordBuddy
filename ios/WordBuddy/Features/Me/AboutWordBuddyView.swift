@@ -48,7 +48,7 @@ struct AboutWordBuddyView: View {
 
     private var topBar: some View {
         ZStack {
-            Text("关于词搭子")
+            Text("关于你的词搭子")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(Theme.cyanSoft)
             HStack {
@@ -75,7 +75,7 @@ struct AboutWordBuddyView: View {
                 .frame(width: 88, height: 88)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .shadow(color: Theme.cyan.opacity(0.35), radius: 16, y: 6)
-            Text("词搭子")
+            Text("你的词搭子")
                 .font(.system(size: 24, weight: .bold))
                 .foregroundStyle(Theme.cyanSoft)
                 .padding(.top, 16)

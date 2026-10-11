@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -23,6 +24,21 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+
+    <!-- Ad SDKs must not merge sensitive permissions this app does not use. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_SMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" tools:node="remove" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" tools:node="remove" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" tools:node="remove" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:node="remove" />
+    <uses-permission android:name="android.permission.GET_TASKS" tools:node="remove" />
 
     <queries>
         <!-- 【Android 11+ 包可见性声明】各主流品牌定制 ROM 相册包名，确保相册应用在系统中可见 -->

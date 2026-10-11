@@ -27,8 +27,8 @@ struct DeviceInfo: Sendable {
 }
 
 actor WordBuddyAPI {
-    static let primaryBase = "http://47.95.111.238"
-    static let fallbackBase = "http://47.95.111.238:8787"
+    static let primaryBase = "https://wordbuddy.cc"
+    static let fallbackBase = "https://www.wordbuddy.cc"
 
     private let bases = [primaryBase, fallbackBase]
     private var baseURL = primaryBase

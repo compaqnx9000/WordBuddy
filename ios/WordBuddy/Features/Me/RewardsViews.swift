@@ -1113,7 +1113,7 @@ struct InviteView: View {
 
     private func shareText(_ buddyId: String) -> String {
         let id = buddyId.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "我在用「词搭子」背单词，邀请你一起来！\n邀请码：\(id)\n打开链接注册：\(WordBuddyAPI.primaryBase)/i/\(id)"
+        return "我在用「你的词搭子」背单词，邀请你一起来！\n邀请码：\(id)\n打开链接注册：\(WordBuddyAPI.primaryBase)/i/\(id)"
     }
 
     private func load() async {

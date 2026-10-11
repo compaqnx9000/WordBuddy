@@ -111,7 +111,7 @@ struct LoginView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                     .shadow(color: Theme.cyan.opacity(0.4), radius: 18, y: 6)
             }
-            Text("词搭子")
+            Text("你的词搭子")
                 .font(.system(size: 28, weight: .bold))
                 .tracking(1.2)
                 .foregroundStyle(Theme.cyanSoft)

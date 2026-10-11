@@ -49,7 +49,7 @@ fun HomeProfileHeader(
                     .padding(10.sdp()),
             )
             Text(
-                text = title?.trim()?.takeIf { it.isNotEmpty() } ?: "词搭子",
+                text = title?.trim()?.takeIf { it.isNotEmpty() } ?: "你的词搭子",
                 color = Stellar.CyanSoft,
                 fontSize = 18.ssp(),
                 fontWeight = FontWeight.Bold,
@@ -59,7 +59,7 @@ fun HomeProfileHeader(
             )
         } else {
             Text(
-                text = "词搭子",
+                text = "你的词搭子",
                 color = Stellar.CyanSoft,
                 fontSize = 20.ssp(),
                 fontWeight = FontWeight.Bold,

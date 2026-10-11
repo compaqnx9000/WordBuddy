@@ -116,7 +116,7 @@ object StudyReminder {
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_reminder)
-            .setContentTitle("词搭子")
+            .setContentTitle("你的词搭子")
             .setContentText("提醒你坚持背单词")
             .setAutoCancel(true)
             .setContentIntent(content)
