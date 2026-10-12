@@ -71,6 +71,30 @@ class SettingsStore(context: Context) {
         prefs.edit().putLong(KEY_ACTIVE_NOTEBOOK_ID, id).apply()
     }
 
+    fun loadStudySceneUserId(): Long = prefs.getLong(KEY_SCENE_USER, 0L)
+
+    fun loadStudyScene(): StudyScene? {
+        val notebookId = prefs.getLong(KEY_SCENE_NOTEBOOK, 0L)
+        if (notebookId <= 0L) return null
+        return StudyScene(
+            notebookId = notebookId,
+            wordId = prefs.getLong(KEY_SCENE_WORD, 0L),
+            wordText = prefs.getString(KEY_SCENE_TEXT, "").orEmpty(),
+            updatedAtMillis = prefs.getLong(KEY_SCENE_UPDATED, 0L),
+        )
+    }
+
+    fun saveStudyScene(scene: StudyScene, userId: Long) {
+        prefs.edit()
+            .putLong(KEY_SCENE_USER, userId)
+            .putLong(KEY_SCENE_NOTEBOOK, scene.notebookId)
+            .putLong(KEY_SCENE_WORD, scene.wordId)
+            .putString(KEY_SCENE_TEXT, scene.wordText)
+            .putLong(KEY_SCENE_UPDATED, scene.updatedAtMillis)
+            .putLong(KEY_ACTIVE_NOTEBOOK_ID, scene.notebookId)
+            .commit()
+    }
+
     private companion object {
         const val PREFS_NAME = "hotwords_settings"
         const val DEFAULT_DISPLAY_NAME = "词搭子"
@@ -89,6 +113,11 @@ class SettingsStore(context: Context) {
         const val KEY_ACCENT_STYLE = "accent_style"
         const val KEY_DEFAULT_NOTEBOOK_ID = "default_notebook_id"
         const val KEY_ACTIVE_NOTEBOOK_ID = "active_notebook_id"
+        const val KEY_SCENE_USER = "scene_user_id"
+        const val KEY_SCENE_NOTEBOOK = "scene_notebook_id"
+        const val KEY_SCENE_WORD = "scene_word_id"
+        const val KEY_SCENE_TEXT = "scene_word_text"
+        const val KEY_SCENE_UPDATED = "scene_updated_at"
         const val KEY_BIOMETRIC_LOGIN = "biometric_login"
         const val KEY_PODCAST_SCREEN_OFF = "podcast_play_when_screen_off"
         const val KEY_SHORTS_META_DEFAULT = "shorts_meta_visible_default"

@@ -553,6 +553,15 @@ export async function ensureSchema() {
     'CREATE INDEX IF NOT EXISTS user_notebook_orders_user_position ON user_notebook_orders (user_id, position)',
   )
   await query(`
+    CREATE TABLE IF NOT EXISTS user_study_scenes (
+      user_id BIGINT PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+      notebook_id BIGINT REFERENCES notebooks (id) ON DELETE SET NULL,
+      word_id BIGINT,
+      word_text TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query(`
     UPDATE notebooks n
     SET name = '默认生词本'
     WHERE n.kind = 'user'

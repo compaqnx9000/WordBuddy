@@ -115,6 +115,7 @@ import com.hotgis.wordbuddy.ui.shorts.ShortShareHelper
 import com.hotgis.wordbuddy.ui.shorts.ShortsScreen
 import com.hotgis.wordbuddy.ui.podcast.PodcastScreen
 import com.hotgis.wordbuddy.ui.theme.HotWordsTheme
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 
 private enum class Overlay { None, Card, Settings }
@@ -191,6 +192,7 @@ fun HotWordsRoot(
     val alphabetLetterIndex by viewModel.alphabetLetterIndex.collectAsStateWithLifecycle()
     val listWindowStart by viewModel.listWindowStart.collectAsStateWithLifecycle()
     val pendingListScrollEntryId by viewModel.pendingListScrollEntryId.collectAsStateWithLifecycle()
+    val listAnchorWordId by viewModel.listAnchorWordId.collectAsStateWithLifecycle()
     val favoriteRevision by viewModel.favoriteRevision.collectAsStateWithLifecycle()
     val homophones by viewModel.homophones.collectAsStateWithLifecycle()
     val userNotes by viewModel.userNotes.collectAsStateWithLifecycle()
@@ -208,6 +210,17 @@ fun HotWordsRoot(
         loginHint = hint
         showLogin = true
         return false
+    }
+
+    fun favoriteCardWord(entry: VocabEntry, notebookId: Long, onDone: (Boolean) -> Unit) {
+        if (!requireLogin("收藏生词需要先登录或注册")) {
+            onDone(false)
+            return
+        }
+        viewModel.saveRelatedWordToNotebook(entry, notebookId) { ok, message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            onDone(ok)
+        }
     }
 
     fun openBuyPoints() {
@@ -388,6 +401,15 @@ fun HotWordsRoot(
 
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            try {
+                awaitCancellation()
+            } finally {
+                viewModel.flushStudyScene()
+            }
+        }
+    }
+    LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             viewModel.validateSessionNow()
         }
@@ -520,6 +542,7 @@ fun HotWordsRoot(
             }
             tab == MainTab.Home -> {
                 if (pendingExit) {
+                    viewModel.flushStudyScene()
                     onExit()
                 } else {
                     pendingExit = true
@@ -528,6 +551,7 @@ fun HotWordsRoot(
             }
             tab == MainTab.Notebook -> {
                 pendingExit = false
+                viewModel.flushStudyScene()
                 tab = MainTab.Home
             }
             tab == MainTab.Shorts ||
@@ -1137,6 +1161,10 @@ fun HotWordsRoot(
                             overlay = Overlay.None
                         },
                         onOpenBuyPoints = { openBuyPoints() },
+                        enableFavoriteTo = viewModel.activeNotebook()?.isSystem == true,
+                        favoriteNotebooks = notebooks.filter { !it.isSystem },
+                        onPrepareFavorite = { requireLogin("收藏生词需要先登录或注册") },
+                        onFavoriteToNotebook = ::favoriteCardWord,
                     )
                 }
 
@@ -1388,6 +1416,10 @@ fun HotWordsRoot(
                                 onSeekAlphabetLetter = viewModel::seekAlphabetLetter,
                                 pendingScrollEntryId = pendingListScrollEntryId,
                                 onPendingScrollConsumed = viewModel::consumePendingListScroll,
+                                anchorWordId = listAnchorWordId,
+                                onEnsureStudyWord = viewModel::ensureStudyWord,
+                                onAnchorReleased = viewModel::releaseListAnchor,
+                                onVisibleWord = viewModel::noteVisibleWord,
                                 onPreviewEntry = if (splitBody) previewInSplit else null,
                                 splitPaneBody = splitBody,
                                 openMoreRequest = if (splitBody) openMoreRequest else 0,
@@ -1425,6 +1457,10 @@ fun HotWordsRoot(
                                                 onOpenBuyPoints = { openBuyPoints() },
                                                 showPlaybackControls = false,
                                                 showTopBar = false,
+                                                enableFavoriteTo = viewModel.activeNotebook()?.isSystem == true,
+                                                favoriteNotebooks = notebooks.filter { !it.isSystem },
+                                                onPrepareFavorite = { requireLogin("收藏生词需要先登录或注册") },
+                                                onFavoriteToNotebook = ::favoriteCardWord,
                                             )
                                         }
                                     },
@@ -1627,13 +1663,15 @@ private fun HotWordsStudyCard(
     onOpenBuyPoints: () -> Unit = {},
     showPlaybackControls: Boolean = true,
     showTopBar: Boolean = true,
+    enableFavoriteTo: Boolean = false,
+    favoriteNotebooks: List<Notebook> = emptyList(),
+    onPrepareFavorite: () -> Boolean = { true },
+    onFavoriteToNotebook: (VocabEntry, Long, (Boolean) -> Unit) -> Unit = { _, _, done -> done(false) },
 ) {
     CardModeScreen(
         modifier = modifier,
-        entries = if (words.size in 1..80) viewModel.studyDeck() else emptyList(),
+        entryAt = { playbackIndex -> viewModel.cardAtPlaybackIndex(playbackIndex) },
         currentEntry = viewModel.currentCard(),
-        prevEntry = viewModel.cardAtPlaybackIndex(ui.cardIndex - 1),
-        nextEntry = viewModel.cardAtPlaybackIndex(ui.cardIndex + 1),
         entryCount = words.size,
         notebookName = activeNotebookName,
         index = ui.cardIndex,
@@ -1683,6 +1721,10 @@ private fun HotWordsStudyCard(
         onNearEnd = viewModel::loadMoreWords,
         showPlaybackControls = showPlaybackControls,
         showTopBar = showTopBar,
+        enableFavoriteTo = enableFavoriteTo,
+        favoriteNotebooks = favoriteNotebooks,
+        onPrepareFavorite = onPrepareFavorite,
+        onFavoriteToNotebook = onFavoriteToNotebook,
     )
 }
 

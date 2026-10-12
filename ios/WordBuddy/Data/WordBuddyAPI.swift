@@ -230,6 +230,66 @@ actor WordBuddyAPI {
         )
     }
 
+    func fetchStudyScene(token: String) async throws -> StudyScene? {
+        let root = try await request(method: "GET", path: "/me/study-scene", auth: token, body: nil)
+        let notebookId = JSONValue.int64(root, key: "notebookId")
+        guard notebookId > 0 else { return nil }
+        return StudyScene(
+            userId: 0,
+            notebookId: notebookId,
+            wordId: JSONValue.int64(root, key: "wordId"),
+            wordText: JSONValue.string(root, key: "wordText") ?? "",
+            updatedAt: Self.isoMillis(JSONValue.string(root, key: "updatedAt"))
+        )
+    }
+
+    func saveStudyScene(token: String, scene: StudyScene) async throws -> StudyScene {
+        let root = try await request(
+            method: "PUT",
+            path: "/me/study-scene",
+            auth: token,
+            body: [
+                "notebookId": Int(scene.notebookId),
+                "wordId": Int(scene.wordId),
+                "wordText": scene.wordText,
+            ]
+        )
+        var saved = scene
+        let updated = Self.isoMillis(JSONValue.string(root, key: "updatedAt"))
+        if updated > 0 { saved.updatedAt = updated }
+        saved.wordId = JSONValue.int64(root, key: "wordId", default: scene.wordId)
+        return saved
+    }
+
+    func locateWord(token: String?, notebookId: Int64, wordId: Int64, text: String) async throws -> (index: Int, wordId: Int64, word: String)? {
+        var path = "/notebooks/\(notebookId)/position?wordId=\(wordId)"
+        if !text.isEmpty {
+            let encoded = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? text
+            path += "&text=\(encoded)"
+        }
+        let root = try await request(method: "GET", path: path, auth: token, body: nil)
+        guard JSONValue.bool(root, key: "found") else { return nil }
+        return (
+            JSONValue.int(root, key: "index"),
+            JSONValue.int64(root, key: "wordId"),
+            JSONValue.string(root, key: "word") ?? text
+        )
+    }
+
+    private static func isoMillis(_ value: String?) -> TimeInterval {
+        guard let value, !value.isEmpty else { return 0 }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) {
+            return date.timeIntervalSince1970 * 1000
+        }
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: value) {
+            return date.timeIntervalSince1970 * 1000
+        }
+        return 0
+    }
+
     func saveNotebookOrder(token: String, ids: [Int64]) async throws {
         _ = try await request(
             method: "PUT",

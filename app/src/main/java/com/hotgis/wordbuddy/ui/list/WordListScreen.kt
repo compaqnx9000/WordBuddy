@@ -68,6 +68,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -127,6 +128,7 @@ import com.hotgis.wordbuddy.ui.lookup.stellarPanelBackgroundColor
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
 import com.hotgis.wordbuddy.ui.lookup.stellarPosColor
 import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 
 /** Keep list meaning / mask height stable across short and long definitions. */
@@ -158,7 +160,7 @@ private fun rememberMeaningStyle(): TextStyle {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun WordListScreen(
     entries: List<VocabEntry>,
@@ -207,6 +209,12 @@ fun WordListScreen(
     onSeekAlphabetLetter: (Char) -> Unit = {},
     pendingScrollEntryId: Long? = null,
     onPendingScrollConsumed: () -> Unit = {},
+    /** Saved word to put at the top of this notebook. 0 keeps the list at the start. */
+    anchorWordId: Long = 0L,
+    onEnsureStudyWord: (Long) -> Unit = {},
+    onAnchorReleased: () -> Unit = {},
+    /** First visible row after the list settles, and again when the list leaves the screen. */
+    onVisibleWord: (id: Long, text: String) -> Unit = { _, _ -> },
     /** Foldable dual-pane: selecting a list row updates the detail card. */
     onPreviewEntry: ((Long) -> Unit)? = null,
     /**
@@ -300,9 +308,25 @@ fun WordListScreen(
         selectedEntire = false
         excludedIds = emptySet()
         openSwipeId = null
-        // Only jump to top when switching notebooks — not when returning from card.
-        if (pendingScrollEntryId == null) {
+        // A saved word is scrolled into place below. Otherwise a new notebook starts at the top.
+        if (pendingScrollEntryId == null && anchorWordId <= 0L) {
             listState.scrollToItem(0)
+        }
+    }
+    var anchorApplied by remember(ui.activeNotebookId) { mutableStateOf(false) }
+    var anchorRequested by remember(ui.activeNotebookId, anchorWordId) { mutableStateOf(false) }
+    LaunchedEffect(ui.activeNotebookId, anchorWordId, entries.size) {
+        if (anchorApplied) return@LaunchedEffect
+        val target = anchorWordId
+        if (target <= 0L) return@LaunchedEffect
+        val index = entries.indexOfFirst { it.id == target }
+        if (index >= 0) {
+            listState.scrollToItem(index)
+            anchorApplied = true
+            onAnchorReleased()
+        } else if (!anchorRequested) {
+            anchorRequested = true
+            onEnsureStudyWord(target)
         }
     }
     LaunchedEffect(pendingScrollEntryId, entries.size, totalCount) {
@@ -314,11 +338,28 @@ fun WordListScreen(
             onPendingScrollConsumed()
             return@LaunchedEffect
         }
-        if (entries.size < totalCount) {
-            onLoadMore()
-        } else {
-            onPendingScrollConsumed()
+        if (entries.isNotEmpty()) onEnsureStudyWord(id)
+    }
+    val visibleWordEntries = rememberUpdatedState(entries)
+    val onVisibleWordState = rememberUpdatedState(onVisibleWord)
+    fun topWordIndex(): Int {
+        val visible = listState.layoutInfo.visibleItemsInfo
+        if (visible.isEmpty()) return listState.firstVisibleItemIndex
+        return visible.minBy { kotlin.math.abs(it.offset) }.index
+    }
+    DisposableEffect(ui.activeNotebookId) {
+        onDispose {
+            val entry = visibleWordEntries.value.getOrNull(topWordIndex()) ?: return@onDispose
+            onVisibleWordState.value(entry.id, entry.text)
         }
+    }
+    LaunchedEffect(ui.activeNotebookId) {
+        snapshotFlow { topWordIndex() }
+            .debounce(250)
+            .collect { index ->
+                val entry = visibleWordEntries.value.getOrNull(index) ?: return@collect
+                onVisibleWordState.value(entry.id, entry.text)
+            }
     }
     LaunchedEffect(ui.activeNotebookId, entries.size) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
@@ -1126,7 +1167,7 @@ private fun catalogChipStyle(notebook: Notebook): CatalogChipStyle? {
 }
 
 @Composable
-private fun MoveToNotebookDialog(
+internal fun MoveToNotebookDialog(
     notebooks: List<Notebook>,
     selectedCount: Int,
     onDismiss: () -> Unit,

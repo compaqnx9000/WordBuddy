@@ -98,6 +98,15 @@ CREATE TABLE IF NOT EXISTS user_notebook_orders (
 CREATE INDEX IF NOT EXISTS user_notebook_orders_user_position
     ON user_notebook_orders (user_id, position);
 
+-- Last notebook and word the user was looking at. Restored on the next launch.
+CREATE TABLE IF NOT EXISTS user_study_scenes (
+    user_id BIGINT PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+    notebook_id BIGINT REFERENCES notebooks (id) ON DELETE SET NULL,
+    word_id BIGINT,
+    word_text TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS words (
     id BIGSERIAL PRIMARY KEY,
     notebook_id BIGINT NOT NULL REFERENCES notebooks (id) ON DELETE CASCADE,

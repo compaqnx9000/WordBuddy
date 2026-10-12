@@ -36,6 +36,7 @@ struct CardModeView: View {
     @State private var imageError: String?
     @State private var imageBusyId: Int64?
     @State private var previewWord: String?
+    @State private var favoriteEntry: VocabEntry?
 
     private var deck: [VocabEntry] {
         shuffled ? shuffledDeck : entries
@@ -88,6 +89,9 @@ struct CardModeView: View {
             currentId = entries.isEmpty ? nil : entries[index].id
             syncSeekValue()
             if let id = currentId, let entry = entries.first(where: { $0.id == id }) {
+                if let notebookId = model.activeNotebookId {
+                    model.noteStudyPlace(notebookId: notebookId, wordId: entry.id, wordText: entry.text)
+                }
                 Task { await loadCardAids(entry) }
             }
             prefetchEarlierCards()
@@ -95,6 +99,9 @@ struct CardModeView: View {
         .onChange(of: currentId) { _, id in
             syncSeekValue()
             if let id, let entry = deck.first(where: { $0.id == id }) {
+                if let notebookId = model.activeNotebookId {
+                    model.noteStudyPlace(notebookId: notebookId, wordId: entry.id, wordText: entry.text)
+                }
                 Task { await loadCardAids(entry) }
             }
             guard !seeking else { return }
@@ -163,6 +170,21 @@ struct CardModeView: View {
                 }
             }
         }
+        .overlay {
+            if let entry = favoriteEntry {
+                let targets = model.notebooks.filter { !$0.isSystem }
+                NotebookTargetPickerDialog(
+                    title: "收藏到生词本",
+                    subtitle: targets.isEmpty ? "还没有生词本" : "已选择 1 个词条",
+                    notebooks: targets,
+                    onSelect: { notebook in
+                        favoriteEntry = nil
+                        Task { _ = await model.favoriteCatalogWord(entry, to: notebook.id) }
+                    },
+                    onDismiss: { favoriteEntry = nil }
+                )
+            }
+        }
     }
 
     private var notebookTitle: String {
@@ -221,7 +243,19 @@ struct CardModeView: View {
                         onImage: {
                             imageError = nil
                             imageEntry = entry
-                        }
+                        },
+                        favorited: model.isFavorited(entry.text),
+                        onFavoriteTo: model.activeNotebook?.isSystem == true ? {
+                            guard model.session != nil else {
+                                model.showLogin = true
+                                return
+                            }
+                            guard model.notebooks.contains(where: { !$0.isSystem }) else {
+                                model.banner = "还没有生词本"
+                                return
+                            }
+                            favoriteEntry = entry
+                        } : nil
                     )
                     definitionCard(entry)
                     relatedBlock(entry)
@@ -972,6 +1006,8 @@ private struct CardWordBlock: View {
     var onAccent: (Accent) -> Void
     var onPhonics: () -> Void
     var onImage: () -> Void
+    var favorited: Bool = false
+    var onFavoriteTo: (() -> Void)? = nil
 
     @State private var phonicsOn = false
     @State private var mnemonic: UIImage?
@@ -1012,7 +1048,25 @@ private struct CardWordBlock: View {
                 .padding(3)
                 .background(Theme.surfaceHigh, in: Capsule())
                 .overlay(Capsule().stroke(Theme.outline.opacity(0.4), lineWidth: 1))
+                if let onFavoriteTo {
+                    Spacer(minLength: 8)
+                    Button(action: onFavoriteTo) {
+                        HStack(spacing: 4) {
+                            Image(systemName: favorited ? "star.fill" : "star")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text("收藏到…")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundStyle(Theme.gold)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(Theme.surfaceHigh, in: Capsule())
+                        .overlay(Capsule().stroke(Theme.gold.opacity(0.45), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear { reloadImage() }
         .onChange(of: imageRevision) { _, _ in reloadImage() }

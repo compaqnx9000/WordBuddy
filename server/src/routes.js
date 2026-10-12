@@ -898,6 +898,66 @@ router.post('/me/activity', authRequired, async (req, res) => {
   }
 })
 
+router.get('/me/study-scene', authRequired, async (req, res) => {
+  const result = await query(
+    `SELECT notebook_id, word_id, word_text, updated_at
+     FROM user_study_scenes WHERE user_id = $1`,
+    [req.user.id],
+  )
+  const row = result.rows[0]
+  if (!row?.notebook_id) {
+    res.json({ notebookId: 0, wordId: 0, wordText: '', updatedAt: null })
+    return
+  }
+  res.json({
+    notebookId: Number(row.notebook_id),
+    wordId: Number(row.word_id) || 0,
+    wordText: row.word_text || '',
+    updatedAt: row.updated_at,
+  })
+})
+
+router.put('/me/study-scene', authRequired, async (req, res) => {
+  const notebookId = Number(req.body?.notebookId)
+  const wordId = Number(req.body?.wordId) || 0
+  const wordText = String(req.body?.wordText || '').trim().slice(0, 80)
+  if (!Number.isInteger(notebookId) || notebookId <= 0) {
+    res.status(400).json({ error: '请提供生词本' })
+    return
+  }
+  const notebook = await loadNotebook(notebookId)
+  if (!canReadNotebook(notebook, req.user.id)) {
+    res.status(400).json({ error: '包含无效的生词本' })
+    return
+  }
+  let savedWordId = 0
+  if (Number.isInteger(wordId) && wordId > 0) {
+    const word = await query(
+      'SELECT id FROM words WHERE id = $1 AND notebook_id = $2',
+      [wordId, notebookId],
+    )
+    if (word.rows[0]) savedWordId = wordId
+  }
+  const saved = await query(
+    `INSERT INTO user_study_scenes (user_id, notebook_id, word_id, word_text, updated_at)
+     VALUES ($1, $2, $3, $4, now())
+     ON CONFLICT (user_id) DO UPDATE
+       SET notebook_id = EXCLUDED.notebook_id,
+           word_id = EXCLUDED.word_id,
+           word_text = EXCLUDED.word_text,
+           updated_at = now()
+     RETURNING updated_at`,
+    [req.user.id, notebookId, savedWordId || null, wordText],
+  )
+  res.json({
+    ok: true,
+    notebookId,
+    wordId: savedWordId,
+    wordText,
+    updatedAt: saved.rows[0].updated_at,
+  })
+})
+
 router.get('/me', authRequired, async (req, res) => {
   const vocabNotebookId = await ensureUserNotebook(req.user.id)
   await syncUserLevel(req.user.id)
@@ -1993,6 +2053,53 @@ router.get('/notebooks/:id/heads', optionalAuth, async (req, res) => {
     }
   })
   res.json({ items, total: items.length, index: letterIndex })
+})
+
+/** Absolute 0-based index of a word in notebook order, so clients can reopen on it. */
+router.get('/notebooks/:id/position', optionalAuth, async (req, res) => {
+  const notebookId = Number(req.params.id)
+  const notebook = await loadNotebook(notebookId)
+  if (!canReadNotebook(notebook, req.user?.id)) {
+    res.status(notebook?.kind === 'catalog' ? 404 : 401).json({
+      error: notebook?.kind === 'catalog' ? '词本不存在' : '未登录',
+    })
+    return
+  }
+  const wordId = Number(req.query.wordId)
+  const text = String(req.query.text || '').trim()
+  let row = null
+  if (Number.isInteger(wordId) && wordId > 0) {
+    const found = await query(
+      'SELECT id, word, sort_order FROM words WHERE notebook_id = $1 AND id = $2',
+      [notebookId, wordId],
+    )
+    row = found.rows[0] || null
+  }
+  if (!row && text) {
+    const found = await query(
+      `SELECT id, word, sort_order FROM words
+       WHERE notebook_id = $1 AND lower(word) = lower($2)
+       ORDER BY sort_order ASC, id ASC
+       LIMIT 1`,
+      [notebookId, text],
+    )
+    row = found.rows[0] || null
+  }
+  if (!row) {
+    res.json({ found: false })
+    return
+  }
+  const pos = await query(
+    `SELECT count(*)::int AS n FROM words
+     WHERE notebook_id = $1 AND (sort_order, id) < ($2, $3)`,
+    [notebookId, row.sort_order, row.id],
+  )
+  res.json({
+    found: true,
+    index: pos.rows[0].n,
+    wordId: Number(row.id),
+    word: row.word,
+  })
 })
 
 router.get('/notebooks/:id/words', optionalAuth, async (req, res) => {

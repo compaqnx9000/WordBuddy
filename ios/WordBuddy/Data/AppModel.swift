@@ -32,6 +32,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var listWindowStart = 0
     /// Latest alphabet seek scroll target (word id).
     @Published var pendingScrollWordId: Int64?
+    /// Word to open in card mode when the user has not tapped a row this visit.
+    var studyWordId: Int64?
+    private var pendingScene: StudyScene?
+    private var restoringScene = false
+    private var sceneSaveTask: Task<Void, Never>?
     /// Bumps on each window jump so a slower response cannot overwrite a newer seek.
     private var windowSeekGeneration = 0
     /// Prepending the page above a letter jump. A newer seek invalidates it.
@@ -92,6 +97,11 @@ final class AppModel: ObservableObject {
         session = SessionStore.load()
         if let session {
             AccountStore.upsert(session)
+        }
+        let sceneUser = session?.userId ?? 0
+        if let scene = SettingsStore.loadStudyScene(), scene.userId == sceneUser {
+            pendingScene = scene
+            if scene.wordId > 0 { studyWordId = scene.wordId }
         }
         accounts = AccountStore.list()
     }
@@ -249,7 +259,18 @@ final class AppModel: ObservableObject {
     }
 
     func enter(_ session: UserSession) async {
+        let previous = self.session?.userId
         self.session = session
+        if previous != session.userId {
+            activeNotebookId = nil
+            let local = SettingsStore.loadStudyScene()
+            pendingScene = if local?.userId == session.userId || local?.userId == 0 {
+                local
+            } else {
+                nil
+            }
+            studyWordId = pendingScene?.wordId
+        }
         SessionStore.save(session)
         biometricUnlocked = true
         showLogin = false
@@ -1203,17 +1224,25 @@ final class AppModel: ObservableObject {
             notebookOrderCustom = page.customOrder
             invalidateIeltsOrderCacheIfNeeded()
             let items = page.items
+            if activeNotebookId == nil {
+                await adoptRemoteScene(items: items)
+            }
             let preferred = session?.vocabNotebookId ?? 0
             if let current = activeNotebookId, items.contains(where: { $0.id == current }) {
                 // keep current selection
+            } else if let scene = pendingScene, items.contains(where: { $0.id == scene.notebookId }) {
+                activeNotebookId = scene.notebookId
             } else if preferred > 0, items.contains(where: { $0.id == preferred }) {
                 activeNotebookId = preferred
+                pendingScene = nil
             } else {
                 activeNotebookId = items.first { !$0.isSystem }?.id ?? items.first?.id
+                pendingScene = nil
             }
             wordsError = nil
             ensureDefaultNotebook()
             await loadWords()
+            await restoreStudyWordIfNeeded()
             if session != nil {
                 await refreshFavoritedIndex()
             } else {
@@ -1528,12 +1557,147 @@ final class AppModel: ObservableObject {
 
     func selectNotebook(_ id: Int64) async {
         guard activeNotebookId != id else { return }
+        let keepScene = pendingScene?.notebookId == id
+        if !keepScene { pendingScene = nil }
         activeNotebookId = id
         alphabetLetterIndex = [:]
         listWindowStart = 0
         pendingScrollWordId = nil
         await loadWords()
         await refreshLetterIndex()
+        if keepScene {
+            await restoreStudyWordIfNeeded()
+        } else {
+            noteStudyPlace(notebookId: id, wordId: 0, wordText: "")
+        }
+    }
+
+    func noteStudyPlace(notebookId: Int64, wordId: Int64, wordText: String, force: Bool = false) {
+        guard notebookId > 0 else { return }
+        if !force {
+            if restoringScene { return }
+            if let pending = pendingScene, pending.notebookId == notebookId, wordId != pending.wordId {
+                return
+            }
+        }
+        let text = String(wordText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        if wordId <= 0,
+           let existing = SettingsStore.loadStudyScene(),
+           existing.notebookId == notebookId,
+           existing.wordId > 0 {
+            return
+        }
+        if wordId > 0 { studyWordId = wordId }
+        let scene = StudyScene(
+            userId: session?.userId ?? 0,
+            notebookId: notebookId,
+            wordId: max(0, wordId),
+            wordText: text,
+            updatedAt: Date().timeIntervalSince1970 * 1000
+        )
+        SettingsStore.saveStudyScene(scene)
+        scheduleScenePush(scene)
+    }
+
+    func flushStudyScene() async {
+        sceneSaveTask?.cancel()
+        guard let session, let scene = SettingsStore.loadStudyScene(), scene.userId == session.userId else { return }
+        await pushScene(scene, token: session.token)
+    }
+
+    private func adoptRemoteScene(items: [Notebook]) async {
+        let userId = session?.userId ?? 0
+        var local = pendingScene
+        if local == nil, let stored = SettingsStore.loadStudyScene(), stored.userId == userId {
+            local = stored
+        }
+        var chosen = local
+        if let session {
+            if let remote = try? await api.fetchStudyScene(token: session.token) {
+                var serverScene = remote
+                serverScene.userId = session.userId
+                if let local, local.updatedAt > serverScene.updatedAt {
+                    chosen = local
+                    scheduleScenePush(local)
+                } else {
+                    chosen = serverScene
+                    SettingsStore.saveStudyScene(serverScene)
+                }
+            }
+        }
+        if var scene = chosen, scene.userId == 0, let session {
+            scene.userId = session.userId
+            chosen = scene
+            SettingsStore.saveStudyScene(scene)
+        }
+        guard let scene = chosen, items.contains(where: { $0.id == scene.notebookId }) else {
+            if chosen != nil { pendingScene = nil }
+            return
+        }
+        pendingScene = scene
+        if scene.wordId > 0 { studyWordId = scene.wordId }
+    }
+
+    private func scheduleScenePush(_ scene: StudyScene) {
+        sceneSaveTask?.cancel()
+        guard let token = session?.token else { return }
+        sceneSaveTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.pushScene(scene, token: token)
+        }
+    }
+
+    private func pushScene(_ scene: StudyScene, token: String) async {
+        guard let saved = try? await api.saveStudyScene(token: token, scene: scene) else { return }
+        guard var current = SettingsStore.loadStudyScene(),
+              current.userId == scene.userId,
+              current.notebookId == scene.notebookId,
+              current.wordId == scene.wordId,
+              current.wordText == scene.wordText else { return }
+        current.updatedAt = saved.updatedAt
+        SettingsStore.saveStudyScene(current)
+    }
+
+    private func restoreStudyWordIfNeeded() async {
+        guard let scene = pendingScene, scene.notebookId == activeNotebookId else { return }
+        guard scene.wordId > 0 || !scene.wordText.isEmpty else {
+            pendingScene = nil
+            return
+        }
+        restoringScene = true
+        defer { restoringScene = false }
+        if let match = words.first(where: { word in
+            (scene.wordId > 0 && word.id == scene.wordId) ||
+                (!scene.wordText.isEmpty && word.text.caseInsensitiveCompare(scene.wordText) == .orderedSame)
+        }) {
+            pendingScrollWordId = match.id
+            pendingScene = nil
+            restoringScene = false
+            noteStudyPlace(notebookId: scene.notebookId, wordId: match.id, wordText: match.text, force: true)
+            return
+        }
+        do {
+            if let pos = try await api.locateWord(
+                token: session?.token,
+                notebookId: scene.notebookId,
+                wordId: scene.wordId,
+                text: scene.wordText
+            ) {
+                await loadSeekWindow(notebookId: scene.notebookId, token: session?.token, fromIndex: pos.index)
+                guard activeNotebookId == scene.notebookId else { return }
+                pendingScrollWordId = pos.wordId
+                pendingScene = nil
+                restoringScene = false
+                noteStudyPlace(notebookId: scene.notebookId, wordId: pos.wordId, wordText: pos.word, force: true)
+                return
+            }
+            pendingScene = nil
+            restoringScene = false
+            noteStudyPlace(notebookId: scene.notebookId, wordId: 0, wordText: "", force: true)
+        } catch {
+            pendingScene = nil
+        }
     }
 
     func loadWords() async {

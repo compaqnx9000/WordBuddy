@@ -38,6 +38,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.ArrowBackIosNew
 import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.ChevronRight
@@ -98,6 +100,7 @@ import com.hotgis.wordbuddy.data.AppTheme
 import com.hotgis.wordbuddy.data.Definition
 import com.hotgis.wordbuddy.data.ExampleSentence
 import com.hotgis.wordbuddy.data.NaturalPhonics
+import com.hotgis.wordbuddy.data.Notebook
 import com.hotgis.wordbuddy.data.VocabEntry
 import com.hotgis.wordbuddy.data.WordHomophone
 import com.hotgis.wordbuddy.data.HomophoneLikersPage
@@ -110,6 +113,7 @@ import com.hotgis.wordbuddy.ui.components.highlightHeadword
 import com.hotgis.wordbuddy.ui.components.rememberImagePickerLauncher
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
+import com.hotgis.wordbuddy.ui.list.MoveToNotebookDialog
 import com.hotgis.wordbuddy.ui.lookup.LocalStellar
 import com.hotgis.wordbuddy.ui.lookup.Stellar
 import com.hotgis.wordbuddy.ui.lookup.StellarDefinitionRow
@@ -121,10 +125,9 @@ import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
 
 @Composable
 fun CardModeScreen(
-    entries: List<VocabEntry>,
+    /** Entry shown at a playback (pager) position, or null while that row is not loaded. */
+    entryAt: (Int) -> VocabEntry?,
     currentEntry: VocabEntry?,
-    prevEntry: VocabEntry? = null,
-    nextEntry: VocabEntry? = null,
     entryCount: Int,
     notebookName: String,
     index: Int,
@@ -165,6 +168,11 @@ fun CardModeScreen(
     onToggleHomophoneLike: (Long) -> Unit = {},
     onLoadHomophoneLikers: (suspend (id: Long, offset: Int) -> HomophoneLikersPage?)? = null,
     onNearEnd: () -> Unit = {},
+    /** System catalogs can save the current word into a personal notebook. */
+    enableFavoriteTo: Boolean = false,
+    favoriteNotebooks: List<Notebook> = emptyList(),
+    onPrepareFavorite: () -> Boolean = { true },
+    onFavoriteToNotebook: (VocabEntry, Long, (Boolean) -> Unit) -> Unit = { _, _, done -> done(false) },
     /** When false (e.g. foldable list+card split), hide shuffle/play/seek chrome. */
     showPlaybackControls: Boolean = true,
     /** When false, omit the local card top bar (parent draws a shared split header). */
@@ -175,6 +183,7 @@ fun CardModeScreen(
     var showImageDialog by rememberSaveable { mutableStateOf(false) }
     var imageTargetId by rememberSaveable { mutableStateOf<Long?>(null) }
     var meaningEditEntry by remember { mutableStateOf<VocabEntry?>(null) }
+    var favoriteEntry by remember { mutableStateOf<VocabEntry?>(null) }
     val launchGallery = rememberImagePickerLauncher(
         onImagePicked = { uri ->
             // 若后台恢复时 imageTargetId 偶然丢失，以当前正在展示的词条 currentEntry?.id 作为双重保底
@@ -187,12 +196,16 @@ fun CardModeScreen(
     )
     val total = entryCount
     val safeIndex = if (total == 0) 0 else index.coerceIn(0, total - 1)
-    val usePager = total in 1..80
+    // One pager over the whole deck. Pager is lazy, so a 4,000-word catalog still composes
+    // only the pages near the finger, and a fast swipe never runs into a window edge.
     val pagerState = rememberPagerState(
-        initialPage = if (usePager) safeIndex else 0,
-        pageCount = { if (usePager) total.coerceAtLeast(1) else 1 },
+        initialPage = safeIndex,
+        pageCount = { total.coerceAtLeast(1) },
     )
     val scope = rememberCoroutineScope()
+    // Page the user last landed on. The view model echoes it back as [index]; skip that round trip
+    // so a programmatic scroll never fights the next swipe.
+    var reportedPage by remember { mutableIntStateOf(-1) }
 
     LaunchedEffect(currentEntry?.id, currentEntry?.text) {
         val entry = currentEntry ?: return@LaunchedEffect
@@ -200,8 +213,11 @@ fun CardModeScreen(
         onLoadUserNotes(entry.text, entry.definitions)
     }
 
-    LaunchedEffect(safeIndex, total, usePager) {
-        if (!usePager || total == 0) return@LaunchedEffect
+    LaunchedEffect(safeIndex, total) {
+        if (total == 0) return@LaunchedEffect
+        if (safeIndex == reportedPage) return@LaunchedEffect
+        // The finger owns the pager while a drag or fling is running; settle reports back later.
+        if (pagerState.isScrollInProgress) return@LaunchedEffect
         if (pagerState.currentPage != safeIndex) {
             if (kotlin.math.abs(pagerState.currentPage - safeIndex) > 1) {
                 pagerState.scrollToPage(safeIndex)
@@ -211,11 +227,12 @@ fun CardModeScreen(
         }
     }
 
-    LaunchedEffect(pagerState, total, usePager) {
-        if (!usePager || total == 0) return@LaunchedEffect
+    LaunchedEffect(pagerState, total) {
+        if (total == 0) return@LaunchedEffect
         snapshotFlow { pagerState.settledPage }
             .distinctUntilChanged()
             .collect { page ->
+                reportedPage = page
                 onPageSelected(page)
                 if (page >= total - 4) onNearEnd()
             }
@@ -223,7 +240,7 @@ fun CardModeScreen(
 
     fun goPrev() {
         if (total == 0) return
-        if (usePager && pagerState.currentPage > 0) {
+        if (pagerState.currentPage > 0) {
             scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
         } else {
             onPrev()
@@ -232,7 +249,7 @@ fun CardModeScreen(
 
     fun goNext() {
         if (total == 0) return
-        if (usePager && pagerState.currentPage < total - 1) {
+        if (pagerState.currentPage < total - 1) {
             scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
         } else {
             onNext()
@@ -271,63 +288,21 @@ fun CardModeScreen(
             }
         } else {
             var lockWordPager by remember { mutableStateOf(false) }
-            if (usePager) {
-                HorizontalPager(
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                beyondViewportPageCount = 1,
+                userScrollEnabled = !lockWordPager,
+                key = { page -> entryAt(page)?.id ?: page },
+                flingBehavior = PagerDefaults.flingBehavior(
                     state = pagerState,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    beyondViewportPageCount = 1,
-                    userScrollEnabled = !lockWordPager,
-                    key = { page -> entries.getOrNull(page)?.id ?: page },
-                    flingBehavior = PagerDefaults.flingBehavior(
-                        state = pagerState,
-                        snapPositionalThreshold = 0.45f,
-                    ),
-                ) { page ->
-                    CardPage(
-                        entry = entries[page],
-                        imageBusy = imageBusy && entries[page].id == imageTargetId,
-                        accent = accent,
-                        onSpeakWord = onSpeak,
-                        onSpeakAccent = onSpeakAccent,
-                        onOpenImageChooser = {
-                            imageTargetId = entries[page].id
-                            showImageDialog = true
-                        },
-                        onEditMeaning = { meaningEditEntry = entries[page] },
-                        onSpeakText = onSpeakText,
-                        onSpeakTextSlow = onSpeakTextSlow,
-                        onSpeakSyllables = onSpeakSyllables,
-                        onToggleRelatedStar = onToggleRelatedStar,
-                        isRelatedWordSaved = isRelatedWordSaved,
-                        onExampleScrollChange = { scrolling -> lockWordPager = scrolling },
-                        homophones = if (entries[page].text.equals(currentEntry?.text, ignoreCase = true)) {
-                            homophones
-                        } else {
-                            emptyList()
-                        },
-                        userNotes = if (entries[page].text.equals(currentEntry?.text, ignoreCase = true)) {
-                            userNotes
-                        } else {
-                            emptyList()
-                        },
-                        onToggleHomophoneLike = onToggleHomophoneLike,
-                        onLoadHomophoneLikers = onLoadHomophoneLikers,
-                    )
-                }
-            } else {
-                LargeDeckSwipePager(
-                    current = currentEntry,
-                    prev = prevEntry,
-                    next = nextEntry,
-                    lockWordPager = lockWordPager,
-                    onPrev = onPrev,
-                    onNext = onNext,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                ) { entry ->
+                    snapPositionalThreshold = 0.45f,
+                ),
+            ) { page ->
+                val entry = entryAt(page)
+                if (entry != null) {
                     CardPage(
                         entry = entry,
                         imageBusy = imageBusy && entry.id == imageTargetId,
@@ -344,6 +319,14 @@ fun CardModeScreen(
                         onSpeakSyllables = onSpeakSyllables,
                         onToggleRelatedStar = onToggleRelatedStar,
                         isRelatedWordSaved = isRelatedWordSaved,
+                        onFavoriteTo = if (enableFavoriteTo) {
+                            {
+                                if (onPrepareFavorite()) favoriteEntry = entry
+                            }
+                        } else {
+                            null
+                        },
+                        favorited = enableFavoriteTo && isRelatedWordSaved(entry.text),
                         onExampleScrollChange = { scrolling -> lockWordPager = scrolling },
                         homophones = if (entry.text.equals(currentEntry?.text, ignoreCase = true)) {
                             homophones
@@ -383,9 +366,23 @@ fun CardModeScreen(
         }
     }
 
+    favoriteEntry?.let { target ->
+        MoveToNotebookDialog(
+            notebooks = favoriteNotebooks,
+            selectedCount = 1,
+            title = "收藏到生词本",
+            emptyText = "还没有生词本",
+            onDismiss = { favoriteEntry = null },
+            onSelect = { notebookId ->
+                favoriteEntry = null
+                onFavoriteToNotebook(target, notebookId) { }
+            },
+        )
+    }
+
     if (showImageDialog) {
         val target = currentEntry?.takeIf { it.id == imageTargetId }
-            ?: entries.firstOrNull { it.id == imageTargetId }
+            ?: entryAt(pagerState.currentPage)?.takeIf { it.id == imageTargetId }
         ImageSourceDialog(
             definitions = target?.definitions.orEmpty(),
             busy = imageBusy,
@@ -446,6 +443,8 @@ private fun CardPage(
     onSpeakSyllables: (List<String>) -> Unit,
     onToggleRelatedStar: (VocabEntry) -> Unit,
     isRelatedWordSaved: (String) -> Boolean,
+    onFavoriteTo: (() -> Unit)? = null,
+    favorited: Boolean = false,
     onExampleScrollChange: (Boolean) -> Unit,
     homophones: List<WordHomophone> = emptyList(),
     userNotes: List<Definition> = emptyList(),
@@ -480,6 +479,8 @@ private fun CardPage(
                 phonicsOn = true
                 onSpeakSyllables(phonics.syllables)
             },
+            favorited = favorited,
+            onFavoriteTo = onFavoriteTo,
         )
         CardDefinitionCard(
             definitions = entry.definitions,
@@ -527,6 +528,8 @@ private fun CardWordHeader(
     onOpenImageChooser: () -> Unit,
     onNormalMode: () -> Unit,
     onPhonicsMode: () -> Unit,
+    favorited: Boolean = false,
+    onFavoriteTo: (() -> Unit)? = null,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.sdp())) {
         Row(
@@ -579,6 +582,7 @@ private fun CardWordHeader(
             )
         }
         Row(
+            Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.sdp()),
         ) {
@@ -607,7 +611,39 @@ private fun CardWordHeader(
                 CardAccentChip("US", selected = accent == Accent.US) { onSpeakAccent(false) }
                 CardAccentChip("UK", selected = accent == Accent.UK) { onSpeakAccent(true) }
             }
+            if (onFavoriteTo != null) {
+                Spacer(Modifier.weight(1f))
+                FavoriteToChip(saved = favorited, onClick = onFavoriteTo)
+            }
         }
+    }
+}
+
+@Composable
+private fun FavoriteToChip(saved: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(20.sdp()))
+            .background(Stellar.SurfaceHigh)
+            .border(1.dp, Stellar.Gold.copy(alpha = 0.45f), RoundedCornerShape(20.sdp()))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.sdp(), vertical = 7.sdp()),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.sdp()),
+    ) {
+        Icon(
+            imageVector = if (saved) Icons.Filled.Star else Icons.Outlined.StarBorder,
+            contentDescription = null,
+            tint = Stellar.Gold,
+            modifier = Modifier.size(16.sdp()),
+        )
+        Text(
+            "收藏到…",
+            color = Stellar.Gold,
+            fontSize = 12.ssp(),
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
     }
 }
 
@@ -1061,77 +1097,6 @@ private fun ExampleActionCircle(
         contentAlignment = Alignment.Center,
     ) {
         content()
-    }
-}
-
-private data class VirtualCardWindow(
-    val entries: List<VocabEntry>,
-    val centerPage: Int,
-)
-
-private fun virtualCardWindow(
-    current: VocabEntry,
-    prev: VocabEntry?,
-    next: VocabEntry?,
-): VirtualCardWindow = when {
-    prev != null && next != null -> VirtualCardWindow(listOf(prev, current, next), 1)
-    prev != null -> VirtualCardWindow(listOf(prev, current), 1)
-    next != null -> VirtualCardWindow(listOf(current, next), 0)
-    else -> VirtualCardWindow(listOf(current), 0)
-}
-
-/** Swipe carousel for large decks: only prev / current / next pages are composed. */
-@Composable
-private fun LargeDeckSwipePager(
-    current: VocabEntry,
-    prev: VocabEntry?,
-    next: VocabEntry?,
-    lockWordPager: Boolean,
-    onPrev: () -> Unit,
-    onNext: () -> Unit,
-    modifier: Modifier = Modifier,
-    pageContent: @Composable (VocabEntry) -> Unit,
-) {
-    // 【避坑点：大词库卡片缓存 key 必须包含完整 current 实体，不能仅写 current.id】
-    // 若仅依赖 current.id，在选图后词条 ID 未变而 imageBlob 变更时，Compose 不会重新计算 window，导致选图后无法即刻刷新出记忆图。
-    val window = remember(current, prev, next) {
-        virtualCardWindow(current, prev, next)
-    }
-    val pagerState = rememberPagerState(
-        initialPage = window.centerPage,
-        pageCount = { window.entries.size.coerceAtLeast(1) },
-    )
-
-    LaunchedEffect(current.id, window.centerPage, window.entries.size) {
-        if (!pagerState.isScrollInProgress && pagerState.currentPage != window.centerPage) {
-            pagerState.scrollToPage(window.centerPage)
-        }
-    }
-
-    LaunchedEffect(pagerState, window.centerPage) {
-        snapshotFlow { pagerState.settledPage }
-            .distinctUntilChanged()
-            .collect { page ->
-                if (page == window.centerPage) return@collect
-                when {
-                    page < window.centerPage -> onPrev()
-                    page > window.centerPage -> onNext()
-                }
-            }
-    }
-
-    HorizontalPager(
-        state = pagerState,
-        modifier = modifier,
-        beyondViewportPageCount = 1,
-        userScrollEnabled = !lockWordPager && window.entries.size > 1,
-        key = { page -> window.entries[page].id },
-        flingBehavior = PagerDefaults.flingBehavior(
-            state = pagerState,
-            snapPositionalThreshold = 0.45f,
-        ),
-    ) { page ->
-        pageContent(window.entries[page])
     }
 }
 

@@ -130,6 +130,27 @@ enum SettingsStore {
         get { Int64(defaults.integer(forKey: "hotwords_default_notebook_id")) }
         set { defaults.set(Int(newValue), forKey: "hotwords_default_notebook_id") }
     }
+
+    private static let sceneKey = "hotwords_study_scene"
+
+    static func loadStudyScene() -> StudyScene? {
+        guard let data = defaults.data(forKey: sceneKey) else { return nil }
+        return try? JSONDecoder().decode(StudyScene.self, from: data)
+    }
+
+    static func saveStudyScene(_ scene: StudyScene) {
+        guard let data = try? JSONEncoder().encode(scene) else { return }
+        defaults.set(data, forKey: sceneKey)
+        defaults.synchronize()
+    }
+}
+
+struct StudyScene: Equatable, Codable {
+    var userId: Int64
+    var notebookId: Int64
+    var wordId: Int64
+    var wordText: String
+    var updatedAt: TimeInterval
 }
 
 struct RememberedAccount: Identifiable, Equatable {

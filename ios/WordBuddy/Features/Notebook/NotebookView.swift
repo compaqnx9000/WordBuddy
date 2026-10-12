@@ -38,6 +38,9 @@ struct NotebookView: View {
     @State private var nearListEnd = false
     /// Scroll content height. A change while still near the end loads the next page after the last one lands.
     @State private var listContentHeight = 0
+    @State private var visibleWordIds: Set<Int64> = []
+    @State private var sceneNoteTask: Task<Void, Never>?
+    @State private var lastTopWord: VocabEntry?
 
     /// Same fixed row height for every notebook (user + catalog), matching Android 3-line meaning block.
     fileprivate static let wordRowHeight: CGFloat = 88
@@ -275,6 +278,11 @@ struct NotebookView: View {
         }
         .task(id: model.session?.userId) {
             await model.loadNotebooks()
+        }
+        .onDisappear {
+            sceneNoteTask?.cancel()
+            guard let notebookId = model.activeNotebookId, let top = lastTopWord else { return }
+            model.noteStudyPlace(notebookId: notebookId, wordId: top.id, wordText: top.text, force: true)
         }
     }
 
@@ -526,6 +534,16 @@ struct NotebookView: View {
                                     }
                                 }
                                 .id(word.id)
+                                .onAppear {
+                                    visibleWordIds.insert(word.id)
+                                    if let top = visibleWords.first(where: { visibleWordIds.contains($0.id) }) {
+                                        lastTopWord = top
+                                    }
+                                    scheduleSceneNote()
+                                }
+                                .onDisappear {
+                                    visibleWordIds.remove(word.id)
+                                }
                                 .onAppear {
                                     if #unavailable(iOS 18.0) {
                                         let words = visibleWords
@@ -978,8 +996,20 @@ struct NotebookView: View {
     private func openCardsAtLastTouch() {
         if let id = lastTouchedId, let index = visibleWords.firstIndex(where: { $0.id == id }) {
             openCards(at: index)
+        } else if let id = model.studyWordId, let index = visibleWords.firstIndex(where: { $0.id == id }) {
+            openCards(at: index)
         } else {
             openCards(at: 0)
+        }
+    }
+
+    private func scheduleSceneNote() {
+        sceneNoteTask?.cancel()
+        sceneNoteTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled, let notebookId = model.activeNotebookId else { return }
+            guard let top = visibleWords.first(where: { visibleWordIds.contains($0.id) }) else { return }
+            model.noteStudyPlace(notebookId: notebookId, wordId: top.id, wordText: top.text)
         }
     }
 
@@ -1100,7 +1130,7 @@ struct NotebookView: View {
     }
 }
 
-private struct NotebookTargetPickerDialog: View {
+struct NotebookTargetPickerDialog: View {
     var title: String
     var subtitle: String
     var notebooks: [Notebook]

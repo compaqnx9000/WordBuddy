@@ -23,6 +23,7 @@ import com.hotgis.wordbuddy.data.Notebook
 import com.hotgis.wordbuddy.data.SortMode
 import com.hotgis.wordbuddy.data.StudySettings
 import com.hotgis.wordbuddy.data.SettingsStore
+import com.hotgis.wordbuddy.data.StudyScene
 import com.hotgis.wordbuddy.data.CheckInStore
 import com.hotgis.wordbuddy.data.CheckInState
 import com.hotgis.wordbuddy.data.CheckInResult
@@ -239,14 +240,32 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private var studyDeckFiltered: List<VocabEntry>? = null
     private var studyDeckOrder: IntArray? = null
     private var studyDeckCache: List<VocabEntry> = emptyList()
+    /** Scene to reopen after the notebook list is ready. Cleared once applied. */
+    private var pendingScene: StudyScene? = null
+    private var restoringScene = false
+    private var sceneSaveJob: Job? = null
+    private var ensureWordJob: Job? = null
+    /** Ignore the list's opening row until the saved word has been scrolled into place. */
+    private var listAnchorHeld = false
+    /** Word the open notebook list should put at the top. 0 means the start of the book. */
+    private val _listAnchorWordId = MutableStateFlow(0L)
+    val listAnchorWordId: StateFlow<Long> = _listAnchorWordId.asStateFlow()
 
     init {
         val loaded = settingsStore.loadSettings()
-        var activeId = settingsStore.loadActiveNotebookId()
+        val session = _session.value
+        val sceneUser = session?.userId ?: 0L
+        val storedScene = settingsStore.loadStudyScene()
+            ?.takeIf { settingsStore.loadStudySceneUserId() == sceneUser }
+        pendingScene = storedScene
+        _listAnchorWordId.value = storedScene?.wordId ?: 0L
+        listAnchorHeld = (storedScene?.wordId ?: 0L) > 0L
+        var activeId = storedScene?.notebookId?.takeIf { it > 0L }
+            ?: settingsStore.loadActiveNotebookId()
         val notebookIds = repo.notebooks.value.map { it.id }.toSet()
-        if (activeId !in notebookIds) {
-            activeId = Notebook.DEFAULT_ID
-            settingsStore.saveActiveNotebookId(activeId)
+        if (notebookIds.isNotEmpty() && activeId !in notebookIds) {
+            activeId = session?.vocabNotebookId?.takeIf { it in notebookIds }
+                ?: notebookIds.first()
         }
         var settings = loaded
         val userBooks = repo.notebooks.value.filter { !it.isSystem }
@@ -256,10 +275,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             settings = settings.copy(defaultNotebookId = fallbackId)
             settingsStore.saveSettings(settings)
         }
-        val session = _session.value
-        val startNotebook = session?.vocabNotebookId?.takeIf { it > 0L }
-            ?: activeId.takeIf { it > 0L }
-            ?: Notebook.DEFAULT_ID
+        val startNotebook = activeId.takeIf { it > 0L } ?: Notebook.DEFAULT_ID
         _ui.value = VocabUiState(
             settings = settings,
             activeNotebookId = startNotebook,
@@ -360,7 +376,9 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             .onSuccess { page ->
                 publishMergedNotebooks(page.items, catalogs, customOrder = page.customOrder)
                 val merged = repo.notebooks.value
-                val preferred = merged.firstOrNull { it.id == _ui.value.activeNotebookId }
+                adoptRemoteScene(current.userId, merged.map { it.id }.toSet())
+                val preferred = merged.firstOrNull { it.id == pendingScene?.notebookId }
+                    ?: merged.firstOrNull { it.id == _ui.value.activeNotebookId }
                     ?: merged.firstOrNull { it.id == current.vocabNotebookId }
                     ?: merged.firstOrNull()
                 if (preferred != null) {
@@ -387,9 +405,14 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun bootstrapGuestCatalogs() {
         val server = runCatching { api.listCatalogs() }.getOrDefault(emptyList())
         publishMergedNotebooks(repo.notebooks.value, server, customOrder = false)
-        val preferred = repo.notebooks.value.firstOrNull { it.id == _ui.value.activeNotebookId }
-            ?: repo.notebooks.value.firstOrNull { it.slug == Notebook.ZHONGKAO_SLUG }
-            ?: repo.notebooks.value.firstOrNull()
+        val books = repo.notebooks.value
+        if (pendingScene?.notebookId?.let { id -> books.none { it.id == id } } == true) {
+            pendingScene = null
+        }
+        val preferred = books.firstOrNull { it.id == pendingScene?.notebookId }
+            ?: books.firstOrNull { it.id == _ui.value.activeNotebookId }
+            ?: books.firstOrNull { it.slug == Notebook.ZHONGKAO_SLUG }
+            ?: books.firstOrNull()
         if (preferred != null) {
             selectNotebook(preferred.id)
         }
@@ -986,6 +1009,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         _ui.update { it.copy(cardIndex = index, shuffledOrder = order, playing = false) }
         studyDeckFiltered = null
         val word = filtered.getOrNull(natural) ?: return
+        rememberScene(word.notebookId, word.id, word.text)
         if (_ui.value.settings.speakOnPageChange) speak(word)
     }
 
@@ -1032,6 +1056,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         if (speak && _ui.value.settings.speakOnPageChange && !_ui.value.playing) {
             speakAfterPageSettle(word)
         }
+        rememberScene(_ui.value.activeNotebookId, word.id, word.text)
     }
 
     private fun speakAfterPageSettle(entry: VocabEntry) {
@@ -1347,26 +1372,37 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onNotebookTabOpened() {
+        val saved = settingsStore.loadStudyScene()
+        if (saved != null && saved.wordId > 0L) {
+            listAnchorHeld = true
+            pendingScene = saved
+            _listAnchorWordId.value = saved.wordId
+        }
         viewModelScope.launch {
             syncPublishedCatalogs()
-            val id = _ui.value.activeNotebookId.takeIf { it != 0L }
+            val scene = settingsStore.loadStudyScene()
+            val id = scene?.notebookId?.takeIf { bookId ->
+                repo.notebooks.value.any { it.id == bookId }
+            } ?: _ui.value.activeNotebookId.takeIf { it != 0L }
                 ?: _session.value?.vocabNotebookId?.takeIf { it > 0L }
                 ?: repo.notebooks.value.firstOrNull()?.id
                 ?: return@launch
-            val isSystem = notebooks.value.firstOrNull { it.id == id }?.isSystem == true
-            withContext(Dispatchers.IO) { repo.openCachedNotebook(id) }
-            refreshAlphabetLetterIndex(id)
-            if (isSystem) {
-                loadHeads(id)
-                if (id !in headsReady) {
-                    if (repo.items.value.isEmpty()) {
-                        refreshNotebook(id, reset = true, prefetchAll = true)
-                    } else if (repo.hasMore) {
-                        refreshNotebook(id, reset = false, prefetchAll = true)
-                    }
+            if (scene != null && scene.notebookId == id &&
+                (scene.wordId > 0L || scene.wordText.isNotBlank())
+            ) {
+                pendingScene = scene
+                if (scene.wordId > 0L) {
+                    listAnchorHeld = true
+                    _listAnchorWordId.value = scene.wordId
                 }
-            } else if (repo.items.value.isEmpty()) {
-                refreshNotebook(id, reset = true, prefetchAll = true)
+            }
+            val showingThis = repo.items.value.isNotEmpty() &&
+                repo.items.value.firstOrNull()?.notebookId == id
+            if (_ui.value.activeNotebookId != id || !showingThis) {
+                selectNotebook(id)
+            } else {
+                refreshAlphabetLetterIndex(id)
+                restoreSceneWordIfPending(id)
             }
         }
     }
@@ -1384,21 +1420,216 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         _alphabetLetterIndex.value = heads.letterIndex
     }
 
-    fun selectNotebook(id: Long) {
-        if (id == 0L) return
-        val isSystem = notebooks.value.firstOrNull { it.id == id }?.isSystem == true
-        if (id == _ui.value.activeNotebookId && repo.items.value.isNotEmpty()) {
-            applyCachedLetterIndex(id)
-            if (_alphabetLetterIndex.value.isEmpty()) refreshAlphabetLetterIndex(id)
-            viewModelScope.launch {
-                if (isSystem) {
-                    if (!loadHeads(id) && repo.hasMore) {
-                        refreshNotebook(id, reset = false, prefetchAll = true)
+    private suspend fun adoptRemoteScene(userId: Long, notebookIds: Set<Long>) {
+        val remote = runCatching { api.fetchStudyScene(token()) }.getOrNull()
+        val local = pendingScene
+        val chosen = when {
+            remote == null -> local
+            local == null -> remote
+            remote.updatedAtMillis >= local.updatedAtMillis -> remote
+            else -> local
+        }
+        if (chosen == null || chosen.notebookId !in notebookIds) {
+            if (local?.notebookId != null && local.notebookId !in notebookIds) pendingScene = null
+            return
+        }
+        pendingScene = chosen
+        settingsStore.saveStudyScene(chosen, userId)
+        if (local != null && local.updatedAtMillis > (remote?.updatedAtMillis ?: 0L)) {
+            pushScene(token(), local)
+        }
+    }
+
+    private fun rememberScene(notebookId: Long, wordId: Long, wordText: String) {
+        if (restoringScene || notebookId <= 0L) return
+        if (wordId <= 0L) {
+            val existing = settingsStore.loadStudyScene()
+            if (existing?.notebookId == notebookId && existing.wordId > 0L) return
+            _listAnchorWordId.value = 0L
+        } else {
+            _listAnchorWordId.value = wordId
+        }
+        val scene = StudyScene(
+            notebookId = notebookId,
+            wordId = wordId.coerceAtLeast(0L),
+            wordText = wordText.trim().take(80),
+            updatedAtMillis = System.currentTimeMillis(),
+        )
+        settingsStore.saveStudyScene(scene, _session.value?.userId ?: 0L)
+        val token = _session.value?.token ?: return
+        sceneSaveJob?.cancel()
+        sceneSaveJob = viewModelScope.launch {
+            delay(800)
+            pushScene(token, scene)
+        }
+    }
+
+    fun noteVisibleWord(wordId: Long, wordText: String) {
+        val notebookId = _ui.value.activeNotebookId
+        if (notebookId <= 0L || wordId <= 0L) return
+        if (listAnchorHeld) {
+            val saved = settingsStore.loadStudyScene()
+            if (saved != null && saved.notebookId == notebookId && saved.wordId > 0L && saved.wordId != wordId) {
+                return
+            }
+        }
+        listAnchorHeld = false
+        rememberScene(notebookId, wordId, wordText)
+    }
+
+    fun releaseListAnchor() {
+        listAnchorHeld = false
+    }
+
+    /** Load rows until [wordId] is in the open list so the screen can scroll to it. */
+    fun ensureStudyWord(wordId: Long) {
+        if (wordId <= 0L || ensureWordJob?.isActive == true) return
+        val notebookId = _ui.value.activeNotebookId
+        if (notebookId <= 0L) return
+        val savedNotebook = settingsStore.loadStudyScene()?.notebookId ?: 0L
+        if (savedNotebook > 0L && savedNotebook != notebookId) return
+        if (repo.items.value.any { it.notebookId == notebookId && it.id == wordId }) return
+        ensureWordJob = viewModelScope.launch {
+            val saved = settingsStore.loadStudyScene()
+            val text = if (saved?.notebookId == notebookId && saved.wordId == wordId) saved.wordText else ""
+            restoringScene = true
+            try {
+                placeSceneWord(notebookId, StudyScene(notebookId, wordId, text, 0L))
+            } finally {
+                restoringScene = false
+                val present = repo.items.value.any { it.notebookId == notebookId && it.id == wordId }
+                if (!present) listAnchorHeld = false
+            }
+        }
+    }
+
+    /** Push the saved scene now. Called when the app leaves the foreground. */
+    fun flushStudyScene() {
+        val token = _session.value?.token ?: return
+        val scene = settingsStore.loadStudyScene() ?: return
+        if (settingsStore.loadStudySceneUserId() != (_session.value?.userId ?: -1L)) return
+        sceneSaveJob?.cancel()
+        viewModelScope.launch { pushScene(token, scene) }
+    }
+
+    private suspend fun pushScene(token: String, scene: StudyScene) {
+        val saved = runCatching { api.saveStudyScene(token, scene) }.getOrNull() ?: return
+        val userId = _session.value?.userId ?: return
+        val current = settingsStore.loadStudyScene() ?: return
+        if (settingsStore.loadStudySceneUserId() != userId) return
+        if (current.notebookId == scene.notebookId &&
+            current.wordId == scene.wordId &&
+            current.wordText == scene.wordText
+        ) {
+            settingsStore.saveStudyScene(saved, userId)
+        }
+    }
+
+    private suspend fun restoreSceneWordIfPending(notebookId: Long) {
+        val scene = pendingScene?.takeIf { it.notebookId == notebookId } ?: return
+        if (_ui.value.activeNotebookId != notebookId) return
+        if (scene.wordId <= 0L && scene.wordText.isBlank()) {
+            pendingScene = null
+            return
+        }
+        restoringScene = true
+        try {
+            when (placeSceneWord(notebookId, scene)) {
+                1 -> pendingScene = null
+                0 -> {
+                    pendingScene = null
+                    restoringScene = false
+                    rememberScene(notebookId, 0L, "")
+                }
+                else -> pendingScene = null
+            }
+        } finally {
+            restoringScene = false
+        }
+    }
+
+    /**
+     * @return 1 when the word is on screen, 0 when it is gone, -1 when the lookup failed.
+     */
+    private suspend fun placeSceneWord(notebookId: Long, scene: StudyScene): Int {
+        var wordId = scene.wordId
+        var wordText = scene.wordText
+        var index = indexInHeads(notebookId, wordId, wordText)
+        var confirmedMissing = index == null && headsCache[notebookId]?.items?.isNotEmpty() == true
+        if (index == null && !confirmedMissing) {
+            val token = _session.value?.token
+            val notebook = notebooks.value.firstOrNull { it.id == notebookId }
+            if (token != null || notebook?.isSystem == true) {
+                val result = runCatching { api.locateWord(token, notebookId, wordId, wordText) }
+                if (result.isSuccess) {
+                    val pos = result.getOrNull()
+                    if (pos == null) {
+                        confirmedMissing = true
+                    } else {
+                        index = pos.index
+                        wordId = pos.wordId
+                        wordText = pos.word
+                        confirmedMissing = false
                     }
-                } else {
-                    withContext(Dispatchers.IO) { repo.openCachedNotebook(id) }
                 }
             }
+        }
+        if (index != null) {
+            val system = notebooks.value.firstOrNull { it.id == notebookId }?.isSystem == true
+            if (system || headsCache[notebookId] != null) {
+                var waited = 0
+                while (waited < 600 &&
+                    repo.items.value.count { it.notebookId == notebookId } <= index &&
+                    headsAppendJob?.isActive == true
+                ) {
+                    delay(50)
+                    waited++
+                }
+                if (repo.items.value.count { it.notebookId == notebookId } <= index &&
+                    headsAppendJob?.isActive != true
+                ) {
+                    ensureHeadsLoadedUpTo(notebookId, index + 1)
+                }
+            }
+        }
+        val rows = repo.items.value.filter { it.notebookId == notebookId }
+        var local = if (wordId > 0L) rows.indexOfFirst { it.id == wordId } else -1
+        if (local < 0 && wordText.isNotBlank()) {
+            local = rows.indexOfFirst { it.text.equals(wordText, ignoreCase = true) }
+        }
+        if (local < 0) return if (confirmedMissing) 0 else -1
+        val entry = rows[local]
+        _ui.update { it.copy(cardIndex = local, shuffledOrder = null) }
+        _pendingListScrollEntryId.value = entry.id
+        pendingScene = null
+        restoringScene = false
+        rememberScene(notebookId, entry.id, entry.text)
+        return 1
+    }
+
+    private fun indexInHeads(notebookId: Long, wordId: Long, wordText: String): Int? {
+        val heads = headsCache[notebookId]?.items?.takeIf { it.isNotEmpty() } ?: return null
+        if (wordId > 0L) {
+            val byId = heads.indexOfFirst { it.id == wordId }
+            if (byId >= 0) return byId
+        }
+        if (wordText.isBlank()) return null
+        val byText = heads.indexOfFirst { it.text.equals(wordText, ignoreCase = true) }
+        return byText.takeIf { it >= 0 }
+    }
+
+    fun selectNotebook(id: Long) {
+        if (id == 0L) return
+        val keepScene = pendingScene?.notebookId == id
+        if (!keepScene) pendingScene = null
+        val isSystem = notebooks.value.firstOrNull { it.id == id }?.isSystem == true
+        val showingThis = repo.items.value.isNotEmpty() &&
+            repo.items.value.firstOrNull()?.notebookId == id
+        if (id == _ui.value.activeNotebookId && showingThis) {
+            applyCachedLetterIndex(id)
+            if (_alphabetLetterIndex.value.isEmpty()) refreshAlphabetLetterIndex(id)
+            viewModelScope.launch { restoreSceneWordIfPending(id) }
+            if (!keepScene) rememberScene(id, 0L, "")
             return
         }
         // End the chip tap immediately: highlight + clear previous list filter via active id.
@@ -1431,6 +1662,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 if (_ui.value.activeNotebookId == id) {
                     _ui.update { it.copy(listLoading = false) }
                 }
+                restoreSceneWordIfPending(id)
                 return@launch
             }
             // User notebooks: SQLite is the source of truth. Do NOT call listHeads —
@@ -1449,7 +1681,9 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 refreshNotebook(id, reset = false, prefetchAll = false)
             }
+            restoreSceneWordIfPending(id)
         }
+        if (!keepScene) rememberScene(id, 0L, "")
     }
 
     fun loadMoreWords() {
@@ -3165,10 +3399,14 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         accountStore.upsert(session)
         refreshRememberedAccounts()
         LauncherIcons.apply(getApplication(), session.level)
-        settingsStore.saveActiveNotebookId(session.vocabNotebookId)
+        val sceneOwner = settingsStore.loadStudySceneUserId()
+        val scene = settingsStore.loadStudyScene()
+            ?.takeIf { sceneOwner == session.userId || sceneOwner == 0L }
+        pendingScene = scene
+        val startId = scene?.notebookId?.takeIf { it > 0L } ?: session.vocabNotebookId
         _ui.update {
             it.copy(
-                activeNotebookId = session.vocabNotebookId,
+                activeNotebookId = startId,
                 settings = it.settings.copy(
                     defaultNotebookId = session.vocabNotebookId,
                     displayName = session.displayNickname,

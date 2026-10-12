@@ -74,6 +74,7 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
                 model.biometricUnlocked = false
+                Task { await model.flushStudyScene() }
             }
             if phase != .active, !model.podcastPlayWhenScreenOff {
                 model.podcast.pause()

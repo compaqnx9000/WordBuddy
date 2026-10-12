@@ -67,6 +67,20 @@ data class WordHeads(
     val letterIndex: Map<Char, Int>,
 )
 
+/** Notebook and word the user last left off on. */
+data class StudyScene(
+    val notebookId: Long,
+    val wordId: Long = 0L,
+    val wordText: String = "",
+    val updatedAtMillis: Long = 0L,
+)
+
+data class WordPosition(
+    val index: Int,
+    val wordId: Long,
+    val word: String,
+)
+
 class ApiException(
     message: String,
     val code: String? = null,
@@ -1080,6 +1094,51 @@ class WordBuddyApi {
             parseLetterIndex(root.optJSONObject("index"))
         }
 
+    suspend fun fetchStudyScene(token: String): StudyScene? = withContext(Dispatchers.IO) {
+        val root = request("GET", "/me/study-scene", token)
+        val notebookId = root.optLong("notebookId")
+        if (notebookId <= 0L) return@withContext null
+        StudyScene(
+            notebookId = notebookId,
+            wordId = root.optLong("wordId"),
+            wordText = root.optString("wordText"),
+            updatedAtMillis = parseIsoMillis(root.optString("updatedAt")),
+        )
+    }
+
+    suspend fun saveStudyScene(token: String, scene: StudyScene): StudyScene = withContext(Dispatchers.IO) {
+        val root = request(
+            "PUT",
+            "/me/study-scene",
+            token,
+            body = JSONObject()
+                .put("notebookId", scene.notebookId)
+                .put("wordId", scene.wordId)
+                .put("wordText", scene.wordText),
+        )
+        scene.copy(updatedAtMillis = parseIsoMillis(root.optString("updatedAt")).takeIf { it > 0L }
+            ?: scene.updatedAtMillis)
+    }
+
+    suspend fun locateWord(
+        token: String?,
+        notebookId: Long,
+        wordId: Long,
+        text: String,
+    ): WordPosition? = withContext(Dispatchers.IO) {
+        val path = buildString {
+            append("/notebooks/").append(notebookId).append("/position?wordId=").append(wordId)
+            if (text.isNotBlank()) append("&text=").append(enc(text))
+        }
+        val root = request("GET", path, token)
+        if (!root.optBoolean("found")) return@withContext null
+        WordPosition(
+            index = root.optInt("index"),
+            wordId = root.optLong("wordId"),
+            word = root.optString("word"),
+        )
+    }
+
     /** Full ordered word heads (id + text) for in-memory seeks. */
     suspend fun listHeads(token: String?, notebookId: Long): WordHeads =
         withContext(Dispatchers.IO) {
@@ -1105,6 +1164,11 @@ class WordBuddyApi {
                 letterIndex = parseLetterIndex(root.optJSONObject("index")),
             )
         }
+
+    private fun parseIsoMillis(value: String): Long {
+        if (value.isBlank()) return 0L
+        return runCatching { java.time.Instant.parse(value).toEpochMilli() }.getOrDefault(0L)
+    }
 
     private fun parseLetterIndex(obj: JSONObject?): Map<Char, Int> {
         if (obj == null) return emptyMap()
