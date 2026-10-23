@@ -274,7 +274,7 @@ private fun MallHeader(
         }
         Spacer(Modifier.height(12.sdp()))
         Text(
-            text = "支付宝提现",
+            text = "提现",
             color = Stellar.OnPrimary,
             fontSize = 13.ssp(),
             fontWeight = FontWeight.SemiBold,

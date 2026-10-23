@@ -51,6 +51,12 @@ class SessionStore(context: Context) {
         val avatarUrl = prefs.getString(KEY_AVATAR, null)?.trim()?.takeIf { it.isNotEmpty() }
         val level = prefs.getInt(KEY_LEVEL, 0).let(LauncherIcons::clamp)
         if (token.isEmpty() || userId <= 0L) return null
+        // Migrate: keep last-login phone for the next logout prefill.
+        if (phone.filter { it.isDigit() }.length == 11 &&
+            prefs.getString(KEY_LAST_LOGIN_PHONE, null).isNullOrBlank()
+        ) {
+            prefs.edit().putString(KEY_LAST_LOGIN_PHONE, phone.filter { it.isDigit() }).apply()
+        }
         return UserSession(
             token = token,
             userId = userId,
@@ -76,7 +82,7 @@ class SessionStore(context: Context) {
     }
 
     fun save(session: UserSession) {
-        prefs.edit()
+        val editor = prefs.edit()
             .putString(KEY_TOKEN, session.token)
             .putLong(KEY_USER_ID, session.userId)
             .putString(KEY_PHONE, session.phone)
@@ -97,11 +103,25 @@ class SessionStore(context: Context) {
             .putString(KEY_WECHAT, session.wechatAccount.orEmpty())
             .putString(KEY_NET_REGION, session.networkRegion.orEmpty())
             .putString(KEY_NET_DETAIL, session.networkRegionDetail.orEmpty())
-            .apply()
+        val loginPhone = session.phone.filter { it.isDigit() }
+        if (loginPhone.length == 11) {
+            editor.putString(KEY_LAST_LOGIN_PHONE, loginPhone)
+        }
+        editor.apply()
     }
 
+    /** Survives logout — used to prefill the login phone field. */
+    fun lastLoginPhone(): String =
+        prefs.getString(KEY_LAST_LOGIN_PHONE, null)?.trim().orEmpty()
+
     fun clear() {
+        val lastPhone = prefs.getString(KEY_LAST_LOGIN_PHONE, null)
+            ?: prefs.getString(KEY_PHONE, null)
         prefs.edit().clear().apply()
+        val keep = lastPhone?.filter { it.isDigit() }.orEmpty()
+        if (keep.length == 11) {
+            prefs.edit().putString(KEY_LAST_LOGIN_PHONE, keep).apply()
+        }
     }
 
     companion object {
@@ -109,6 +129,7 @@ class SessionStore(context: Context) {
         private const val KEY_TOKEN = "token"
         private const val KEY_USER_ID = "user_id"
         private const val KEY_PHONE = "phone"
+        private const val KEY_LAST_LOGIN_PHONE = "last_login_phone"
         private const val KEY_VOCAB_ID = "vocab_notebook_id"
         private const val KEY_AVATAR = "avatar_url"
         private const val KEY_LEVEL = "user_level"

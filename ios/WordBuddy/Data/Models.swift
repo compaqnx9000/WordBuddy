@@ -264,6 +264,8 @@ struct RewardVideoOffer: Equatable {
     var usedToday: Int = 0
     var remaining: Int = 20
     var totalPoints: Int = 0
+    var cooldownSec: Int = 300
+    var cooldownRemainingSec: Int = 0
 }
 
 struct CheckInState: Equatable {
@@ -273,6 +275,9 @@ struct CheckInState: Equatable {
     var checkedInToday: Bool = false
     var todayReward: Int = 1
     var recentDates: [String] = []
+    var imageCredits: Int = 0
+    /// Flat points for each makeup; from server (default 200).
+    var makeupReward: Int = 200
 }
 
 struct CheckInOutcome: Equatable {

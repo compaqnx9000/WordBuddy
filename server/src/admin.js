@@ -12,8 +12,15 @@ import {
   verifyPassword,
 } from './auth.js'
 import { mapDeviceRow } from './device.js'
-import { todayShanghai } from './checkin.js'
+import {
+  todayShanghai,
+  getMakeupRewardPoints,
+  setMakeupRewardPoints,
+  MAKEUP_REWARD_DEFAULT,
+} from './checkin.js'
 import { getRewardVideoPoints, setRewardVideoPoints, REWARD_VIDEO_DAILY_LIMIT } from './rewardVideo.js'
+import { getSignupBonusPoints, setSignupBonusPoints } from './points.js'
+import { getInviteRewardPoints, setInviteRewardPoints } from './invite.js'
 import { getLevelRules, setLevelRules, syncUserLevel } from './levels.js'
 import {
   GIFT_CATEGORY_DEFS,
@@ -649,7 +656,8 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
       [id],
     ),
     query(
-      `SELECT id, package_id, points, amount_fen, status, pay_channel, paid_at, created_at,
+      `SELECT id, user_id, package_id, out_trade_no, points, amount_fen, status, pay_channel,
+              provider_trade_no, alipay_trade_no, paid_at, created_at,
               refunded_at, refund_amount_fen, refunded_credits, refund_reason
        FROM point_orders
        WHERE user_id = $1 AND grant_kind = 'images'
@@ -703,34 +711,7 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
       successFen: Number(withdrawalSummary.rows[0]?.success_fen || 0),
       successPoints: Number(withdrawalSummary.rows[0]?.success_points || 0),
     },
-    imageOrders: imageOrders.rows.map((row) => {
-      const amountFen = Math.max(0, Number(row.amount_fen || 0))
-      const status = row.status || 'pending'
-      return {
-        id: Number(row.id),
-        packageId: row.package_id,
-        title: { img10: '10 张', img100: '100 张', img500: '500 张' }[row.package_id] || `${Number(row.points || 0)} 张`,
-        credits: Number(row.points || 0),
-        amountFen,
-        amountYuan: (amountFen / 100).toFixed(2),
-        status,
-        statusLabel:
-          status === 'paid'
-            ? '已支付'
-            : status === 'refunded'
-              ? '已退款'
-              : status === 'closed'
-                ? '已关闭'
-                : '待支付',
-        payChannel: row.pay_channel || null,
-        paidAt: iso(row.paid_at),
-        createdAt: iso(row.created_at),
-        refundedAt: iso(row.refunded_at),
-        refundedFen: row.refund_amount_fen == null ? null : Number(row.refund_amount_fen),
-        refundedCredits: row.refunded_credits == null ? null : Number(row.refunded_credits),
-        refundReason: row.refund_reason || null,
-      }
-    }),
+    imageOrders: imageOrders.rows.map(mapAdminImageOrder),
   })
 })
 
@@ -1189,6 +1170,54 @@ adminRouter.put('/reward-video', adminRequired, async (req, res) => {
   res.json(saved)
 })
 
+adminRouter.get('/signup-invite-rewards', adminRequired, async (_req, res) => {
+  const [signupBonus, invite] = await Promise.all([
+    getSignupBonusPoints(),
+    getInviteRewardPoints(),
+  ])
+  res.json({
+    signupBonus,
+    inviterPoints: invite.inviterPoints,
+    inviteePoints: invite.inviteePoints,
+  })
+})
+
+adminRouter.put('/signup-invite-rewards', adminRequired, async (req, res) => {
+  const signup = await setSignupBonusPoints(req.body?.signupBonus)
+  if (!signup.ok) {
+    res.status(400).json({ error: signup.error })
+    return
+  }
+  const invite = await setInviteRewardPoints({
+    inviterPoints: req.body?.inviterPoints,
+    inviteePoints: req.body?.inviteePoints,
+  })
+  if (!invite.ok) {
+    res.status(400).json({ error: invite.error })
+    return
+  }
+  res.json({
+    ok: true,
+    signupBonus: signup.signupBonus,
+    inviterPoints: invite.inviterPoints,
+    inviteePoints: invite.inviteePoints,
+  })
+})
+
+adminRouter.get('/makeup-reward', adminRequired, async (_req, res) => {
+  const makeupReward = await getMakeupRewardPoints()
+  res.json({ makeupReward, default: MAKEUP_REWARD_DEFAULT })
+})
+
+adminRouter.put('/makeup-reward', adminRequired, async (req, res) => {
+  const saved = await setMakeupRewardPoints(req.body?.makeupReward)
+  if (!saved.ok) {
+    res.status(400).json({ error: saved.error })
+    return
+  }
+  res.json({ ok: true, makeupReward: saved.makeupReward })
+})
+
 adminRouter.get('/level-rules', adminRequired, async (_req, res) => {
   res.json(await getLevelRules())
 })
@@ -1511,6 +1540,48 @@ adminRouter.delete('/gifts/:id', adminRequired, async (req, res) => {
   res.json({ ok: true })
 })
 
+function imagePackageTitle(packageId, points) {
+  return { img10: '10 张', img100: '100 张', img500: '500 张' }[packageId] || `${Number(points || 0)} 张`
+}
+
+function mapAdminImageOrder(row) {
+  const amountFen = Math.max(0, Number(row.amount_fen || 0))
+  const status = row.status || 'pending'
+  const channel = row.pay_channel || null
+  return {
+    id: Number(row.id),
+    userId: row.user_id == null ? null : Number(row.user_id),
+    phone: row.phone || null,
+    nickname: row.nickname || null,
+    buddyId: row.buddy_id || null,
+    imageCreditsRemaining: row.image_credits == null ? null : Math.max(0, Number(row.image_credits || 0)),
+    packageId: row.package_id,
+    title: imagePackageTitle(row.package_id, row.points),
+    credits: Number(row.points || 0),
+    amountFen,
+    amountYuan: (amountFen / 100).toFixed(2),
+    status,
+    statusLabel:
+      status === 'paid'
+        ? '已支付'
+        : status === 'refunded'
+          ? '已退款'
+          : status === 'closed'
+            ? '已关闭'
+            : '待支付',
+    payChannel: channel,
+    payChannelLabel: channel === 'wechat' ? '微信' : channel === 'alipay' ? '支付宝' : '—',
+    outTradeNo: row.out_trade_no || null,
+    providerTradeNo: row.provider_trade_no || row.alipay_trade_no || null,
+    paidAt: iso(row.paid_at),
+    createdAt: iso(row.created_at),
+    refundedAt: iso(row.refunded_at),
+    refundedFen: row.refund_amount_fen == null ? null : Number(row.refund_amount_fen),
+    refundedCredits: row.refunded_credits == null ? null : Number(row.refunded_credits),
+    refundReason: row.refund_reason || null,
+  }
+}
+
 function mapAdminWithdrawal(row) {
   const amountFen = Math.max(0, Number(row.amount_fen || 0))
   const status = row.status || ''
@@ -1604,6 +1675,78 @@ adminRouter.get('/withdrawals', adminRequired, async (req, res) => {
       failedCount: Number(summary.failed_n || 0),
       successFen: Number(summary.success_fen || 0),
       successPoints: Number(summary.success_points || 0),
+    },
+  })
+})
+
+adminRouter.get('/image-purchases', adminRequired, async (req, res) => {
+  const { page, pageSize, offset } = pageParams(req)
+  const q = String(req.query.q || '').trim()
+  const status = String(req.query.status || '').trim()
+  const params = []
+  const where = [`o.grant_kind = 'images'`]
+  if (q) {
+    params.push(`%${q}%`)
+    where.push(`(
+      u.phone ILIKE $${params.length}
+      OR COALESCE(u.nickname, '') ILIKE $${params.length}
+      OR COALESCE(u.buddy_id, '') ILIKE $${params.length}
+      OR CAST(u.id AS TEXT) ILIKE $${params.length}
+      OR o.out_trade_no ILIKE $${params.length}
+      OR COALESCE(o.provider_trade_no, o.alipay_trade_no, '') ILIKE $${params.length}
+    )`)
+  }
+  if (status === 'paid' || status === 'pending' || status === 'refunded' || status === 'closed') {
+    params.push(status)
+    where.push(`o.status = $${params.length}`)
+  }
+  const whereSql = where.join(' AND ')
+  const total = (
+    await query(
+      `SELECT count(*)::int AS n
+       FROM point_orders o
+       JOIN users u ON u.id = o.user_id
+       WHERE ${whereSql}`,
+      params,
+    )
+  ).rows[0].n
+  const summary = (
+    await query(
+      `SELECT
+         count(*)::int AS n,
+         count(*) FILTER (WHERE o.status = 'paid')::int AS paid_n,
+         count(*) FILTER (WHERE o.status = 'pending')::int AS pending_n,
+         count(*) FILTER (WHERE o.status = 'refunded')::int AS refunded_n,
+         COALESCE(SUM(o.amount_fen) FILTER (WHERE o.status = 'paid'), 0)::bigint AS paid_fen,
+         COALESCE(SUM(o.points) FILTER (WHERE o.status = 'paid'), 0)::bigint AS paid_credits
+       FROM point_orders o
+       JOIN users u ON u.id = o.user_id
+       WHERE ${whereSql}`,
+      params,
+    )
+  ).rows[0]
+  params.push(pageSize, offset)
+  const result = await query(
+    `SELECT o.*, u.phone, u.nickname, u.buddy_id, u.image_credits
+     FROM point_orders o
+     JOIN users u ON u.id = o.user_id
+     WHERE ${whereSql}
+     ORDER BY o.created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params,
+  )
+  res.json({
+    items: result.rows.map(mapAdminImageOrder),
+    total,
+    page,
+    pageSize,
+    summary: {
+      total: Number(summary.n || 0),
+      paidCount: Number(summary.paid_n || 0),
+      pendingCount: Number(summary.pending_n || 0),
+      refundedCount: Number(summary.refunded_n || 0),
+      paidFen: Number(summary.paid_fen || 0),
+      paidCredits: Number(summary.paid_credits || 0),
     },
   })
 })

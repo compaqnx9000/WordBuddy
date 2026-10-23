@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBackIosNew
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -42,10 +44,15 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.hotgis.wordbuddy.data.WordBuddyApi
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.hotgis.wordbuddy.data.PointOrder
 import com.hotgis.wordbuddy.data.PointPackage
 import com.hotgis.wordbuddy.data.PointPurchaseResult
+import com.hotgis.wordbuddy.data.WordBuddyApi
 import com.hotgis.wordbuddy.pay.AlipayPayHelper
+import com.hotgis.wordbuddy.pay.WeChatPayHelper
+import com.hotgis.wordbuddy.pay.WeChatPayParams
 import com.hotgis.wordbuddy.ui.design.sdp
 import com.hotgis.wordbuddy.ui.design.ssp
 import com.hotgis.wordbuddy.ui.lookup.Stellar
@@ -72,9 +79,14 @@ fun BuyPointsScreen(
     var packages by remember { mutableStateOf<List<PointPackage>>(emptyList()) }
     var sandbox by remember { mutableStateOf(true) }
     var alipayReady by remember { mutableStateOf(true) }
+    var wechatReady by remember { mutableStateOf(false) }
+    var payChannel by remember { mutableStateOf("alipay") }
     var loading by remember { mutableStateOf(true) }
     var buyingId by remember { mutableStateOf<String?>(null) }
     var balance by remember { mutableStateOf(imageCredits) }
+    var showHistory by remember { mutableStateOf(false) }
+    var history by remember { mutableStateOf<List<PointOrder>>(emptyList()) }
+    var historyLoading by remember { mutableStateOf(false) }
 
     LaunchedEffect(imageCredits) {
         balance = imageCredits
@@ -87,11 +99,29 @@ fun BuyPointsScreen(
                 packages = it.items
                 sandbox = it.sandbox
                 alipayReady = it.alipayReady || it.sandbox
+                wechatReady = it.wechatReady
             }
             .onFailure {
                 Toast.makeText(context, it.message ?: "加载失败", Toast.LENGTH_SHORT).show()
             }
         loading = false
+    }
+
+    fun loadHistory() {
+        val token = authToken
+        if (token.isNullOrBlank()) {
+            onLogin()
+            return
+        }
+        historyLoading = true
+        scope.launch {
+            runCatching { api.listPointOrders(token) }
+                .onSuccess { history = it }
+                .onFailure {
+                    Toast.makeText(context, it.message ?: "加载购买记录失败", Toast.LENGTH_SHORT).show()
+                }
+            historyLoading = false
+        }
     }
 
     fun buy(pkg: PointPackage) {
@@ -104,14 +134,19 @@ fun BuyPointsScreen(
             Toast.makeText(context, "无法调起支付", Toast.LENGTH_SHORT).show()
             return
         }
-        if (!alipayReady) {
+        val channel = payChannel
+        if (channel == "alipay" && !alipayReady) {
             Toast.makeText(context, "支付宝支付尚未开通", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (channel == "wechat" && !wechatReady) {
+            Toast.makeText(context, "微信支付尚未开通", Toast.LENGTH_SHORT).show()
             return
         }
         buyingId = pkg.id
         scope.launch {
             val created = runCatching {
-                withContext(Dispatchers.IO) { api.createPointOrder(token, pkg.id, "alipay") }
+                withContext(Dispatchers.IO) { api.createPointOrder(token, pkg.id, channel) }
             }.getOrElse {
                 Toast.makeText(context, it.message ?: "下单失败", Toast.LENGTH_SHORT).show()
                 buyingId = null
@@ -183,7 +218,22 @@ fun BuyPointsScreen(
                 color = Stellar.OnSurface,
                 fontSize = 20.ssp(),
                 fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
             )
+            if (!authToken.isNullOrBlank()) {
+                Text(
+                    text = "购买记录",
+                    color = Stellar.CyanSoft,
+                    fontSize = 14.ssp(),
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clickable {
+                            showHistory = true
+                            loadHistory()
+                        }
+                        .padding(horizontal = 12.sdp(), vertical = 10.sdp()),
+                )
+            }
         }
 
         LazyColumn(
@@ -222,7 +272,7 @@ fun BuyPointsScreen(
                     if (sandbox) {
                         Spacer(Modifier.height(6.sdp()))
                         Text(
-                            text = "支付宝当前为沙箱：点购买会直接到账，不调起真实支付。",
+                            text = "支付宝当前为沙箱：选支付宝购买会直接到账，不调起真实支付。",
                             color = Stellar.Gold,
                             fontSize = 12.ssp(),
                         )
@@ -238,26 +288,48 @@ fun BuyPointsScreen(
                     fontWeight = FontWeight.SemiBold,
                 )
             }
-            item {
+            items(
+                listOf("alipay" to "支付宝", "wechat" to "微信"),
+                key = { it.first },
+            ) { (id, label) ->
+                val selectedNow = payChannel == id
+                val ready = if (id == "wechat") wechatReady else alipayReady
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.sdp()))
-                        .border(1.dp, Stellar.Cyan, RoundedCornerShape(14.sdp()))
-                        .background(Stellar.Cyan.copy(alpha = 0.12f))
+                        .border(
+                            1.dp,
+                            if (selectedNow) Stellar.Cyan else Stellar.Outline.copy(alpha = 0.35f),
+                            RoundedCornerShape(14.sdp()),
+                        )
+                        .background(
+                            if (selectedNow) Stellar.Cyan.copy(alpha = 0.12f) else Stellar.SurfaceContainer,
+                        )
+                        .clickable { payChannel = id }
                         .padding(14.sdp()),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    WithdrawChannelBadge(channelId = "alipay", size = 36.sdp())
+                    WithdrawChannelBadge(channelId = id, size = 36.sdp())
                     Spacer(Modifier.width(12.sdp()))
-                    Text(
-                        text = "支付宝",
-                        color = Stellar.OnSurface,
-                        fontSize = 16.ssp(),
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text("已选", color = Stellar.Cyan, fontSize = 13.ssp())
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = label,
+                            color = Stellar.OnSurface,
+                            fontSize = 16.ssp(),
+                            fontWeight = FontWeight.Medium,
+                        )
+                        if (!ready) {
+                            Text(
+                                text = "尚未开通",
+                                color = Stellar.OnSurfaceVariant,
+                                fontSize = 12.ssp(),
+                            )
+                        }
+                    }
+                    if (selectedNow) {
+                        Text("已选", color = Stellar.Cyan, fontSize = 13.ssp())
+                    }
                 }
             }
 
@@ -280,6 +352,14 @@ fun BuyPointsScreen(
                 }
             }
         }
+    }
+
+    if (showHistory) {
+        PurchaseHistoryDialog(
+            items = history,
+            loading = historyLoading,
+            onDismiss = { showHistory = false },
+        )
     }
 }
 
@@ -355,6 +435,125 @@ private fun PackageCard(
     }
 }
 
+@Composable
+private fun PurchaseHistoryDialog(
+    items: List<PointOrder>,
+    loading: Boolean,
+    onDismiss: () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.82f)
+                .padding(horizontal = 18.sdp())
+                .clip(RoundedCornerShape(20.sdp()))
+                .background(Stellar.SurfaceContainer.copy(alpha = 0.98f))
+                .border(1.dp, Stellar.Cyan.copy(alpha = 0.35f), RoundedCornerShape(20.sdp()))
+                .padding(horizontal = 16.sdp(), vertical = 14.sdp()),
+        ) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "购买记录",
+                    color = Stellar.CyanSoft,
+                    fontSize = 18.ssp(),
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    Icons.Outlined.Close,
+                    contentDescription = "关闭",
+                    tint = Stellar.OnSurfaceVariant,
+                    modifier = Modifier
+                        .size(24.sdp())
+                        .clickable(onClick = onDismiss),
+                )
+            }
+            Spacer(Modifier.height(12.sdp()))
+            when {
+                loading && items.isEmpty() -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Stellar.Cyan)
+                    }
+                }
+                items.isEmpty() -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("暂无购买记录", color = Stellar.OnSurfaceVariant, fontSize = 14.ssp())
+                    }
+                }
+                else -> {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(10.sdp()),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        items(items, key = { it.id }) { item ->
+                            PurchaseHistoryCard(item)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PurchaseHistoryCard(item: PointOrder) {
+    val channel = item.payChannel ?: "alipay"
+    val channelName = if (channel == "wechat") "微信" else "支付宝"
+    val amount = item.amountYuan.ifBlank {
+        val fen = item.amountFen.coerceAtLeast(0)
+        if (fen % 100 == 0) (fen / 100).toString() else "%.2f".format(fen / 100.0)
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.sdp()))
+            .background(Stellar.SurfaceHigh.copy(alpha = 0.9f))
+            .padding(12.sdp()),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            WithdrawChannelBadge(channelId = channel, size = 28.sdp())
+            Spacer(Modifier.width(10.sdp()))
+            Text(
+                text = channelName,
+                color = Stellar.OnSurface,
+                fontSize = 15.ssp(),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = item.statusLabel.ifBlank { item.status },
+                color = when (item.status) {
+                    "paid" -> Stellar.Cyan
+                    "refunded" -> Stellar.Pink
+                    "closed" -> Stellar.OnSurfaceVariant
+                    else -> Stellar.Gold
+                },
+                fontSize = 13.ssp(),
+            )
+        }
+        Spacer(Modifier.height(10.sdp()))
+        HistoryMetaRow("购买内容", "${item.points} 张配图")
+        HistoryMetaRow("支付金额", "¥$amount")
+        HistoryMetaRow("支付方式", channelName)
+        HistoryMetaRow("购买时间", formatWithdrawTime(item.createdAt))
+        HistoryMetaRow(
+            "到账时间",
+            when (item.status) {
+                "paid", "refunded" -> formatWithdrawTime(item.paidAt)
+                "closed" -> "—"
+                else -> "待支付"
+            },
+        )
+    }
+}
+
 private data class PaidOutcome(val balance: Int?, val imageCredits: Int? = null)
 
 private suspend fun payOrder(
@@ -363,6 +562,41 @@ private suspend fun payOrder(
     token: String,
     created: PointPurchaseResult,
 ): PaidOutcome? {
+    if (created.channel == "wechat") {
+        val wx = created.wechatPay
+        if (wx == null) {
+            Toast.makeText(activity, "微信下单失败", Toast.LENGTH_SHORT).show()
+            return null
+        }
+        val result = runCatching {
+            WeChatPayHelper.pay(
+                activity,
+                WeChatPayParams(
+                    appId = wx.appId,
+                    partnerId = wx.partnerId,
+                    prepayId = wx.prepayId,
+                    packageValue = wx.packageValue,
+                    nonceStr = wx.nonceStr,
+                    timeStamp = wx.timeStamp,
+                    sign = wx.sign,
+                ),
+            ).await()
+        }.getOrElse {
+            Toast.makeText(activity, it.message ?: "调起微信支付失败", Toast.LENGTH_SHORT).show()
+            return null
+        }
+        return when {
+            result.success -> PaidOutcome(null)
+            result.cancelled -> {
+                Toast.makeText(activity, "已取消支付", Toast.LENGTH_SHORT).show()
+                null
+            }
+            else -> {
+                Toast.makeText(activity, result.errStr?.ifBlank { null } ?: "支付未完成", Toast.LENGTH_SHORT).show()
+                null
+            }
+        }
+    }
     if (created.sandbox || created.orderInfo.isNullOrBlank()) {
         val sim = runCatching {
             withContext(Dispatchers.IO) { api.simulatePointOrderPay(token, created.orderId) }

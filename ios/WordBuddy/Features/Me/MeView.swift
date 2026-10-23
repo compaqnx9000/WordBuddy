@@ -50,13 +50,13 @@ struct MeView: View {
             .navigationDestination(for: MeRoute.self) { route in
                 switch route {
                 case .profile: ProfileEditView()
-                case .settings: SettingsView()
+                case .settings: SettingsView(coversTabBar: mallCoversTabBar)
                 case .buyPoints: BuyPointsView()
                 case .mall: PointsMallView()
                 case .invite: InviteView()
                 case .favorites: ShortFavoritesView()
                 case .tools: ToolsPlaceholderView()
-                case .deletion: AccountDeletionView()
+                case .deletion: AccountDeletionView(coversTabBar: mallCoversTabBar)
                 case .switchAccount: SwitchAccountView()
                 case .withdraw: WithdrawView()
                 case .ledger: PointsLedgerView()
@@ -103,7 +103,7 @@ struct MeView: View {
         .sheet(isPresented: $showHelp) {
             infoSheet(
                 title: "帮助与反馈",
-                body: "你的词搭子用于查词、生词本、卡片背诵、短视频和播客。底部五个 Tab 即可使用这些功能。登录后可以同步生词、签到和搭币兑礼。\n\n遇到问题请发邮件至 hi@wordbuddy.cc，或拨打 18500090601。也可在「关于你的词搭子」中查看《隐私保护指引》。"
+                body: "你的词搭子用于查词、生词本、卡片背诵和短视频。底部四个 Tab 即可使用这些功能。登录后可以同步生词、签到和搭币兑礼。\n\n遇到问题请发邮件至 hi@wordbuddy.cc，或拨打 18500090601。也可在「关于你的词搭子」中查看《隐私保护指引》。"
             )
         }
         .fullScreenCover(isPresented: $showAbout) {
@@ -324,7 +324,7 @@ struct MeView: View {
                 Spacer(minLength: 8)
                 Button(checkInButtonTitle) {
                     if !loggedIn {
-                        model.showLogin = true
+                        model.openLogin()
                     } else if !model.checkIn.checkedInToday {
                         Task { await model.checkInToday() }
                     }
@@ -386,7 +386,7 @@ struct MeView: View {
     private func checkInDayCell(_ slot: CheckInDaySlot) -> some View {
         Button {
             if !loggedIn {
-                model.showLogin = true
+                model.openLogin()
             } else if slot.isClaimTarget {
                 Task { await model.checkInToday() }
             }
@@ -467,7 +467,7 @@ struct MeView: View {
                 } else if loggedIn {
                     model.banner = "请等待搭子号分配"
                 } else {
-                    model.showLogin = true
+                    model.openLogin()
                 }
             }
         }
@@ -513,7 +513,7 @@ struct MeView: View {
                 if loggedIn {
                     showNetworkRegion = true
                 } else {
-                    model.showLogin = true
+                    model.openLogin()
                 }
             } label: {
                 menuRowLabel(
@@ -582,7 +582,7 @@ struct MeView: View {
 
     private func guardRequireLogin(_ action: () -> Void) {
         guard loggedIn else {
-            model.showLogin = true
+            model.openLogin()
             return
         }
         action()
@@ -733,9 +733,7 @@ private struct CheckInDaySlot: Identifiable {
                 let ahead = ShanghaiDate.days(from: today, to: date)
                 reward = rewardForStreak(afterSigningToday + ahead)
             } else if date < today {
-                var filled = claimed
-                filled.insert(date)
-                reward = rewardForStreak(consecutiveDays(endingAt: date, claimed: filled))
+                reward = max(0, state.makeupReward)
             } else {
                 reward = rewardForStreak(1)
             }
@@ -1042,7 +1040,7 @@ struct ShortFavoritesView: View {
 
     private func load() async {
         guard let token = model.session?.token else {
-            model.showLogin = true
+            model.openLogin()
             loading = false
             return
         }
@@ -1061,7 +1059,7 @@ struct ShortFavoritesView: View {
 
     private func unfavorite(ids: [String]) async {
         guard let token = model.session?.token else {
-            model.showLogin = true
+            model.openLogin()
             return
         }
         let targets = Array(Set(ids.filter { !$0.isEmpty }))
@@ -1299,6 +1297,8 @@ private struct ThemeSwatchView: View {
 }
 
 struct SettingsView: View {
+    var coversTabBar: Binding<Bool> = .constant(false)
+
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var showPassword = false
@@ -1455,13 +1455,14 @@ struct SettingsView: View {
                 subtitle: "提醒你坚持背单词",
                 isOn: Binding(get: { model.dailyReminder }, set: { model.setDailyReminder($0) })
             )
-            preferenceDivider()
-            preferenceToggle(
-                icon: "headphones",
-                title: "息屏后仍可后台播放",
-                subtitle: "关闭后锁屏即暂停播客/电台，默认关闭",
-                isOn: Binding(get: { model.podcastPlayWhenScreenOff }, set: { model.setPodcastPlayWhenScreenOff($0) })
-            )
+            // 上架前关闭后台播放播客。恢复时取消下面这段注释。
+            // preferenceDivider()
+            // preferenceToggle(
+            //     icon: "headphones",
+            //     title: "息屏后仍可后台播放",
+            //     subtitle: "关闭后锁屏即暂停播客/电台，默认关闭",
+            //     isOn: Binding(get: { model.podcastPlayWhenScreenOff }, set: { model.setPodcastPlayWhenScreenOff($0) })
+            // )
             preferenceDivider()
             preferenceToggle(
                 icon: "eye",
@@ -1558,7 +1559,7 @@ struct SettingsView: View {
             )
             preferenceDivider()
             NavigationLink {
-                AccountDeletionView()
+                AccountDeletionView(coversTabBar: coversTabBar)
             } label: {
                 preferenceAction(
                     icon: "person.slash",
@@ -1755,7 +1756,7 @@ struct SwitchAccountView: View {
                 }
             }
             Button {
-                model.showLogin = true
+                model.openLogin()
             } label: {
                 Label("登录其他账号", systemImage: "plus")
                     .foregroundStyle(Theme.cyan)

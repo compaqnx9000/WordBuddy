@@ -17,6 +17,38 @@ export function rewardForDay(streakDay) {
   return day * 10
 }
 
+/** Flat points for each successful makeup (not streak-based). Admin-configurable. */
+export const MAKEUP_REWARD_DEFAULT = 200
+const MAKEUP_REWARD_KEY = 'makeup_reward_points'
+const MAKEUP_REWARD_MAX = 100000
+
+function clampMakeupReward(value) {
+  const n = Math.trunc(Number(value))
+  if (!Number.isFinite(n)) return null
+  return Math.min(MAKEUP_REWARD_MAX, Math.max(0, n))
+}
+
+export async function getMakeupRewardPoints() {
+  const row = (
+    await query('SELECT value FROM app_settings WHERE key = $1', [MAKEUP_REWARD_KEY])
+  ).rows[0]
+  return clampMakeupReward(row?.value) ?? MAKEUP_REWARD_DEFAULT
+}
+
+export async function setMakeupRewardPoints(points) {
+  const n = clampMakeupReward(points)
+  if (n == null) return { ok: false, error: `补签搭币须为 0～${MAKEUP_REWARD_MAX} 的整数` }
+  await query(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET
+       value = EXCLUDED.value,
+       updated_at = now()`,
+    [MAKEUP_REWARD_KEY, String(n)],
+  )
+  return { ok: true, makeupReward: n }
+}
+
 /** Normalize pg DATE / string / Date to yyyy-MM-dd without timezone drift. */
 export function dateString(value) {
   if (value == null || value === '') return null
@@ -97,6 +129,8 @@ export function mapCheckInState(row, today = todayShanghai(), recentDates = []) 
     checkedInToday,
     todayReward,
     recentDates,
+    /** Filled by getUserCheckIn; preview clients may fall back to MAKEUP_REWARD_DEFAULT. */
+    makeupReward: MAKEUP_REWARD_DEFAULT,
   }
 }
 
@@ -169,7 +203,9 @@ export async function getUserCheckIn(userId, today = todayShanghai()) {
     )
   ).rows[0]
   const recentDates = await loadRecentDates(userId, today)
-  return mapCheckInState(row, today, recentDates)
+  const state = mapCheckInState(row, today, recentDates)
+  state.makeupReward = await getMakeupRewardPoints()
+  return state
 }
 
 /**
@@ -344,7 +380,8 @@ export async function performMakeupCheckIn(userId, dateYmd, today = todayShangha
     dates.add(date)
     const prevPoints = Math.max(0, Number(existing?.total_points || 0))
     const streakAtDate = consecutiveEndingAt(dates, date)
-    const earned = applyCheckInBonus(rewardForDay(streakAtDate), perks.checkInBonusPercent)
+    // Flat admin-configurable reward; not streak-based and not level-bonus amplified.
+    const earned = await getMakeupRewardPoints()
     const newTotal = prevPoints + earned
 
     await client.query(

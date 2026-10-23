@@ -254,7 +254,7 @@ struct AccountProfileView: View {
             if showInvite {
                 ProfileFormDialog(
                     title: "填写邀请码",
-                    subtitle: "注册时漏填可在此补填一次。填写成功后你将获得 \(inviteInfo?.inviteeReward ?? 5000) 搭币，且之后不可更改。",
+                    subtitle: "注册时漏填可在此补填一次。填写成功后你将获得 \(inviteInfo?.inviteeReward ?? 3000) 搭币，且之后不可更改。",
                     busy: busy,
                     error: dialogError,
                     confirmTitle: "确认填写",

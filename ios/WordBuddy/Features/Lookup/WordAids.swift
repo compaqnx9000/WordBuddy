@@ -15,7 +15,9 @@ struct MnemonicImageSection: View {
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(Theme.gold)
                 Spacer()
-                Text("\(model.aiImagePointsCost) 搭币")
+                Text(model.session == nil
+                     ? (GuestAiImageStore.hasRemaining ? "未登录可体验 1 次" : "登录获更多次数")
+                     : "每天 2 次免费的 AI 生图")
                     .font(.caption)
                     .foregroundStyle(Theme.onSurfaceVariant)
             }
@@ -69,6 +71,13 @@ struct HomophoneSection: View {
     @State private var likersTip: WordHomophone?
 
     var body: some View {
+        // 上架前关闭全网谐音：别人看不到，也不能点赞或发布。恢复时删掉下面这一行。
+        if false {
+        sharedBody
+        }
+    }
+
+    private var sharedBody: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("谐音助记")
                 .font(.footnote.weight(.semibold))
@@ -144,7 +153,7 @@ struct HomophoneSection: View {
         let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
         guard let token = model.session?.token else {
-            model.showLogin = true
+            model.openLogin()
             return
         }
         busy = true
@@ -160,7 +169,7 @@ struct HomophoneSection: View {
 
     private func toggle(_ tip: WordHomophone) async {
         guard let token = model.session?.token else {
-            model.showLogin = true
+            model.openLogin()
             return
         }
         guard let updated = try? await model.api.toggleHomophoneLike(token: token, id: tip.id),

@@ -45,6 +45,12 @@ final class AppModel: ObservableObject {
     /// Notebook id → full ordered heads, used to shuffle the whole catalog.
     private var headsCache: [Int64: [WordHead]] = [:]
     @Published var showLogin = false
+    /// Shown on the login page after this device is signed out, for example by another login.
+    @Published var loginNotice: String?
+    /// True only after the login page has actually appeared. `showLogin` can stay true
+    /// when SwiftUI drops the cover because an alert was already on screen.
+    private(set) var loginCoverVisible = false
+    private var loginPresentTask: Task<Void, Never>?
     @Published var banner: String?
     /// Whole-notebook favorite. Shown as a live progress card, not the alert banner.
     @Published var catalogCopyProgress: CatalogCopyProgress?
@@ -222,7 +228,7 @@ final class AppModel: ObservableObject {
     /// Opens WeChat, then binds that OpenID to the signed-in account. Same path as Android.
     func bindWechat() async {
         guard let session else {
-            showLogin = true
+            openLogin()
             return
         }
         do {
@@ -246,16 +252,27 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func noteLoginCoverVisible(_ visible: Bool) {
+        loginCoverVisible = visible
+    }
+
     func openLogin() {
+        banner = nil
+        loginPresentTask?.cancel()
+        if showLogin && loginCoverVisible { return }
+        // Already marked open, but the page never appeared. SwiftUI ignores another
+        // `true` until the flag has been false across a turn.
         if showLogin {
             showLogin = false
-            Task { @MainActor in
-                await Task.yield()
+            loginPresentTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                guard !Task.isCancelled else { return }
+                banner = nil
                 showLogin = true
             }
-        } else {
-            showLogin = true
+            return
         }
+        showLogin = true
     }
 
     func enter(_ session: UserSession) async {
@@ -273,7 +290,9 @@ final class AppModel: ObservableObject {
         }
         SessionStore.save(session)
         biometricUnlocked = true
+        loginPresentTask?.cancel()
         showLogin = false
+        loginNotice = nil
         banner = nil
         AccountStore.upsert(session)
         accounts = AccountStore.list()
@@ -414,7 +433,7 @@ final class AppModel: ObservableObject {
 
     func purchasePoints(packageId: String, points: Int, channel: String) async {
         guard let session else {
-            showLogin = true
+            openLogin()
             return
         }
         do {
@@ -430,17 +449,21 @@ final class AppModel: ObservableObject {
 
     /// `nil` means the picture was saved. A string is the error to show in place.
     /// The global alert is optional because presenting it dismisses the card cover.
+    /// Guests get one free AI generation; further uses require login.
     @discardableResult
     func generateMnemonicImage(word: String, meaningHint: String, announceFailure: Bool = true) async -> String? {
-        guard let session else {
-            showLogin = true
-            return "请先登录"
-        }
         let text = word.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return "请填写单词" }
+        let isGuest = session == nil
+        if isGuest, !GuestAiImageStore.hasRemaining {
+            let message = "登录后可获得更多 AI 生图等权益"
+            if announceFailure { banner = message }
+            openLogin()
+            return message
+        }
         do {
             let result = try await api.generateMnemonicImage(
-                token: session.token,
+                token: session?.token,
                 word: text,
                 meaningHint: meaningHint,
                 provider: imageProvider
@@ -452,13 +475,23 @@ final class AppModel: ObservableObject {
             if let balance = result.balance {
                 applyPoints(balance)
             }
+            if let credits = result.imageCredits {
+                checkIn.imageCredits = max(0, credits)
+            }
             mnemonicRevision += 1
+            if isGuest {
+                GuestAiImageStore.markUsed()
+                banner = "登录可获得更多 AI 生图等权益"
+            }
             return nil
         } catch {
             if noteSessionError(error) { return "请先登录" }
             let apiError = error as? APIError
             let message: String
-            if apiError?.httpCode == 402 || apiError?.code == "INSUFFICIENT_POINTS" {
+            if apiError?.code == "DAILY_AI_IMAGE_LIMIT"
+                || apiError?.code == "INSUFFICIENT_IMAGE_CREDITS" {
+                message = "每天 2 次免费的 AI 生图"
+            } else if apiError?.httpCode == 402 || apiError?.code == "INSUFFICIENT_POINTS" {
                 let raw = apiError?.message ?? "搭币不足"
                 message = raw.contains("购买") ? raw : raw + "，请先购买搭币"
             } else {
@@ -538,7 +571,7 @@ final class AppModel: ObservableObject {
 
     func uploadAvatar(image: UIImage) async {
         guard let session else {
-            showLogin = true
+            openLogin()
             return
         }
         guard let jpeg = AvatarImageCodec.jpegData(from: image, maxEdge: 512) else {
@@ -566,7 +599,7 @@ final class AppModel: ObservableObject {
 
     func refreshNetworkRegion() async {
         guard let session else {
-            showLogin = true
+            openLogin()
             return
         }
         do {
@@ -599,7 +632,7 @@ final class AppModel: ObservableObject {
         successMessage: String = "资料已保存"
     ) async -> Bool {
         guard let session else {
-            showLogin = true
+            openLogin()
             return false
         }
         do {
@@ -643,7 +676,7 @@ final class AppModel: ObservableObject {
 
     func changePassword(oldPassword: String, newPassword: String) async {
         guard let session else {
-            showLogin = true
+            openLogin()
             return
         }
         do {
@@ -669,7 +702,7 @@ final class AppModel: ObservableObject {
 
     func checkInToday() async {
         guard let session else {
-            showLogin = true
+            openLogin()
             return
         }
         do {
@@ -707,11 +740,17 @@ final class AppModel: ObservableObject {
 
     func watchRewardVideo() async {
         guard session != nil else {
-            showLogin = true
+            openLogin()
             return
         }
         if rewardVideo.remaining <= 0 {
             banner = "今日奖励视频已达 \(rewardVideo.dailyLimit) 次"
+            return
+        }
+        if rewardVideo.cooldownRemainingSec > 0 {
+            let left = rewardVideo.cooldownRemainingSec
+            let label = left >= 60 ? "\(Int(ceil(Double(left) / 60.0))) 分钟" : "\(left) 秒"
+            banner = "看视频领搭币需间隔 5 分钟，请再等 \(label)"
             return
         }
         guard !rewardBusy else { return }
@@ -746,7 +785,7 @@ final class AppModel: ObservableObject {
 
     func makeupCheckIn(date: String) async {
         guard let session else {
-            showLogin = true
+            openLogin()
             return
         }
         do {
@@ -760,65 +799,69 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func loadDeletion() async -> AccountDeletionStatus? {
-        guard let session else { return nil }
+    func loadDeletion() async throws -> AccountDeletionStatus {
+        guard let session else {
+            openLogin()
+            throw APIError(message: "请先登录")
+        }
         do {
             return try await api.fetchAccountDeletion(token: session.token)
         } catch {
-            if !noteSessionError(error) {
-                banner = error.localizedDescription
-            }
-            return nil
+            if noteSessionError(error) { throw error }
+            throw error
         }
     }
 
-    func sendDeletionCode(force: Bool) async -> String? {
-        guard let session else { return nil }
+    func sendDeletionCode(force: Bool) async throws -> String? {
+        guard let session else {
+            openLogin()
+            throw APIError(message: "请先登录")
+        }
         do {
             return try await api.sendDeletionCode(token: session.token, force: force)
         } catch {
-            if !noteSessionError(error) {
-                banner = error.localizedDescription
-            }
-            return nil
+            if noteSessionError(error) { throw error }
+            throw error
         }
     }
 
-    func submitDeletion(code: String, reason: String?, force: Bool) async -> AccountDeletionStatus? {
-        guard let session else { return nil }
+    func submitDeletion(code: String, reason: String?, force: Bool) async throws -> AccountDeletionStatus {
+        guard let session else {
+            openLogin()
+            throw APIError(message: "请先登录")
+        }
         do {
             let status = try await api.requestAccountDeletion(token: session.token, code: code, reason: reason, force: force)
             if status.deleted || status.immediate {
                 AccountStore.remove(userId: session.userId)
                 logout()
-                banner = "账号已注销"
+                banner = "账号已立即注销"
             }
             return status
         } catch {
-            if !noteSessionError(error) {
-                banner = error.localizedDescription
-            }
-            return nil
+            if noteSessionError(error) { throw error }
+            throw error
         }
     }
 
-    func cancelDeletion() async -> AccountDeletionStatus? {
-        guard let session else { return nil }
+    func cancelDeletion() async throws -> AccountDeletionStatus {
+        guard let session else {
+            openLogin()
+            throw APIError(message: "请先登录")
+        }
         do {
             let status = try await api.cancelAccountDeletion(token: session.token)
-            banner = "已撤销注销申请"
+            banner = "已撤销注销，账号恢复正常"
             return status
         } catch {
-            if !noteSessionError(error) {
-                banner = error.localizedDescription
-            }
-            return nil
+            if noteSessionError(error) { throw error }
+            throw error
         }
     }
 
     func exportNotebookData() async -> Data? {
         guard let session else {
-            showLogin = true
+            openLogin()
             return nil
         }
         let books = notebooks.filter { !$0.isSystem }
@@ -843,7 +886,7 @@ final class AppModel: ObservableObject {
 
     func importNotebook(data: Data) async {
         guard let token = session?.token else {
-            showLogin = true
+            openLogin()
             return
         }
         do {
@@ -996,7 +1039,7 @@ final class AppModel: ObservableObject {
     /// Toggle whether [entry] lives in the default favorite notebook. Returns the resulting state, or nil on failure.
     func toggleCatalogFavorite(_ entry: VocabEntry) async -> Bool? {
         guard session != nil else {
-            showLogin = true
+            openLogin()
             return nil
         }
         await ensureFavoriteIndex()
@@ -1004,7 +1047,7 @@ final class AppModel: ObservableObject {
         guard !key.isEmpty else { return nil }
         // Re-read after the await above: the session can be gone by now.
         guard let token = session?.token else {
-            showLogin = true
+            openLogin()
             return nil
         }
         if let existingId = favoritedByText[key] {
@@ -1038,7 +1081,7 @@ final class AppModel: ObservableObject {
     @discardableResult
     func favoriteCatalogWord(_ entry: VocabEntry, to notebookId: Int64) async -> Bool? {
         guard let session else {
-            showLogin = true
+            openLogin()
             return nil
         }
         guard let notebook = notebooks.first(where: { $0.id == notebookId && !$0.isSystem }) else {
@@ -1071,7 +1114,7 @@ final class AppModel: ObservableObject {
 
     func copyCatalogNotebook(from sourceId: Int64, to notebookId: Int64, excluding: Set<Int64>) async {
         guard let session else {
-            showLogin = true
+            openLogin()
             return
         }
         guard let notebook = notebooks.first(where: { $0.id == notebookId && !$0.isSystem }) else {
@@ -1120,7 +1163,7 @@ final class AppModel: ObservableObject {
             return
         }
         guard let session else {
-            showLogin = true
+            openLogin()
             return
         }
         guard let notebook = notebooks.first(where: { $0.id == notebookId && !$0.isSystem }) else {
@@ -1153,7 +1196,7 @@ final class AppModel: ObservableObject {
 
     func save(_ entry: VocabEntry) async throws -> VocabEntry {
         guard let session else {
-            showLogin = true
+            openLogin()
             throw APIError(message: "登录后可收藏到生词本")
         }
         guard let notebookId = saveNotebookId else {
@@ -1255,7 +1298,7 @@ final class AppModel: ObservableObject {
 
     func saveNotebookOrder(_ ids: [Int64]) async {
         guard let session else {
-            showLogin = true
+            openLogin()
             return
         }
         let byId = Dictionary(uniqueKeysWithValues: notebooks.map { ($0.id, $0) })
@@ -1276,7 +1319,7 @@ final class AppModel: ObservableObject {
 
     func createNotebook(name: String) async {
         guard let session else {
-            showLogin = true
+            openLogin()
             return
         }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1346,7 +1389,7 @@ final class AppModel: ObservableObject {
 
     func moveWords(ids: Set<Int64>, to targetId: Int64) async {
         guard let session else {
-            showLogin = true
+            openLogin()
             return
         }
         guard activeNotebook?.isSystem != true else {
@@ -1389,7 +1432,7 @@ final class AppModel: ObservableObject {
 
     func updateDefinitions(id: Int64, definitions: [Definition], silent: Bool = false) async -> Bool {
         guard let session else {
-            if !silent { showLogin = true }
+            if !silent { openLogin() }
             return false
         }
         let cleaned = definitions.filter { !$0.meaning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -1489,7 +1532,7 @@ final class AppModel: ObservableObject {
             let excluded = Array(excluding)
             guard let session else {
                 catalogCopyProgress = nil
-                showLogin = true
+                openLogin()
                 return
             }
             while true {
@@ -1918,10 +1961,13 @@ final class AppModel: ObservableObject {
 
     private func handle(_ error: Error, fallback: String) {
         if let apiError = error as? APIError, apiError.isSessionInvalid {
-            let message = apiError.message.isEmpty ? "登录已失效，请重新登录" : apiError.message
+            let message = apiError.message.isEmpty ? "账号已在其他设备登录" : apiError.message
+            loginNotice = message
+            // A modal alert and the login cover cannot present together. The alert
+            // used to win, leaving showLogin true and 「登录账号」 unable to open again.
+            guard session != nil else { return }
             logout()
-            banner = message
-            showLogin = true
+            openLogin()
             return
         }
         wordsError = (error as? LocalizedError)?.errorDescription ?? fallback

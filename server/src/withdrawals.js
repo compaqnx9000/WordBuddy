@@ -114,7 +114,17 @@ function mapWithdrawal(row) {
       row.status === 'success' && row.updated_at
         ? new Date(row.updated_at).toISOString()
         : null,
+    wechatConfirm: wechatConfirmPayload(row),
   }
+}
+
+function wechatConfirmPayload(row) {
+  if (!row || row.channel !== 'wechat' || row.status !== 'pending') return null
+  const packageInfo = String(row.wechat_package || '').trim()
+  if (!packageInfo) return null
+  const cfg = wechatConfig()
+  if (!cfg.mchId || !cfg.appId) return null
+  return { mchId: cfg.mchId, appId: cfg.appId, packageInfo }
 }
 
 function statusLabel(status) {
@@ -203,7 +213,7 @@ export async function createWithdrawal(userId, { channel, account, realName, amo
 
   let amountFen = cfg.amountFen
   let pointsCost = cfg.pointsCost
-  if (ch === 'alipay' && requestedFen != null && requestedFen !== '') {
+  if ((ch === 'alipay' || ch === 'wechat') && requestedFen != null && requestedFen !== '') {
     const tier = cfg.tiers.find((item) => item.amountFen === Number(requestedFen))
     if (!tier) {
       return { ok: false, error: '请选择 0.2元、0.5元或 1.0元' }
@@ -229,24 +239,19 @@ export async function createWithdrawal(userId, { channel, account, realName, amo
       return { ok: false, error: '搭币不足' }
     }
 
-    const dailyLimit = ch === 'alipay' ? 1 : 20
     const todayCount = (
       await client.query(
         `SELECT count(*)::int AS n FROM withdrawals
          WHERE user_id = $1
-           AND channel = $2
            AND status IN ('pending', 'success')
            AND (created_at AT TIME ZONE 'Asia/Shanghai')::date
              = (now() AT TIME ZONE 'Asia/Shanghai')::date`,
-        [userId, ch],
+        [userId],
       )
     ).rows[0].n
-    if (todayCount >= dailyLimit) {
+    if (todayCount >= 1) {
       await client.query('ROLLBACK')
-      return {
-        ok: false,
-        error: ch === 'alipay' ? '今天已经提现过一次，请明天再试' : '今日提现次数已达上限，请明天再试',
-      }
+      return { ok: false, error: '今天已经提现过一次，请明天再试' }
     }
 
     nextBalance = balance - pointsCost
@@ -370,6 +375,10 @@ async function finalizeWithdrawal({ withdrawalId, userId, pointsCost, payout, cf
            provider_trade_no = COALESCE($2, provider_trade_no),
            error_message = $3,
            remark = COALESCE($4, remark),
+           wechat_package = CASE
+             WHEN $1 = 'pending' THEN COALESCE($6, wechat_package)
+             ELSE NULL
+           END,
            updated_at = now()
          WHERE id = $5
          RETURNING *`,
@@ -379,6 +388,7 @@ async function finalizeWithdrawal({ withdrawalId, userId, pointsCost, payout, cf
           status === 'failed' ? payout.error || '打款失败' : null,
           payout.remark || null,
           withdrawalId,
+          payout.packageInfo || null,
         ],
       )
     ).rows[0]
@@ -433,8 +443,8 @@ async function finalizeWithdrawal({ withdrawalId, userId, pointsCost, payout, cf
     const dest = channel === 'wechat' ? '微信' : '支付宝'
     const message =
       status === 'pending'
-        ? payout.remark && /确认收款/.test(payout.remark)
-          ? `提现已提交：¥${cfg.amountYuan}，请打开微信确认收款`
+        ? payout.packageInfo
+          ? `提现已提交：¥${cfg.amountYuan}，请在微信中确认收款`
           : `提现已提交：¥${cfg.amountYuan} ${dest}处理中`
         : cfg.sandbox
           ? `沙箱提现成功：已模拟向${dest}打款 ¥${cfg.amountYuan}`
@@ -504,6 +514,23 @@ export async function reconcilePendingWithdrawals(userId) {
     try {
       if (row.channel === 'wechat') {
         const queried = await queryWechatTransfer(wechatOutBillNo(row.id))
+        if (!row.wechat_package && queried.pending) {
+          const replay = await transferToWechat({
+            outBillNo: wechatOutBillNo(row.id),
+            amountFen: Number(row.amount_fen || 0),
+            openid: row.account,
+            remark: `搭币提现#${row.id}`,
+          })
+          if (replay.packageInfo) {
+            await query(
+              `UPDATE withdrawals
+                 SET wechat_package = $1, updated_at = now()
+               WHERE id = $2 AND status = 'pending' AND wechat_package IS NULL`,
+              [replay.packageInfo, row.id],
+            )
+            row.wechat_package = replay.packageInfo
+          }
+        }
         if (queried.ok || queried.missing === false) payout = queried
         else if (queried.missing) {
           payout = await transferToWechat({

@@ -4,8 +4,11 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import com.hotgis.wordbuddy.auth.WeChatAuth
+import com.hotgis.wordbuddy.pay.WeChatTransferHelper
+import com.tencent.mm.opensdk.constants.ConstantsAPI
 import com.tencent.mm.opensdk.modelbase.BaseReq
 import com.tencent.mm.opensdk.modelbase.BaseResp
+import com.tencent.mm.opensdk.modelbiz.WXOpenBusinessView
 import com.tencent.mm.opensdk.modelmsg.SendAuth
 import com.tencent.mm.opensdk.openapi.IWXAPIEventHandler
 
@@ -26,6 +29,11 @@ class WXEntryActivity : Activity(), IWXAPIEventHandler {
     }
 
     override fun onResp(resp: BaseResp?) {
+        if (resp?.type == ConstantsAPI.COMMAND_OPEN_BUSINESS_VIEW) {
+            WeChatTransferHelper.deliver(resp as? WXOpenBusinessView.Resp)
+            finish()
+            return
+        }
         val auth = resp as? SendAuth.Resp
         if (auth != null && auth.state == WeChatAuth.STATE) {
             when (auth.errCode) {

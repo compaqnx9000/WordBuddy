@@ -123,17 +123,14 @@ data class VocabUiState(
     val catalogCopyProgress: CatalogCopyProgress? = null,
 )
 
-private const val DEV_LOGIN_PHONE = "13611283451"
-private const val DEV_LOGIN_CODE = "888888"
-
 enum class LoginMode {
     SMS,
     PASSWORD,
 }
 
 data class LoginUi(
-    val phone: String = DEV_LOGIN_PHONE,
-    val code: String = DEV_LOGIN_CODE,
+    val phone: String = "",
+    val code: String = "",
     val password: String = "",
     val passwordConfirm: String = "",
     val inviteCode: String = "",
@@ -181,7 +178,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     private val _sessionReplacedMessages = MutableSharedFlow<String>(extraBufferCapacity = 1)
     /** Toast / dialog copy when this device was kicked by another login. */
     val sessionReplacedMessages: SharedFlow<String> = _sessionReplacedMessages.asSharedFlow()
-    private val _login = MutableStateFlow(LoginUi())
+    private val _login = MutableStateFlow(LoginUi(phone = sessionStore.lastLoginPhone()))
     val login: StateFlow<LoginUi> = _login.asStateFlow()
     private val _avatarBitmap = MutableStateFlow<Bitmap?>(null)
     val avatarBitmap: StateFlow<Bitmap?> = _avatarBitmap.asStateFlow()
@@ -3253,7 +3250,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 } else {
                     enterSession(session)
-                    _login.update { LoginUi() }
+                    _login.update { emptyLoginUi() }
                 }
             }.onFailure { error ->
                 _login.update { it.copy(error = error.message ?: "微信登录失败", loggingIn = false) }
@@ -3301,7 +3298,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 } else {
                     enterSession(session)
-                    _login.update { LoginUi() }
+                    _login.update { emptyLoginUi() }
                 }
             }.onFailure { error ->
                 _login.update { it.copy(error = error.message ?: "支付宝登录失败", loggingIn = false) }
@@ -3315,7 +3312,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelWechatPhoneBind() {
         // Incomplete WeChat account without phone — sign out.
         logout()
-        _login.update { LoginUi(error = "请绑定手机号后再使用") }
+        _login.update { emptyLoginUi().copy(error = "请绑定手机号后再使用") }
     }
 
     fun submitWechatPhoneBind() {
@@ -3356,7 +3353,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             }.onSuccess { result ->
                 val session = result.session ?: error("绑定失败")
                 enterSession(session)
-                _login.update { LoginUi() }
+                _login.update { emptyLoginUi() }
             }.onFailure { error ->
                 _login.update { it.copy(error = error.message ?: "绑定失败", loggingIn = false) }
             }
@@ -3442,7 +3439,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             accountStore.upsert(it)
             refreshRememberedAccounts()
         }
-        _login.value = LoginUi()
+        // Adding another account — leave phone blank for a new number.
+        _login.value = emptyLoginUi(prefillPhone = false)
     }
 
     fun switchToAccount(userId: Long, onNeedLogin: (phone: String) -> Unit, onDone: (Result<Unit>) -> Unit) {
@@ -3516,7 +3514,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         headsReady.clear()
         headsCache.clear()
         letterIndexByNotebook.clear()
-        _login.value = LoginUi()
+        _login.value = emptyLoginUi()
         val guestSettings = _ui.value.settings.copy(displayName = "词搭子")
         settingsStore.saveSettings(guestSettings)
         _ui.update {
@@ -4081,6 +4079,10 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         refreshRememberedAccounts()
         clearActiveSessionKeepingAccounts()
     }
+
+    /** Fresh login form: password/code always empty; phone from last successful login when available. */
+    private fun emptyLoginUi(prefillPhone: Boolean = true): LoginUi =
+        LoginUi(phone = if (prefillPhone) sessionStore.lastLoginPhone() else "")
 
     private fun startCountdown() {
         countdownJob?.cancel()

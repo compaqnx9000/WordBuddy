@@ -47,10 +47,11 @@ struct RootView: View {
                     .tabItem { Label("短视频", systemImage: "play.circle.fill") }
                     .toolbar(.hidden, for: .tabBar)
                     .tag(MainTab.shorts)
-                PodcastView()
-                    .tabItem { Label("播客", systemImage: "headphones") }
-                    .toolbar(.hidden, for: .tabBar)
-                    .tag(MainTab.podcast)
+                // 上架前关闭播客：不展示第三方电台和播客。恢复时取消下面三行注释。
+                // PodcastView()
+                //     .tabItem { Label("播客", systemImage: "headphones") }
+                //     .toolbar(.hidden, for: .tabBar)
+                //     .tag(MainTab.podcast)
                 MeView(mallCoversTabBar: $mallCoversTabBar)
                     .tabItem { Label("我", systemImage: "sparkles") }
                     .toolbar(.hidden, for: .tabBar)
@@ -67,6 +68,8 @@ struct RootView: View {
         .fullScreenCover(isPresented: $model.showLogin) {
             LoginView()
                 .environmentObject(model)
+                .onAppear { model.noteLoginCoverVisible(true) }
+                .onDisappear { model.noteLoginCoverVisible(false) }
         }
         .onChange(of: model.pendingLookup) { _, word in
             if word != nil { tab = .home }
@@ -219,7 +222,8 @@ private struct StellarTabBar: View {
         Item(tab: .home, title: "首页", selected: "house.fill", idle: "house"),
         Item(tab: .notebook, title: "生词本", selected: "book.fill", idle: "book"),
         Item(tab: .shorts, title: "短视频", selected: "play.circle.fill", idle: "play.circle"),
-        Item(tab: .podcast, title: "播客", selected: "headphones", idle: "headphones"),
+        // 上架前关闭播客入口。恢复时取消下一行注释。
+        // Item(tab: .podcast, title: "播客", selected: "headphones", idle: "headphones"),
         Item(tab: .me, title: "我", selected: "sparkles", idle: "sparkle"),
     ]
 

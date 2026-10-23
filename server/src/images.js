@@ -1,6 +1,6 @@
 import { query } from './db.js'
 import { adjustPoints, aiImagePointsCost, getPointsBalance } from './points.js'
-import { adjustImageCredits, getImageCredits } from './imageCredits.js'
+import { consumeAiImageQuota, getAiImageAvailability } from './imageCredits.js'
 
 const inflight = new Map()
 const IMAGE_BUDGET_MS = 18_000
@@ -233,6 +233,7 @@ async function createMnemonicImage({ word, meaningHint, provider, userId = null,
   const useCredits = billing === 'image_credits'
   const cached = await loadCached(key, provider, sense)
   if (cached) {
+    const availability = userId ? await getAiImageAvailability(userId) : null
     return {
       bytes: cached,
       provider,
@@ -241,56 +242,63 @@ async function createMnemonicImage({ word, meaningHint, provider, userId = null,
       pointsCost: useCredits ? 0 : aiImagePointsCost(),
       creditsSpent: 0,
       balance: userId && !useCredits ? await getPointsBalance(userId) : null,
-      imageCredits: userId && useCredits ? await getImageCredits(userId) : null,
+      imageCredits: availability?.available ?? null,
+      dailyRemaining: availability?.dailyRemaining ?? null,
     }
   }
 
   const cost = useCredits ? 1 : aiImagePointsCost()
-  if (cost > 0 && !userId) throw fail(401, '请先登录后再生成配图')
-  if (useCredits) {
-    const balance = await getImageCredits(userId)
-    if (balance < 1) {
-      const err = fail(402, '配图次数不足，还差 1 张')
-      err.code = 'INSUFFICIENT_IMAGE_CREDITS'
-      err.need = 1
-      err.balance = balance
-      err.imageCredits = balance
-      throw err
-    }
-  } else if (cost > 0) {
-    const balance = await getPointsBalance(userId)
-    if (balance < cost) {
-      const err = fail(402, `搭币不足，还差 ${cost - balance} 搭币`)
-      err.code = 'INSUFFICIENT_POINTS'
-      err.need = cost
-      err.balance = balance
-      err.pointsCost = cost
-      throw err
+  // Guests may generate for free (client limits to one trial).
+  // Logged-in image_credits billing: 2 free / Shanghai day, then purchased credits.
+  if (userId) {
+    if (useCredits) {
+      const availability = await getAiImageAvailability(userId)
+      if (availability.available < 1) {
+        const err = fail(402, '今日免费 AI 生图已用完（每天 2 次），明天再来')
+        err.code = 'DAILY_AI_IMAGE_LIMIT'
+        err.need = 1
+        err.balance = availability.imageCredits
+        err.imageCredits = availability.available
+        err.dailyRemaining = 0
+        throw err
+      }
+    } else if (cost > 0) {
+      const balance = await getPointsBalance(userId)
+      if (balance < cost) {
+        const err = fail(402, `搭币不足，还差 ${cost - balance} 搭币`)
+        err.code = 'INSUFFICIENT_POINTS'
+        err.need = cost
+        err.balance = balance
+        err.pointsCost = cost
+        throw err
+      }
     }
   }
 
   const bytes = await renderMnemonic(provider, word, meaningHint)
 
   let balanceAfter = userId && !useCredits ? await getPointsBalance(userId) : null
-  let imageCreditsAfter = userId && useCredits ? await getImageCredits(userId) : null
-  if (useCredits) {
-    const debited = await adjustImageCredits({
-      userId,
-      delta: -1,
-      reason: 'ai_image',
+  let imageCreditsAfter = null
+  let dailyRemainingAfter = null
+  let creditsSpent = 0
+  if (userId && useCredits) {
+    const debited = await consumeAiImageQuota(userId, {
       refType: 'mnemonic',
       refId: `${provider}:${key}`,
     })
     if (!debited.ok) {
-      const err = fail(402, debited.error || '配图次数不足')
-      err.code = debited.code || 'INSUFFICIENT_IMAGE_CREDITS'
+      const err = fail(402, debited.error || '今日免费 AI 生图已用完（每天 2 次），明天再来')
+      err.code = debited.code || 'DAILY_AI_IMAGE_LIMIT'
       err.need = debited.need
       err.balance = debited.balance
-      err.imageCredits = debited.balance
+      err.imageCredits = debited.available ?? 0
+      err.dailyRemaining = debited.dailyRemaining ?? 0
       throw err
     }
-    imageCreditsAfter = debited.balance
-  } else if (cost > 0) {
+    imageCreditsAfter = debited.available
+    dailyRemainingAfter = debited.dailyRemaining
+    creditsSpent = debited.creditsSpent || 0
+  } else if (userId && cost > 0) {
     const debited = await adjustPoints({
       userId,
       delta: -cost,
@@ -321,11 +329,12 @@ async function createMnemonicImage({ word, meaningHint, provider, userId = null,
     bytes: stored || bytes,
     provider,
     cached: false,
-    pointsSpent: useCredits ? 0 : cost,
-    pointsCost: useCredits ? 0 : cost,
-    creditsSpent: useCredits ? 1 : 0,
+    pointsSpent: userId && !useCredits ? cost : 0,
+    pointsCost: useCredits || !userId ? 0 : cost,
+    creditsSpent: userId && useCredits ? creditsSpent : 0,
     balance: balanceAfter,
     imageCredits: imageCreditsAfter,
+    dailyRemaining: dailyRemainingAfter,
   }
 }
 

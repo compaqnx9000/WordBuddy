@@ -11,7 +11,6 @@ import android.view.View
 import android.widget.FrameLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.core.view.WindowCompat
 import com.bytedance.sdk.openadsdk.AdSlot
@@ -102,7 +101,6 @@ class SplashActivity : ComponentActivity() {
     private fun startAdsOrMain() {
         if (!CsjSdkHolder.isConfigured) {
             Log.w(TAG, "CSJ IDs not configured — skip splash ad")
-            toastFail("未配置广告位")
             goMain()
             return
         }
@@ -110,7 +108,6 @@ class SplashActivity : ComponentActivity() {
             runOnUiThread {
                 if (!ok) {
                     Log.w(TAG, "SDK not ready — skip splash")
-                    toastFail("SDK初始化失败")
                     goMain()
                 } else {
                     loadSplash()
@@ -173,7 +170,6 @@ class SplashActivity : ComponentActivity() {
             adNative.loadSplashAd(adSlot, splashListener(), SPLASH_TIMEOUT_MS)
         } catch (t: Throwable) {
             Log.e(TAG, "loadSplash crashed", t)
-            toastFail("开屏异常:${t.javaClass.simpleName}")
             goMain()
         }
     }
@@ -187,7 +183,6 @@ class SplashActivity : ComponentActivity() {
             val msg = "${error?.code} ${error?.msg}"
             Log.w(TAG, "splash load fail: $msg")
             AdDiagStore.report(this@SplashActivity, AdDiagStore.SPLASH, "加载失败 $msg")
-            toastFail("开屏失败:$msg")
             goMain()
         }
 
@@ -221,15 +216,7 @@ class SplashActivity : ComponentActivity() {
             val msg = "${error?.code} ${error?.msg}"
             Log.w(TAG, "splash render fail: $msg")
             AdDiagStore.report(this@SplashActivity, AdDiagStore.SPLASH, "渲染失败 $msg")
-            toastFail("开屏渲染失败:$msg")
             goMain()
-        }
-    }
-
-    private fun toastFail(msg: String) {
-        // Keep visible during fill troubleshooting (see Settings → 广告诊断).
-        runCatching {
-            Toast.makeText(applicationContext, msg, Toast.LENGTH_LONG).show()
         }
     }
 

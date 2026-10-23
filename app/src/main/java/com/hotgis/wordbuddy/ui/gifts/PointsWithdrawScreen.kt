@@ -60,8 +60,10 @@ import com.hotgis.wordbuddy.R
 import com.hotgis.wordbuddy.ads.RewardVideoController
 import com.hotgis.wordbuddy.ads.findActivity
 import com.hotgis.wordbuddy.data.WordBuddyApi
+import com.hotgis.wordbuddy.data.WithdrawChannel
 import com.hotgis.wordbuddy.data.WithdrawConfig
 import com.hotgis.wordbuddy.data.WithdrawalItem
+import com.hotgis.wordbuddy.pay.WeChatTransferHelper
 import com.hotgis.wordbuddy.pay.isAlipayAuthIdentity
 import com.hotgis.wordbuddy.ui.components.StellarConfirmDialog
 import com.hotgis.wordbuddy.ui.design.sdp
@@ -122,7 +124,7 @@ fun PointsWithdrawScreen(
             }.onSuccess { (cfg, items) ->
                 config = cfg
                 history = items
-                channel = "alipay"
+                if (cfg.channels.none { it.id == channel }) channel = "alipay"
             }.onFailure {
                 error = it.message ?: "加载失败"
             }
@@ -198,7 +200,12 @@ fun PointsWithdrawScreen(
     val alipayReady = selectedAccount.isNotBlank() &&
         (isAlipayAuthIdentity(selectedAccount) || !alipayName.isNullOrBlank())
     val payoutReady = if (channel == "alipay") alipayReady else selectedAccount.isNotBlank()
-    val payoutChannels = cfg?.channels.orEmpty().filter { it.id == "alipay" }
+    val payoutChannels = cfg?.channels.orEmpty().ifEmpty {
+        listOf(
+            WithdrawChannel(id = "alipay", name = "支付宝", accountLabel = "支付宝账号"),
+            WithdrawChannel(id = "wechat", name = "微信", accountLabel = "微信账号"),
+        )
+    }
 
     Column(
         modifier
@@ -439,7 +446,7 @@ fun PointsWithdrawScreen(
             item {
                 val tier = cfg?.tiers?.firstOrNull { it.amountFen == selectedFen }
                     ?: cfg?.tiers?.firstOrNull()
-                val alreadyToday = withdrewAlipayToday(history)
+                val alreadyToday = withdrewToday(history)
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -530,6 +537,31 @@ fun PointsWithdrawScreen(
     if (showHistory) {
         WithdrawHistoryDialog(
             items = history,
+            onConfirmWechat = { item ->
+                val confirm = item.wechatConfirm ?: return@WithdrawHistoryDialog
+                scope.launch {
+                    val opened = runCatching {
+                        WeChatTransferHelper.open(
+                            context,
+                            confirm.mchId,
+                            confirm.appId,
+                            confirm.packageInfo,
+                        ).await()
+                    }
+                    val tip = opened.fold(
+                        onSuccess = { launch ->
+                            when (launch.result) {
+                                "cancel" -> "已取消确认，可稍后再打开"
+                                "fail" -> "无法打开微信确认收款"
+                                else -> "请在微信里点确认收款"
+                            }
+                        },
+                        onFailure = { it.message ?: "无法打开微信确认收款" },
+                    )
+                    Toast.makeText(context, tip, Toast.LENGTH_LONG).show()
+                    reload()
+                }
+            },
             onDismiss = { showHistory = false },
         )
     }
@@ -540,7 +572,11 @@ fun PointsWithdrawScreen(
         val channelName = if (channel == "wechat") "微信" else "支付宝"
         StellarConfirmDialog(
             title = "确认提现",
-            message = "将消耗 ${selectedTier.pointsCost} 搭币，向${channelName}账号「${maskPayoutAccount(selectedAccount)}」发放 ${selectedTier.label}（¥${selectedTier.amountYuan}）。每天只能提现一次。",
+            message = if (channel == "wechat") {
+                "将消耗 ${selectedTier.pointsCost} 搭币，向微信发放 ${selectedTier.label}（¥${selectedTier.amountYuan}）。每天只能提现一次，微信和支付宝共用这一次。接下来会打开微信，请在微信里确认收款后才会到账。"
+            } else {
+                "将消耗 ${selectedTier.pointsCost} 搭币，向${channelName}账号「${maskPayoutAccount(selectedAccount)}」发放 ${selectedTier.label}（¥${selectedTier.amountYuan}）。每天只能提现一次，微信和支付宝共用这一次。"
+            },
             confirmText = if (submitting) "提交中…" else "确认",
             dismissText = "取消",
             onDismiss = { if (!submitting) confirmOpen = false },
@@ -552,8 +588,31 @@ fun PointsWithdrawScreen(
                     runCatching {
                         api.createWithdrawal(t, channel, selectedAccount, alipayName, selectedTier.amountFen)
                     }.onSuccess { result ->
-                        Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
                         confirmOpen = false
+                        val confirm = result.item.wechatConfirm
+                        if (confirm != null) {
+                            val opened = runCatching {
+                                WeChatTransferHelper.open(
+                                    context,
+                                    confirm.mchId,
+                                    confirm.appId,
+                                    confirm.packageInfo,
+                                ).await()
+                            }
+                            val tip = opened.fold(
+                                onSuccess = { launch ->
+                                    when (launch.result) {
+                                        "cancel" -> "已取消确认。可在提现记录里再次打开微信收款页"
+                                        "fail" -> "无法打开微信确认收款"
+                                        else -> "请在微信里点确认收款，到账后零钱才会增加"
+                                    }
+                                },
+                                onFailure = { it.message ?: "无法打开微信确认收款" },
+                            )
+                            Toast.makeText(context, tip, Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                        }
                         onSuccess()
                         reload()
                     }.onFailure {
@@ -569,6 +628,7 @@ fun PointsWithdrawScreen(
 @Composable
 private fun WithdrawHistoryDialog(
     items: List<WithdrawalItem>,
+    onConfirmWechat: (WithdrawalItem) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Dialog(
@@ -616,7 +676,7 @@ private fun WithdrawHistoryDialog(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     items(items, key = { it.id }) { item ->
-                        WithdrawHistoryCard(item)
+                        WithdrawHistoryCard(item, onConfirmWechat)
                     }
                 }
             }
@@ -625,7 +685,10 @@ private fun WithdrawHistoryDialog(
 }
 
 @Composable
-private fun WithdrawHistoryCard(item: WithdrawalItem) {
+private fun WithdrawHistoryCard(
+    item: WithdrawalItem,
+    onConfirmWechat: (WithdrawalItem) -> Unit,
+) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -665,11 +728,30 @@ private fun WithdrawHistoryCard(item: WithdrawalItem) {
                 else -> "处理中"
             },
         )
+        if (item.wechatConfirm != null) {
+            Spacer(Modifier.height(10.sdp()))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.sdp()))
+                    .background(WechatGreen)
+                    .clickable { onConfirmWechat(item) }
+                    .padding(vertical = 10.sdp()),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "去微信确认收款",
+                    color = Stellar.OnPrimary,
+                    fontSize = 14.ssp(),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
     }
 }
 
 @Composable
-private fun HistoryMetaRow(label: String, value: String) {
+internal fun HistoryMetaRow(label: String, value: String) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -741,6 +823,7 @@ fun WithdrawChannelBadge(channelId: String, size: androidx.compose.ui.unit.Dp) {
 private fun maskPayoutAccount(raw: String?): String {
     val value = raw?.trim().orEmpty()
     if (value.isBlank()) return "未设置"
+    if (value.startsWith("o") && value.length >= 18) return "已绑定微信"
     if (isAlipayAuthIdentity(value)) return "已绑定支付宝"
     if (value.length <= 4) return value
     if (value.contains("@")) {
@@ -757,10 +840,9 @@ private fun maskPayoutAccount(raw: String?): String {
     return value.take(2) + "***" + value.takeLast(2)
 }
 
-private fun withdrewAlipayToday(items: List<WithdrawalItem>): Boolean {
+private fun withdrewToday(items: List<WithdrawalItem>): Boolean {
     val today = LocalDate.now(ZoneId.of("Asia/Shanghai"))
     return items.any { item ->
-        if (item.channel != "alipay") return@any false
         if (item.status != "pending" && item.status != "success") return@any false
         val created = item.createdAt ?: return@any false
         runCatching {
@@ -769,7 +851,7 @@ private fun withdrewAlipayToday(items: List<WithdrawalItem>): Boolean {
     }
 }
 
-private fun formatWithdrawTime(iso: String?): String {
+internal fun formatWithdrawTime(iso: String?): String {
     if (iso.isNullOrBlank()) return "—"
     return runCatching {
         val instant = Instant.parse(iso)

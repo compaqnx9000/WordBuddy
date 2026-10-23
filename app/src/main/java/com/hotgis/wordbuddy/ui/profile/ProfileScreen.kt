@@ -66,10 +66,12 @@ import androidx.core.content.FileProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -161,6 +163,10 @@ fun ProfileScreen(
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     var checkInSuccess by remember { mutableStateOf<CheckInResult.Success?>(null) }
     var checkInBusy by remember { mutableStateOf(false) }
+    var rewardVideoBusy by remember { mutableStateOf(false) }
+    /** Wall-clock deadline for the next reward-video watch (0 = ready). */
+    var rewardCooldownDeadlineMs by remember { mutableStateOf(0L) }
+    var rewardCooldownLeft by remember { mutableIntStateOf(0) }
     var makeupDate by remember { mutableStateOf<LocalDate?>(null) }
     var makeupConfirmDate by remember { mutableStateOf<LocalDate?>(null) }
     val loggedIn = !phone.isNullOrBlank()
@@ -172,6 +178,27 @@ fun ProfileScreen(
     LaunchedEffect(loggedIn, activity) {
         if (loggedIn) {
             activity?.let(RewardVideoController::preload)
+        }
+    }
+    LaunchedEffect(rewardVideo.cooldownRemainingSec, rewardVideo.usedToday) {
+        val remaining = rewardVideo.cooldownRemainingSec
+        rewardCooldownDeadlineMs = if (remaining > 0) {
+            System.currentTimeMillis() + remaining * 1000L
+        } else {
+            0L
+        }
+        rewardCooldownLeft = remaining
+        while (rewardCooldownLeft > 0) {
+            delay(1000)
+            val left = if (rewardCooldownDeadlineMs <= 0L) {
+                0
+            } else {
+                ((rewardCooldownDeadlineMs - System.currentTimeMillis() + 999) / 1000)
+                    .toInt()
+                    .coerceAtLeast(0)
+            }
+            rewardCooldownLeft = left
+            if (left <= 0) break
         }
     }
 
@@ -289,17 +316,25 @@ fun ProfileScreen(
             Toast.makeText(context, "今日奖励视频已达 ${rewardVideo.dailyLimit} 次", Toast.LENGTH_SHORT).show()
             return
         }
+        if (rewardCooldownLeft > 0) {
+            Toast.makeText(
+                context,
+                "看视频领搭币需间隔 5 分钟，请再等 ${formatRewardCooldown(rewardCooldownLeft)}",
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
         val act = activity
         if (act == null) {
             Toast.makeText(context, "无法播放广告，请稍后重试", Toast.LENGTH_SHORT).show()
             return
         }
-        if (checkInBusy) return
-        checkInBusy = true
+        if (rewardVideoBusy) return
+        rewardVideoBusy = true
         var rewarded = false
         fun grant() {
             onClaimRewardVideo { result ->
-                checkInBusy = false
+                rewardVideoBusy = false
                 result
                     .onSuccess { claim ->
                         Toast.makeText(
@@ -325,12 +360,12 @@ fun ProfileScreen(
                     }
                     override fun onClosed() {
                         if (!rewarded) {
-                            checkInBusy = false
+                            rewardVideoBusy = false
                             Toast.makeText(context, "需看完广告才能领搭币", Toast.LENGTH_SHORT).show()
                         }
                     }
                     override fun onFailed(reason: String) {
-                        checkInBusy = false
+                        rewardVideoBusy = false
                         Toast.makeText(context, "广告播放失败：$reason", Toast.LENGTH_LONG).show()
                     }
                 },
@@ -349,7 +384,7 @@ fun ProfileScreen(
                     waits++
                 }
                 if (!RewardVideoController.hasReadyAd()) {
-                    checkInBusy = false
+                    rewardVideoBusy = false
                     Toast.makeText(context, "广告暂未填充，请稍后再试", Toast.LENGTH_LONG).show()
                     return@launch
                 }
@@ -597,10 +632,12 @@ fun ProfileScreen(
                     icon = Icons.Outlined.PlayCircle,
                     iconTint = Stellar.Gold,
                     title = "看视频领搭币",
-                    trailing = if (!loggedIn) {
-                        "登录后每日 ${rewardVideo.dailyLimit} 次"
-                    } else {
-                        "剩余 ${rewardVideo.remaining}/${rewardVideo.dailyLimit} · +${rewardVideo.pointsPerWatch}"
+                    trailing = when {
+                        !loggedIn -> "登录后每日 ${rewardVideo.dailyLimit} 次"
+                        rewardCooldownLeft > 0 ->
+                            "需间隔 5 分钟 · 还剩 ${formatRewardCooldown(rewardCooldownLeft)}"
+                        else ->
+                            "剩余 ${rewardVideo.remaining}/${rewardVideo.dailyLimit} · +${rewardVideo.pointsPerWatch}"
                     },
                     onClick = { watchRewardVideo() },
                 )
@@ -616,7 +653,7 @@ fun ProfileScreen(
                 ProfileMenuRow(
                     icon = Icons.Outlined.Payments,
                     iconTint = Stellar.Pink,
-                    title = "支付宝提现",
+                    title = "提现",
                     trailing = "可用 ${checkIn.totalPoints} 搭币",
                     onClick = {
                         if (loggedIn) onOpenWithdraw() else onLogin()
@@ -1477,4 +1514,11 @@ private fun ProfileMenuRow(
             )
         }
     }
+}
+
+private fun formatRewardCooldown(totalSec: Int): String {
+    val sec = totalSec.coerceAtLeast(0)
+    val m = sec / 60
+    val s = sec % 60
+    return if (m > 0) "${m}分${s}秒" else "${s}秒"
 }

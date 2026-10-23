@@ -201,7 +201,7 @@ struct PointsMallView: View {
                 .buttonStyle(.plain)
             } else {
                 Button {
-                    model.showLogin = true
+                    model.openLogin()
                 } label: {
                     Text("我的订单 >")
                         .font(.system(size: MallMetrics.sdp(13)))
@@ -499,7 +499,7 @@ struct GiftDetailView: View {
 
     private func beginRedeem(_ gift: GiftItem) {
         guard let session = model.session else {
-            model.showLogin = true
+            model.openLogin()
             return
         }
         if gift.cashFen > 0 {
@@ -583,7 +583,7 @@ struct GiftOrdersView: View {
 
     private func load() async {
         guard let token = model.session?.token else {
-            model.showLogin = true
+            model.openLogin()
             loading = false
             return
         }
@@ -602,10 +602,6 @@ struct BuyPointsView: View {
 
     private let wechatGreen = Color(hex: 0x07C160)
     private let alipayBlue = Color(hex: 0x1677FF)
-
-    private var aiCost: Int {
-        max(1, catalog?.aiImagePointsCost ?? model.aiImagePointsCost)
-    }
 
     private var wechatReady: Bool { catalog?.wechatReady ?? false }
 
@@ -674,7 +670,7 @@ struct BuyPointsView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.gold)
-                Text("AI 生图每次消耗 \(aiCost) 搭币（缓存图不扣）")
+                Text("每天 2 次免费的 AI 生图（缓存图不扣）")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.onSurfaceVariant)
             }
@@ -849,7 +845,7 @@ struct BuyPointsView: View {
 
     private func buy(_ package: PointPackage) async {
         guard model.session != nil else {
-            model.showLogin = true
+            model.openLogin()
             return
         }
         if channel == "wechat" && !wechatReady {
@@ -992,7 +988,7 @@ struct WithdrawView: View {
 
     private func load() async {
         guard let token = model.session?.token else {
-            model.showLogin = true
+            model.openLogin()
             return
         }
         do {
@@ -1010,7 +1006,7 @@ struct WithdrawView: View {
 
     private func submit() async {
         guard let token = model.session?.token else {
-            model.showLogin = true
+            model.openLogin()
             return
         }
         guard channel != "wechat" else {
@@ -1118,7 +1114,7 @@ struct InviteView: View {
 
     private func load() async {
         guard let token = model.session?.token else {
-            model.showLogin = true
+            model.openLogin()
             return
         }
         do {
@@ -1130,7 +1126,7 @@ struct InviteView: View {
 
     private func bind() async {
         guard let token = model.session?.token else {
-            model.showLogin = true
+            model.openLogin()
             return
         }
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1224,7 +1220,7 @@ struct PointsLedgerView: View {
     private func load(page: Int) async {
         guard let token = model.session?.token else {
             loading = false
-            model.showLogin = true
+            model.openLogin()
             return
         }
         if page == 1 { loading = true } else { loadingMore = true }

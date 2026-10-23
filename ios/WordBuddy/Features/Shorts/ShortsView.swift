@@ -203,7 +203,7 @@ struct ShortsView: View {
     private func toggleFavorite(_ clip: ShortClip) {
         guard let token = model.session?.token, !token.isEmpty else {
             model.banner = "登录后可收藏短视频"
-            model.showLogin = true
+            model.openLogin()
             return
         }
         let next = !clip.favorited
@@ -440,7 +440,7 @@ private struct ShortPage: View {
                     title: "分享",
                     action: {
                         if model.session == nil {
-                            model.showLogin = true
+                            model.openLogin()
                         } else {
                             model.banner = "请等待搭子号分配"
                         }

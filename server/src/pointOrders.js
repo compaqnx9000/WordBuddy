@@ -476,17 +476,22 @@ export async function handleWechatPayNotify(body) {
   return { ok: true, httpStatus: 200, reply: { code: 'SUCCESS', message: '成功' } }
 }
 
-export async function listUserPointOrders(userId, { page = 1, pageSize = 20 } = {}) {
+export async function listUserPointOrders(userId, { page = 1, pageSize = 20, grantKind } = {}) {
   const p = Math.max(1, Number(page) || 1)
   const size = Math.min(50, Math.max(1, Number(pageSize) || 20))
+  const kind = grantKind === 'images' || grantKind === 'points' ? grantKind : null
+  const where = kind ? 'WHERE user_id = $1 AND grant_kind = $2' : 'WHERE user_id = $1'
+  const params = kind ? [userId, kind] : [userId]
   const total = (
-    await query(`SELECT count(*)::int AS n FROM point_orders WHERE user_id = $1`, [userId])
+    await query(`SELECT count(*)::int AS n FROM point_orders ${where}`, params)
   ).rows[0].n
+  const limitIdx = params.length + 1
+  const offsetIdx = params.length + 2
   const rows = (
     await query(
-      `SELECT * FROM point_orders WHERE user_id = $1
-       ORDER BY id DESC LIMIT $2 OFFSET $3`,
-      [userId, size, (p - 1) * size],
+      `SELECT * FROM point_orders ${where}
+       ORDER BY id DESC LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      [...params, size, (p - 1) * size],
     )
   ).rows
   return { items: rows.map(mapOrder), total, page: p, pageSize: size }

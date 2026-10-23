@@ -54,7 +54,12 @@ import {
   simulatePayOrder,
   syncPendingAlipayOrders,
 } from './pointOrders.js'
-import { listImageCreditPackages, getImageCredits, grantSignupImageCredit } from './imageCredits.js'
+import {
+  listImageCreditPackages,
+  getImageCredits,
+  getAiImageAvailability,
+  grantSignupImageCredit,
+} from './imageCredits.js'
 import { aiImagePointsCost, grantSignupBonus, listPointsLedger } from './points.js'
 import { alipayConfig, buildAppAuthInfo, exchangeAlipayAuthCode, fetchAlipayUserProfile } from './alipay.js'
 import {
@@ -64,10 +69,9 @@ import {
 } from './withdrawals.js'
 import { exchangeWechatCode, fetchWechatUserProfile, wechatLoginConfig } from './wechatLogin.js'
 import {
-  INVITE_REWARD_INVITEE,
-  INVITE_REWARD_INVITER,
   bindInviteCode,
   findUserByBuddyId,
+  getInviteRewardPoints,
   getInviteStats,
   normalizeInviteCode,
 } from './invite.js'
@@ -536,7 +540,7 @@ router.post('/auth/register', async (req, res) => {
     }
     const imageCredit = await grantSignupImageCredit(user.id)
     if (imageCredit?.ok && !imageCredit.skipped) {
-      console.log(`[signup] user ${user.id} +1 image credit`)
+      console.log(`[signup] user ${user.id} +${imageCredit.delta ?? 2} image credits`)
     }
   } catch (err) {
     console.error('[signup] bonus failed', err)
@@ -818,13 +822,14 @@ router.get('/invite/:code', async (req, res) => {
   const displayName =
     String(inviter.nickname || '').trim() ||
     `搭子 ${String(inviter.buddy_id || code).slice(0, 4)}…`
+  const rewards = await getInviteRewardPoints()
   res.json({
     inviteCode: String(inviter.buddy_id || code).toLowerCase(),
     displayName,
     avatarUrl: inviter.avatar_url || null,
     rewards: {
-      inviteePoints: INVITE_REWARD_INVITEE,
-      inviterPoints: INVITE_REWARD_INVITER,
+      inviteePoints: rewards.inviteePoints,
+      inviterPoints: rewards.inviterPoints,
     },
     downloadUrl: '/app/WordBuddy-release.apk',
   })
@@ -838,6 +843,7 @@ router.get('/me/invite', authRequired, async (req, res) => {
   }
   const buddyId = String(row.buddy_id || '').trim()
   const stats = await getInviteStats(req.user.id)
+  const rewards = await getInviteRewardPoints()
   const base =
     String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '') ||
     `${req.protocol}://${req.get('host')}`
@@ -850,8 +856,8 @@ router.get('/me/invite', authRequired, async (req, res) => {
     canBindInvite: Boolean(stats.canBindInvite),
     invitedByBuddyId: stats.invitedByBuddyId,
     rewards: {
-      inviteePoints: INVITE_REWARD_INVITEE,
-      inviterPoints: INVITE_REWARD_INVITER,
+      inviteePoints: rewards.inviteePoints,
+      inviterPoints: rewards.inviterPoints,
     },
   })
 })
@@ -1291,8 +1297,15 @@ router.get('/me/checkin', authRequired, async (req, res) => {
     console.error('[checkin] sync alipay', error)
   }
   const checkIn = await getUserCheckIn(req.user.id)
-  const imageCredits = await getImageCredits(req.user.id)
-  res.json({ checkIn: { ...checkIn, imageCredits } })
+  const availability = await getAiImageAvailability(req.user.id)
+  res.json({
+    checkIn: {
+      ...checkIn,
+      imageCredits: availability.available,
+      dailyAiImagesRemaining: availability.dailyRemaining,
+      dailyAiImagesLimit: availability.dailyLimit,
+    },
+  })
 })
 
 router.get('/me/reward-video', authRequired, async (req, res) => {
@@ -2764,7 +2777,7 @@ router.post('/me/deletion/cancel', authRequired, async (req, res) => {
   }
 })
 
-router.post('/mnemonic-images', authRequired, async (req, res) => {
+router.post('/mnemonic-images', optionalAuth, async (req, res) => {
   try {
     const provider = normalizeImageProvider(req.body?.provider)
     const billing = String(req.body?.billing || '').trim() === 'image_credits' ? 'image_credits' : 'points'
@@ -2772,7 +2785,7 @@ router.post('/mnemonic-images', authRequired, async (req, res) => {
       word: req.body?.word,
       meaningHint: req.body?.meaningHint,
       provider,
-      userId: req.user.id,
+      userId: req.user?.id ?? null,
       billing,
     })
     res.json({
@@ -2783,6 +2796,7 @@ router.post('/mnemonic-images', authRequired, async (req, res) => {
       creditsSpent: result.creditsSpent ?? 0,
       balance: result.balance ?? null,
       imageCredits: result.imageCredits ?? null,
+      dailyRemaining: result.dailyRemaining ?? null,
       imageBase64: Buffer.from(result.bytes).toString('base64'),
     })
   } catch (error) {
@@ -2793,6 +2807,7 @@ router.post('/mnemonic-images', authRequired, async (req, res) => {
       need: error.need ?? null,
       balance: error.balance ?? null,
       imageCredits: error.imageCredits ?? null,
+      dailyRemaining: error.dailyRemaining ?? null,
       pointsCost: error.pointsCost ?? aiImagePointsCost(),
     })
   }
@@ -2854,6 +2869,7 @@ router.get('/me/point-orders', authRequired, async (req, res) => {
     const data = await listUserPointOrders(req.user.id, {
       page: req.query.page,
       pageSize: req.query.pageSize,
+      grantKind: req.query.grantKind,
     })
     res.json(data)
   } catch (error) {

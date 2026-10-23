@@ -431,8 +431,8 @@ class WordBuddyApi {
         InviteInfo(
             canBindInvite = root.optBoolean("canBindInvite", true),
             invitedByBuddyId = root.optString("invitedByBuddyId").trim().takeIf { it.isNotEmpty() },
-            inviteeReward = rewards?.optInt("inviteePoints", 5000) ?: 5000,
-            inviterReward = rewards?.optInt("inviterPoints", 5000) ?: 5000,
+            inviteeReward = rewards?.optInt("inviteePoints", 3000) ?: 3000,
+            inviterReward = rewards?.optInt("inviterPoints", 3000) ?: 3000,
             invitedCount = root.optInt("invitedCount", 0),
         )
     }
@@ -447,7 +447,7 @@ class WordBuddyApi {
             )
             BindInviteResult(
                 message = root.optString("message").ifBlank { "邀请码已填写" },
-                inviteeReward = root.optInt("inviteeReward", 5000),
+                inviteeReward = root.optInt("inviteeReward", 3000),
                 totalPoints = root.optInt("totalPoints", 0),
                 invitedByBuddyId = root.optString("invitedByBuddyId").trim().takeIf { it.isNotEmpty() },
             )
@@ -887,7 +887,17 @@ class WordBuddyApi {
             createdAt = optNullableString(obj, "createdAt"),
             updatedAt = optNullableString(obj, "updatedAt"),
             paidAt = optNullableString(obj, "paidAt"),
+            wechatConfirm = parseWechatConfirm(obj.optJSONObject("wechatConfirm")),
         )
+    }
+
+    private fun parseWechatConfirm(obj: JSONObject?): WeChatTransferConfirm? {
+        if (obj == null) return null
+        val mchId = obj.optString("mchId")
+        val appId = obj.optString("appId")
+        val packageInfo = obj.optString("packageInfo")
+        if (mchId.isBlank() || appId.isBlank() || packageInfo.isBlank()) return null
+        return WeChatTransferConfirm(mchId, appId, packageInfo)
     }
 
     private fun parseGift(obj: JSONObject): GiftItem {
@@ -963,6 +973,8 @@ class WordBuddyApi {
             usedToday = used,
             remaining = remaining,
             totalPoints = obj.optInt("totalPoints", 0).coerceAtLeast(0),
+            cooldownSec = obj.optInt("cooldownSec", 300).coerceAtLeast(0),
+            cooldownRemainingSec = obj.optInt("cooldownRemainingSec", 0).coerceAtLeast(0),
         )
     }
 
@@ -988,6 +1000,7 @@ class WordBuddyApi {
             todayReward = obj.optInt("todayReward", 10).coerceAtLeast(1),
             recentDates = recentDates,
             imageCredits = obj.optInt("imageCredits", 0).coerceAtLeast(0),
+            makeupReward = obj.optInt("makeupReward", 200).coerceAtLeast(0),
         )
     }
 
@@ -1290,6 +1303,21 @@ class WordBuddyApi {
             )
         }
 
+    suspend fun listPointOrders(token: String): List<PointOrder> = withContext(Dispatchers.IO) {
+        val root = request(
+            "GET",
+            "/me/point-orders?grantKind=images&page=1&pageSize=50",
+            auth = token,
+        )
+        val items = root.optJSONArray("items") ?: JSONArray()
+        buildList {
+            for (i in 0 until items.length()) {
+                val obj = items.optJSONObject(i) ?: continue
+                add(parsePointOrder(obj))
+            }
+        }
+    }
+
     suspend fun getPointOrder(token: String, orderId: Long): PointOrderLookup = withContext(Dispatchers.IO) {
         val root = request("GET", "/me/point-orders/$orderId", auth = token)
         PointOrderLookup(
@@ -1310,6 +1338,11 @@ class WordBuddyApi {
         amountFen = obj.optInt("amountFen"),
         status = obj.optString("status"),
         statusLabel = obj.optString("statusLabel"),
+        amountYuan = obj.optString("amountYuan"),
+        payChannel = obj.optString("payChannel").takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
+        grantKind = obj.optString("grantKind").ifBlank { "points" },
+        createdAt = obj.optString("createdAt").takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
+        paidAt = obj.optString("paidAt").takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
     )
 
     suspend fun copyNotebookWords(

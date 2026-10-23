@@ -15,7 +15,8 @@ biometric = "1.1.0"
 # 分配 16 位以上 requestCode 时抛出 "Can only use lower 16 bits for requestCode" 异常导致真机选图崩溃。
 fragment = "1.8.5"
 # GroMore 融合 SDK（含穿山甲 + 聚合；请求 104529400 必须用这个，不能只用 ads-sdk-pro）
-pangle = "7.7.1.6"
+# 双11样式适配：Maven 最新 mediation-sdk 7.8.1.4（≥ 公告建议 GroMore 7.8.0.9）
+pangle = "7.8.1.4"
 wechat = "6.8.34"
 
 [libraries]

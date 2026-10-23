@@ -120,6 +120,14 @@ data class WithdrawalItem(
     val updatedAt: String? = null,
     /** Arrival / paid time when status is success. */
     val paidAt: String? = null,
+    /** Present while a WeChat transfer is waiting for the user to confirm in WeChat. */
+    val wechatConfirm: WeChatTransferConfirm? = null,
+)
+
+data class WeChatTransferConfirm(
+    val mchId: String,
+    val appId: String,
+    val packageInfo: String,
 )
 
 data class WithdrawResult(

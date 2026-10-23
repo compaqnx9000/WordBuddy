@@ -630,7 +630,7 @@ fun EditEmailDialog(
 fun EditInviteCodeDialog(
     busy: Boolean,
     error: String?,
-    inviteeReward: Int = 5000,
+    inviteeReward: Int = 3000,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {

@@ -215,6 +215,7 @@
       <button class="nav" data-page="gifts" onclick="go('gifts')">搭币兑礼</button>
       <button class="nav" data-page="giftOrders" onclick="go('giftOrders')">兑换订单</button>
       <button class="nav" data-page="withdrawals" onclick="go('withdrawals')">提现记录</button>
+      <button class="nav" data-page="purchases" onclick="go('purchases')">购买记录</button>
       <button class="nav" data-page="shorts" onclick="go('shorts')">短视频</button>
       <button class="nav" data-page="audit" onclick="go('audit')">操作日志</button>
       <div style="flex:1"></div>
@@ -240,15 +241,16 @@ const titles = {
   logins: ['登录记录', '验证码 / 密码登录，成功与失败'],
   sms: ['短信记录', '验证码发送与是否已核销（不展示明文验证码）'],
   notebooks: ['词书 / 生词本', '系统词书可下架与改词；用户生词本可查看删除'],
-  checkins: ['签到搭币', '用户累计搭币、连续签到、每日签到明细，以及奖励视频每次搭币'],
+  checkins: ['签到搭币', '用户累计搭币、连续签到、每日签到明细，以及奖励视频 / 注册邀请搭币'],
   gifts: ['搭币兑礼', '栏目显示、礼品归属分类、库存与搭币价格'],
   giftOrders: ['兑换订单', '用户兑换记录与发货状态'],
   withdrawals: ['提现记录', '按手机号、昵称、搭子号或用户 ID 查询每笔提现'],
+  purchases: ['购买记录', '按手机号、昵称、搭子号或用户 ID 查询每笔配图购买'],
   shorts: ['短视频', '视频维护，以及用户在口语/单词/听力的累计停留'],
   audit: ['操作日志', '超级管理员在后台做过的事'],
 };
 
-const state = { page: 'cockpit', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users', withdrawStatus: '', cockpitGrain: 'day', cockpitAt: '' };
+const state = { page: 'cockpit', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users', withdrawStatus: '', purchaseStatus: '', cockpitGrain: 'day', cockpitAt: '' };
 
 function token() { return localStorage.getItem('hw_admin_token') || ''; }
 function authHeaders() {
@@ -259,6 +261,37 @@ async function saveRewardVideoPoints() {
   try {
     const data = await api('/reward-video', { method: 'PUT', body: JSON.stringify({ pointsPerWatch: Number(raw) }) });
     alert('已保存：每次 +' + data.pointsPerWatch + ' 搭币，下次看完视频立即生效');
+  } catch (e) {
+    alert(e.message || '保存失败');
+  }
+}
+async function saveSignupInviteRewards() {
+  const signupBonus = Number(document.getElementById('signupBonus')?.value);
+  const inviterPoints = Number(document.getElementById('inviteInviterPts')?.value);
+  const inviteePoints = Number(document.getElementById('inviteInviteePts')?.value);
+  try {
+    const data = await api('/signup-invite-rewards', {
+      method: 'PUT',
+      body: JSON.stringify({ signupBonus, inviterPoints, inviteePoints }),
+    });
+    alert(
+      '已保存：新注册 +' + data.signupBonus +
+      '，邀请人 +' + data.inviterPoints +
+      '，被邀请人 +' + data.inviteePoints +
+      '。之后新注册 / 绑定邀请码立即按新数值发放'
+    );
+  } catch (e) {
+    alert(e.message || '保存失败');
+  }
+}
+async function saveMakeupReward() {
+  const raw = document.getElementById('makeupRewardPts')?.value;
+  try {
+    const data = await api('/makeup-reward', {
+      method: 'PUT',
+      body: JSON.stringify({ makeupReward: Number(raw) }),
+    });
+    alert('已保存：每次补签 +' + data.makeupReward + ' 搭币，下次补签立即生效');
   } catch (e) {
     alert(e.message || '保存失败');
   }
@@ -383,6 +416,7 @@ function go(page, extra = {}) {
   }
   if (extra.checkInView != null) state.checkInView = extra.checkInView;
   if (extra.withdrawStatus != null) state.withdrawStatus = extra.withdrawStatus;
+  if (extra.purchaseStatus != null) state.purchaseStatus = extra.purchaseStatus;
   document.querySelectorAll('.nav').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
   document.getElementById('title').textContent = titles[page][0];
   document.getElementById('hint').textContent = titles[page][1];
@@ -726,6 +760,10 @@ async function render() {
         ${pager(d.total)}`;
     } else if (state.page === 'checkins') {
       const rv = await api('/reward-video').catch(() => ({ pointsPerWatch: 1500, dailyLimit: 20 }));
+      const sir = await api('/signup-invite-rewards').catch(() => ({
+        signupBonus: 3000, inviterPoints: 3000, inviteePoints: 3000,
+      }));
+      const makeupCfg = await api('/makeup-reward').catch(() => ({ makeupReward: 200 }));
       const rules = await api('/level-rules').catch(() => null);
       const ruleRows = (rules && rules.levels) ? rules.levels : [];
       const levelTable = ruleRows.map((row) => `<tr>
@@ -745,6 +783,30 @@ async function render() {
           <span class="sub" style="margin:0">搭币</span>
           <button class="btn" onclick="saveRewardVideoPoints()">保存</button>
           <span class="sub" style="margin:0">每天可看次数由等级规则决定</span>
+        </div>
+      </div>
+      <div class="card" style="width:100%;max-width:none;margin:0 0 16px;padding:18px 20px">
+        <h1 style="font-size:18px">注册 / 邀请搭币</h1>
+        <p class="sub" style="margin:0 0 12px">新用户注册固定奖励，以及填写邀请码后双方各得的搭币。保存后，之后新注册或绑定邀请码立即按新数值发放；已发过的不受影响。</p>
+        <div class="toolbar" style="margin:0;flex-wrap:wrap;gap:10px 14px">
+          <label style="margin:0">新注册</label>
+          <input id="signupBonus" type="number" min="0" max="100000" value="${Number(sir.signupBonus) || 0}" style="max-width:110px" />
+          <label style="margin:0">邀请人</label>
+          <input id="inviteInviterPts" type="number" min="0" max="100000" value="${Number(sir.inviterPoints) || 0}" style="max-width:110px" />
+          <label style="margin:0">被邀请人</label>
+          <input id="inviteInviteePts" type="number" min="0" max="100000" value="${Number(sir.inviteePoints) || 0}" style="max-width:110px" />
+          <button class="btn" onclick="saveSignupInviteRewards()">保存</button>
+        </div>
+      </div>
+      <div class="card" style="width:100%;max-width:none;margin:0 0 16px;padding:18px 20px">
+        <h1 style="font-size:18px">补签搭币</h1>
+        <p class="sub" style="margin:0 0 12px">用户看完激励视频补签漏签日期时获得的固定搭币（与连续签到天数无关）。默认 200。保存后，下一次补签立即按新数值发放。</p>
+        <div class="toolbar" style="margin:0">
+          <label style="margin:0">每次补签</label>
+          <input id="makeupRewardPts" type="number" min="0" max="100000" value="${Number(makeupCfg.makeupReward) || 200}" style="max-width:120px" />
+          <span class="sub" style="margin:0">搭币</span>
+          <button class="btn" onclick="saveMakeupReward()">保存</button>
+          <span class="sub" style="margin:0">每天可补签次数由等级规则「每天补签」决定</span>
         </div>
       </div>
       <div class="card" style="width:100%;max-width:none;margin:0 0 16px;padding:18px 20px">
@@ -887,6 +949,23 @@ async function render() {
         <p class="note">共 ${fmtCount(sum.total)} 笔 · 已到账 ${fmtCount(sum.successCount)} 笔 / ${successYuan} 元 / ${fmtCount(sum.successPoints)} 搭币 · 处理中 ${fmtCount(sum.pendingCount)} · 失败 ${fmtCount(sum.failedCount)}</p>
         ${withdrawalTable(d.items, true)}
         ${pager(d.total)}`;
+    } else if (state.page === 'purchases') {
+      const status = state.purchaseStatus || '';
+      const d = await api(`/image-purchases?page=${state.pageNo}&q=${encodeURIComponent(state.q)}&status=${encodeURIComponent(status)}`);
+      const sum = d.summary || {};
+      const paidYuan = ((Number(sum.paidFen) || 0) / 100).toFixed(2);
+      el.innerHTML = `
+        <div class="toolbar">
+          <input style="max-width:320px" placeholder="手机号 / 昵称 / 搭子号 / 用户ID / 订单号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('purchases',{q:this.value,page:1})" />
+          <select style="max-width:140px" onchange="go('purchases',{purchaseStatus:this.value,page:1})">
+            ${[['','全部状态'],['paid','已支付'],['pending','待支付'],['refunded','已退款'],['closed','已关闭']].map(([v,l]) =>
+              `<option value="${v}" ${status===v?'selected':''}>${l}</option>`).join('')}
+          </select>
+          <button class="btn" onclick="go('purchases',{q:document.querySelector('main input').value,page:1})">搜索</button>
+        </div>
+        <p class="note">共 ${fmtCount(sum.total)} 笔 · 已支付 ${fmtCount(sum.paidCount)} 笔 / ${paidYuan} 元 / ${fmtCount(sum.paidCredits)} 张 · 待支付 ${fmtCount(sum.pendingCount)} · 已退款 ${fmtCount(sum.refundedCount)}</p>
+        ${purchaseTable(d.items, true)}
+        ${pager(d.total)}`;
     } else if (state.page === 'shorts') {
       const view = state.shortsView || 'list';
       if (view === 'stats') {
@@ -983,6 +1062,30 @@ async function render() {
   } catch (e) {
     el.innerHTML = `<div class="error">${esc(e.message)}</div>`;
   }
+}
+
+function purchaseTable(items, showUser) {
+  const cols = showUser ? 9 : 8;
+  return `<table><thead><tr>
+    <th>时间</th>${showUser ? '<th>用户</th>' : ''}<th>支付方式</th><th>档位</th><th>张数</th><th>金额</th><th>状态</th><th>单号</th><th></th>
+  </tr></thead><tbody>${(items || []).map((o) => {
+    const canRefund = o.status === 'paid' && o.payChannel !== 'wechat';
+    const refundBtn = canRefund
+      ? `<button class="btn danger small" onclick="refundImageOrder(${o.id}, ${Number(o.userId) || 0}, '${esc(o.amountYuan)}', ${Number(o.credits) || 0}, ${Number(o.imageCreditsRemaining) || 0})">退款</button>`
+      : '—';
+    return `<tr>
+    <td>${fmt(o.createdAt)}${o.paidAt ? `<div class="sub">到账 ${fmt(o.paidAt)}</div>` : ''}${o.refundedAt ? `<div class="sub">退款 ${fmt(o.refundedAt)}</div>` : ''}</td>
+    ${showUser ? `<td>${esc(o.phone || '—')}<div class="sub">${esc(o.nickname || '—')} · #${o.userId ?? '—'}</div>${o.buddyId ? `<div class="sub">${esc(o.buddyId)}</div>` : ''}
+      ${o.userId != null ? `<button class="btn ghost small" onclick="openUser(${Number(o.userId)})">用户详情</button>` : ''}</td>` : ''}
+    <td>${esc(o.payChannelLabel || '—')}</td>
+    <td>${esc(o.title || o.packageId || '—')}</td>
+    <td>${o.credits} 张</td>
+    <td><b>¥${esc(o.amountYuan)}</b></td>
+    <td><span class="tag ${o.status === 'paid' ? '' : 'bad'}">${esc(o.statusLabel || o.status || '—')}</span>${o.status === 'refunded' && o.refundedCredits != null ? `<div class="sub">扣回 ${o.refundedCredits} 张</div>` : ''}</td>
+    <td class="wrap">${esc(o.outTradeNo || '—')}${o.providerTradeNo ? `<div class="sub">${esc(o.providerTradeNo)}</div>` : ''}${o.refundReason ? `<div class="sub">${esc(o.refundReason)}</div>` : ''}</td>
+    <td>${refundBtn}</td>
+  </tr>`;
+  }).join('') || `<tr><td colspan="${cols}">暂无购买记录</td></tr>`}</tbody></table>`;
 }
 
 function withdrawalTable(items, showUser) {
@@ -1122,17 +1225,14 @@ async function openUser(id) {
       <button class="btn ghost small" onclick="closeModal();go('withdrawals',{q:'${esc(u.phone)}',page:1,withdrawStatus:''})">查看全部</button>
     </p>
     ${withdrawalTable(d.withdrawals, false)}
-    <h3>配图购买</h3>
-    <p class="sub">已支付未退款 ${u.imageCreditsPurchased ?? 0} 张 · 当前还可生成 ${u.imageCreditsRemaining ?? 0} 张。退款会把这笔钱原路退回支付宝，并扣回这笔订单里还没用掉的张数。</p>
-    <table><thead><tr><th>时间</th><th>档位</th><th>张数</th><th>金额</th><th>状态</th><th></th></tr></thead>
-    <tbody>${(d.imageOrders||[]).map(o => `<tr>
-      <td>${fmt(o.paidAt || o.createdAt)}</td>
-      <td>${esc(o.title || o.packageId || '—')}</td>
-      <td>${o.credits} 张</td>
-      <td>¥${esc(o.amountYuan)}</td>
-      <td><span class="tag ${o.status === 'paid' ? '' : 'bad'}">${esc(o.statusLabel)}</span>${o.status === 'refunded' && o.refundedCredits != null ? `<div class="sub" style="margin:4px 0 0">扣回 ${o.refundedCredits} 张</div>` : ''}</td>
-      <td>${o.status === 'paid' ? `<button class="btn danger small" onclick="refundImageOrder(${o.id}, ${u.id}, '${esc(o.amountYuan)}', ${Number(o.credits) || 0}, ${Number(u.imageCreditsRemaining) || 0})">退款</button>` : '—'}</td>
-    </tr>`).join('') || '<tr><td colspan="6">暂无购买记录</td></tr>'}</tbody></table>
+    <h3>购买记录</h3>
+    <p class="sub">已支付未退款 ${u.imageCreditsPurchased ?? 0} 张 · 当前还可生成 ${u.imageCreditsRemaining ?? 0} 张。支付宝订单可原路退款，并扣回这笔订单里还没用掉的张数。
+      <button class="btn ghost small" onclick="closeModal();go('purchases',{q:'${esc(u.phone || u.buddyId || u.id)}',page:1,purchaseStatus:''})">查看全部</button>
+    </p>
+    ${(function () {
+      const rows = (d.imageOrders || []).map((o) => ({ ...o, userId: u.id, imageCreditsRemaining: u.imageCreditsRemaining }));
+      return purchaseTable(rows, false);
+    })()}
     <h3>生词本</h3>
     <table><thead><tr><th>名称</th><th>词数</th><th>创建</th><th></th></tr></thead>
     <tbody>${d.notebooks.map(n => `<tr>
@@ -1204,7 +1304,12 @@ async function confirmRefund() {
     });
     refundDraft = null;
     alert('已退款 ¥' + (Number(data.refundedFen || 0) / 100).toFixed(2) + '，扣回 ' + (data.clawedCredits || 0) + ' 张，剩余 ' + (data.imageCredits ?? 0) + ' 张');
-    openUser(draft.userId);
+    if (state.page === 'purchases') {
+      closeModal();
+      render();
+    } else {
+      openUser(draft.userId);
+    }
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = '确认退款'; }
     alert(e.message);

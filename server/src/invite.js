@@ -1,9 +1,58 @@
 import { pool, query } from './db.js'
 
-/** Points granted to the inviter when a new user registers with their buddy id. */
-export const INVITE_REWARD_INVITER = 5000
-/** Points granted to the new user who used a valid invite code. */
-export const INVITE_REWARD_INVITEE = 5000
+/** Defaults when app_settings has no override. */
+export const INVITE_REWARD_DEFAULT = 3000
+const INVITE_REWARD_MAX = 100000
+const KEY_INVITER = 'invite_reward_inviter'
+const KEY_INVITEE = 'invite_reward_invitee'
+
+function clampInvitePoints(value) {
+  const n = Math.trunc(Number(value))
+  if (!Number.isFinite(n)) return null
+  return Math.min(INVITE_REWARD_MAX, Math.max(0, n))
+}
+
+async function readSettingPoints(key, fallback) {
+  const row = (await query('SELECT value FROM app_settings WHERE key = $1', [key])).rows[0]
+  return clampInvitePoints(row?.value) ?? fallback
+}
+
+export async function getInviteRewardPoints() {
+  const [inviterPoints, inviteePoints] = await Promise.all([
+    readSettingPoints(KEY_INVITER, INVITE_REWARD_DEFAULT),
+    readSettingPoints(KEY_INVITEE, INVITE_REWARD_DEFAULT),
+  ])
+  return { inviterPoints, inviteePoints }
+}
+
+export async function setInviteRewardPoints({ inviterPoints, inviteePoints } = {}) {
+  const inviter = clampInvitePoints(inviterPoints)
+  const invitee = clampInvitePoints(inviteePoints)
+  if (inviter == null) return { ok: false, error: `邀请人搭币须为 0～${INVITE_REWARD_MAX} 的整数` }
+  if (invitee == null) return { ok: false, error: `被邀请人搭币须为 0～${INVITE_REWARD_MAX} 的整数` }
+  await query(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET
+       value = EXCLUDED.value,
+       updated_at = now()`,
+    [KEY_INVITER, String(inviter)],
+  )
+  await query(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET
+       value = EXCLUDED.value,
+       updated_at = now()`,
+    [KEY_INVITEE, String(invitee)],
+  )
+  return { ok: true, inviterPoints: inviter, inviteePoints: invitee }
+}
+
+/** @deprecated Prefer getInviteRewardPoints(); kept for older imports. */
+export const INVITE_REWARD_INVITER = INVITE_REWARD_DEFAULT
+/** @deprecated Prefer getInviteRewardPoints(); kept for older imports. */
+export const INVITE_REWARD_INVITEE = INVITE_REWARD_DEFAULT
 
 export function normalizeInviteCode(raw) {
   const code = String(raw || '')
@@ -122,16 +171,21 @@ export async function bindInviteCode(userId, inviteCodeRaw) {
       return next
     }
 
-    await grantPoints(inviter.id, INVITE_REWARD_INVITER, 'invite_reward')
-    await grantPoints(userId, INVITE_REWARD_INVITEE, 'invite_bonus')
+    const rewards = await getInviteRewardPoints()
+    if (rewards.inviterPoints > 0) {
+      await grantPoints(inviter.id, rewards.inviterPoints, 'invite_reward')
+    }
+    if (rewards.inviteePoints > 0) {
+      await grantPoints(userId, rewards.inviteePoints, 'invite_bonus')
+    }
 
     await client.query('COMMIT')
     return {
       ok: true,
       inviterId: Number(inviter.id),
       inviterBuddyId: inviter.buddy_id,
-      inviterReward: INVITE_REWARD_INVITER,
-      inviteeReward: INVITE_REWARD_INVITEE,
+      inviterReward: rewards.inviterPoints,
+      inviteeReward: rewards.inviteePoints,
     }
   } catch (error) {
     try {

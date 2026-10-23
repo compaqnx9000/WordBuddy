@@ -4,6 +4,8 @@ import { adjustPoints, getPointsBalance } from './points.js'
 import { getUserPerks } from './levels.js'
 
 export const REWARD_VIDEO_DAILY_LIMIT = 20
+/** Minimum interval between two reward-video claims. */
+export const REWARD_VIDEO_COOLDOWN_SEC = 5 * 60
 const REWARD_VIDEO_POINTS_MAX = 100000
 const REWARD_VIDEO_POINTS_DEFAULT = 1500
 const SETTING_KEY = 'reward_video_points'
@@ -48,6 +50,27 @@ async function usedToday(userId, today, client = null) {
   return Math.max(0, Number(row?.n || 0))
 }
 
+async function lastGrantAt(userId, client = null) {
+  const runner = client ? client.query.bind(client) : query
+  const row = (
+    await runner(
+      `SELECT created_at
+       FROM reward_video_grants
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId],
+    )
+  ).rows[0]
+  return row?.created_at ? new Date(row.created_at) : null
+}
+
+function cooldownRemainingSec(lastAt) {
+  if (!lastAt) return 0
+  const elapsedMs = Date.now() - lastAt.getTime()
+  return Math.max(0, Math.ceil((REWARD_VIDEO_COOLDOWN_SEC * 1000 - elapsedMs) / 1000))
+}
+
 export async function rewardVideoStatus(userId) {
   const today = todayShanghai()
   const pointsPerWatch = await getRewardVideoPoints()
@@ -55,6 +78,8 @@ export async function rewardVideoStatus(userId) {
   const dailyLimit = perks.videoDailyLimit
   const used = await usedToday(userId, today)
   const totalPoints = await getPointsBalance(userId)
+  const lastAt = await lastGrantAt(userId)
+  const cooldownLeft = cooldownRemainingSec(lastAt)
   return {
     pointsPerWatch,
     dailyLimit,
@@ -63,6 +88,8 @@ export async function rewardVideoStatus(userId) {
     totalPoints,
     today,
     level: perks.level,
+    cooldownSec: REWARD_VIDEO_COOLDOWN_SEC,
+    cooldownRemainingSec: cooldownLeft,
   }
 }
 
@@ -79,6 +106,21 @@ export async function claimRewardVideo(userId) {
       await client.query('ROLLBACK')
       const status = await rewardVideoStatus(userId)
       return { ok: false, error: `今日奖励视频已达 ${dailyLimit} 次`, status }
+    }
+    const lastAt = await lastGrantAt(userId, client)
+    const cooldownLeft = cooldownRemainingSec(lastAt)
+    if (cooldownLeft > 0) {
+      await client.query('ROLLBACK')
+      const status = await rewardVideoStatus(userId)
+      const waitLabel =
+        cooldownLeft >= 60
+          ? `${Math.ceil(cooldownLeft / 60)} 分钟`
+          : `${cooldownLeft} 秒`
+      return {
+        ok: false,
+        error: `看视频领搭币需间隔 5 分钟，请再等 ${waitLabel}`,
+        status,
+      }
     }
     const pointsRow = (
       await client.query('SELECT value FROM app_settings WHERE key = $1', [SETTING_KEY])

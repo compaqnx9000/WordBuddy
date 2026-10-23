@@ -845,7 +845,9 @@ actor WordBuddyAPI {
             dailyLimit: limit,
             usedToday: used,
             remaining: remaining,
-            totalPoints: max(0, JSONValue.int(object, key: "totalPoints"))
+            totalPoints: max(0, JSONValue.int(object, key: "totalPoints")),
+            cooldownSec: max(0, JSONValue.int(object, key: "cooldownSec", default: 300)),
+            cooldownRemainingSec: max(0, JSONValue.int(object, key: "cooldownRemainingSec"))
         )
     }
 
@@ -864,7 +866,9 @@ actor WordBuddyAPI {
             lastCheckInDate: JSONValue.string(object, key: "lastCheckInDate"),
             checkedInToday: JSONValue.bool(object, key: "checkedInToday") || recent.contains(today),
             todayReward: max(1, JSONValue.int(object, key: "todayReward", default: 1)),
-            recentDates: recent
+            recentDates: recent,
+            imageCredits: max(0, JSONValue.int(object, key: "imageCredits")),
+            makeupReward: max(0, JSONValue.int(object, key: "makeupReward", default: 200))
         )
     }
 
@@ -990,8 +994,8 @@ actor WordBuddyAPI {
         return InviteInfo(
             canBindInvite: JSONValue.bool(root, key: "canBindInvite", default: true),
             invitedByBuddyId: JSONValue.string(root, key: "invitedByBuddyId"),
-            inviteeReward: JSONValue.int(rewards, key: "inviteePoints", default: 5000),
-            inviterReward: JSONValue.int(rewards, key: "inviterPoints", default: 5000),
+            inviteeReward: JSONValue.int(rewards, key: "inviteePoints", default: 3000),
+            inviterReward: JSONValue.int(rewards, key: "inviterPoints", default: 3000),
             invitedCount: JSONValue.int(root, key: "invitedCount")
         )
     }
@@ -1234,20 +1238,24 @@ actor WordBuddyAPI {
     }
 
     func generateMnemonicImage(
-        token: String,
+        token: String?,
         word: String,
         meaningHint: String,
         provider: ImageProvider
-    ) async throws -> (image: Data, balance: Int?, pointsSpent: Int) {
+    ) async throws -> (image: Data, balance: Int?, imageCredits: Int?, pointsSpent: Int) {
+        var body: [String: Any] = [
+            "word": word,
+            "meaningHint": meaningHint,
+            "provider": provider.rawValue,
+        ]
+        if token != nil {
+            body["billing"] = "image_credits"
+        }
         let root = try await request(
             method: "POST",
             path: "/mnemonic-images",
             auth: token,
-            body: [
-                "word": word,
-                "meaningHint": meaningHint,
-                "provider": provider.rawValue,
-            ],
+            body: body,
             timeout: 20
         )
         guard let encoded = JSONValue.string(root, key: "imageBase64"),
@@ -1258,6 +1266,7 @@ actor WordBuddyAPI {
         return (
             data,
             JSONValue.optionalInt(root, key: "balance"),
+            JSONValue.optionalInt(root, key: "imageCredits"),
             JSONValue.int(root, key: "pointsSpent")
         )
     }

@@ -11,6 +11,10 @@ data class RewardVideoOffer(
     val usedToday: Int = 0,
     val remaining: Int = 20,
     val totalPoints: Int = 0,
+    /** Server-configured gap between watches (seconds). */
+    val cooldownSec: Int = 300,
+    /** Seconds until the next watch is allowed; 0 means ready. */
+    val cooldownRemainingSec: Int = 0,
 )
 
 data class RewardVideoClaim(
@@ -30,6 +34,8 @@ data class CheckInState(
     val recentDates: List<String> = emptyList(),
     /** Purchased mnemonic-image uses. Not withdrawable and not spendable in the mall. */
     val imageCredits: Int = 0,
+    /** Flat points awarded for each makeup; from server (default 200). */
+    val makeupReward: Int = 200,
 )
 
 sealed class CheckInResult {
@@ -124,11 +130,9 @@ class CheckInStore(context: Context) {
                 ?.let { add(it) }
         }
 
-        /** Points a makeup would award if that date is filled into the existing log. */
+        /** Points a makeup would award (flat server-configured amount). */
         fun makeupReward(state: CheckInState, date: LocalDate): Int {
-            val claimed = claimedDates(state)
-            if (date in claimed) return 1
-            return rewardForDay(consecutiveEndingAt(claimed + date, date)).coerceAtLeast(1)
+            return state.makeupReward.coerceAtLeast(0)
         }
     }
 }

@@ -1,8 +1,8 @@
 {
-  "versionCode": 185,
-  "versionName": "1.94",
+  "versionCode": 194,
+  "versionName": "2.03",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "下次打开生词本会停在上次看到的单词。卡片模式可以收藏到指定生词本。",
-  "releasedAt": "2026-10-12T14:10:00.000Z"
+  "notes": "启动时若有新版本，会通知你去「我-关于你的词搭子-检测更新」。",
+  "releasedAt": "2026-10-23T01:40:00.000Z"
 }

@@ -247,7 +247,7 @@ struct CardModeView: View {
                         favorited: model.isFavorited(entry.text),
                         onFavoriteTo: model.activeNotebook?.isSystem == true ? {
                             guard model.session != nil else {
-                                model.showLogin = true
+                                model.openLogin()
                                 return
                             }
                             guard model.notebooks.contains(where: { !$0.isSystem }) else {
@@ -305,7 +305,8 @@ struct CardModeView: View {
                     }
                 }
             }
-            if !tips.isEmpty {
+            // 上架前关闭：别人写的谐音助记不展示，也不能点赞。恢复时删掉 `false &&`。
+            if false, !tips.isEmpty {
                 ThemeHairline(color: Theme.gold).padding(.top, 14)
                 Text("谐音助记")
                     .font(.system(size: 11, weight: .bold))
@@ -375,7 +376,8 @@ struct CardModeView: View {
             cardNotes = []
             aidsWordKey = key
         }
-        let tips = (try? await model.api.fetchHomophones(token: model.session?.token, word: entry.text)) ?? []
+        // 上架前不拉取全网谐音，避免别人看到或点赞。
+        let tips: [WordHomophone] = []
         var notes: [Definition] = []
         if let token = model.session?.token {
             notes = (try? await model.api.fetchWordNotes(token: token, word: entry.text)) ?? []
@@ -387,7 +389,7 @@ struct CardModeView: View {
 
     private func toggleCardLike(_ tip: WordHomophone) async {
         guard let token = model.session?.token else {
-            model.showLogin = true
+            model.openLogin()
             return
         }
         guard let updated = try? await model.api.toggleHomophoneLike(token: token, id: tip.id),
@@ -861,6 +863,17 @@ private struct MnemonicImageSheet: View {
         entry.definitions.filter { !$0.meaning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
+    private var errorTipText: String {
+        if busy { return "每天 2 次免费的 AI 生图" }
+        if let error, !error.isEmpty {
+            if error.contains("配图次数") || error.contains("购买") || error.contains("每天") {
+                return "每天 2 次免费的 AI 生图"
+            }
+            return error
+        }
+        return "每天 2 次免费的 AI 生图"
+    }
+
     var body: some View {
         ZStack {
             Color.black.opacity(0.55)
@@ -900,12 +913,10 @@ private struct MnemonicImageSheet: View {
                     }
                     .padding(.top, 16)
                 }
-                if let error, !error.isEmpty, !busy {
-                    Text(error)
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.pink)
-                        .padding(.top, 10)
-                }
+                Text(errorTipText)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.onSurfaceVariant)
+                    .padding(.top, 10)
                 HStack(spacing: 10) {
                     Button {
                         showPicker = true
@@ -1602,7 +1613,8 @@ struct MeaningEditSheet: View {
                     Text("补充释义")
                         .font(.system(size: 26, weight: .bold))
                         .foregroundStyle(Theme.cyanSoft)
-                    Text("词典释义不可修改。补充笔记仅自己可见；谐音助记全网共享，按点赞展示前 3 条。")
+                    Text("词典释义不可修改。补充笔记仅自己可见。")
+                    // 上架前关闭全网谐音说明：「谐音助记全网共享，按点赞展示前 3 条。」
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.onSurfaceVariant.opacity(0.85))
                         .padding(.top, 8)
@@ -1683,6 +1695,8 @@ struct MeaningEditSheet: View {
                                 }
                                 .padding(.top, 12)
                             }
+                            // 上架前关闭：不展示别人的谐音，不能点赞，也不能再发布。恢复时删掉 `false &&`。
+                            if false {
                             Text("谐音助记")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(Theme.gold)
@@ -1751,6 +1765,7 @@ struct MeaningEditSheet: View {
                                     .font(.system(size: 11))
                                     .foregroundStyle(Theme.onSurfaceVariant.opacity(0.65))
                                     .padding(.top, 6)
+                            }
                             }
                         }
                         .padding(.top, 16)
@@ -1822,12 +1837,13 @@ struct MeaningEditSheet: View {
     }
 
     private func loadTips() async {
-        tips = (try? await model.api.fetchHomophones(token: model.session?.token, word: entry.text)) ?? []
+        // 上架前不拉取全网谐音。
+        tips = []
     }
 
     private func toggleLike(_ tip: WordHomophone) async {
         guard let token = model.session?.token else {
-            model.showLogin = true
+            model.openLogin()
             return
         }
         if let updated = try? await model.api.toggleHomophoneLike(token: token, id: tip.id),
@@ -1866,12 +1882,13 @@ struct MeaningEditSheet: View {
                 if tip.isEmpty { return }
             }
         } else if !userNotes.isEmpty || !tip.isEmpty {
-            model.showLogin = true
+            model.openLogin()
             return
         }
-        if !tip.isEmpty {
+        // 上架前不把谐音提交到全网。
+        if false, !tip.isEmpty {
             guard let token = model.session?.token else {
-                model.showLogin = true
+                model.openLogin()
                 return
             }
             do {

@@ -10,7 +10,6 @@ enum AboutPage: Hashable {
 
 struct AboutWordBuddyView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var showUpdate = false
 
     private var versionName: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
@@ -38,11 +37,6 @@ struct AboutWordBuddyView: View {
             .navigationDestination(for: AboutPage.self) { page in
                 LegalDocumentView(title: page.title, bodyText: page.bodyText)
             }
-        }
-        .alert("检测更新", isPresented: $showUpdate) {
-            Button("知道了", role: .cancel) {}
-        } message: {
-            Text("当前版本 \(versionName)\n\n已是最新版本。")
         }
     }
 
@@ -95,13 +89,6 @@ struct AboutWordBuddyView: View {
             ThemeHairline(alpha: 0.45)
             NavigationLink(value: AboutPage.complaint) {
                 menuRow("投诉")
-            }
-            .buttonStyle(.plain)
-            ThemeHairline(alpha: 0.45)
-            Button {
-                showUpdate = true
-            } label: {
-                menuRow("检测更新")
             }
             .buttonStyle(.plain)
         }

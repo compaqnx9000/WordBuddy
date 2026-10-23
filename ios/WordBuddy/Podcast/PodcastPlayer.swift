@@ -25,6 +25,8 @@ final class PodcastPlayer: ObservableObject {
     private var sleepTask: Task<Void, Never>?
 
     func play(show: PodcastShow, episode: PodcastEpisode, queue: [PodcastEpisode]) {
+        // 上架前关闭第三方播客/电台播放。恢复时删掉下面的 `false &&`。
+        if false {
         guard let url = URL(string: episode.audioUrl) else {
             errorMessage = "音频地址无效"
             return
@@ -41,6 +43,7 @@ final class PodcastPlayer: ObservableObject {
         attach(item: AVPlayerItem(url: url), to: avPlayer)
         activateAudio()
         avPlayer.play()
+        }
     }
 
     func toggle() {
@@ -160,8 +163,6 @@ final class PodcastPlayer: ObservableObject {
     }
 
     private func activateAudio() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .spokenAudio)
-        try? session.setActive(true)
+        // 上架前不声明后台音频，也不把会话设成可持续播放。
     }
 }

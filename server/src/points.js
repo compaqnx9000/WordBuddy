@@ -4,8 +4,37 @@ export function aiImagePointsCost() {
   return Math.max(0, Number(process.env.AI_IMAGE_POINTS_COST) || 5)
 }
 
-/** Credited once when an account is created, before any invite bonus. */
-export const SIGNUP_BONUS_POINTS = 10000
+/** Default credited once when an account is created, before any invite bonus. */
+export const SIGNUP_BONUS_DEFAULT = 3000
+const SIGNUP_BONUS_KEY = 'signup_bonus_points'
+const SIGNUP_BONUS_MAX = 100000
+
+function clampBonusPoints(value) {
+  const n = Math.trunc(Number(value))
+  if (!Number.isFinite(n)) return null
+  return Math.min(SIGNUP_BONUS_MAX, Math.max(0, n))
+}
+
+export async function getSignupBonusPoints() {
+  const row = (
+    await query('SELECT value FROM app_settings WHERE key = $1', [SIGNUP_BONUS_KEY])
+  ).rows[0]
+  return clampBonusPoints(row?.value) ?? SIGNUP_BONUS_DEFAULT
+}
+
+export async function setSignupBonusPoints(points) {
+  const n = clampBonusPoints(points)
+  if (n == null) return { ok: false, error: `新用户搭币须为 0～${SIGNUP_BONUS_MAX} 的整数` }
+  await query(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET
+       value = EXCLUDED.value,
+       updated_at = now()`,
+    [SIGNUP_BONUS_KEY, String(n)],
+  )
+  return { ok: true, signupBonus: n }
+}
 
 /**
  * Grant the new-user bonus at most once. Safe to call again after a retry.
@@ -20,9 +49,11 @@ export async function grantSignupBonus(userId) {
     )
   ).rowCount > 0
   if (paid) return { ok: true, skipped: true, balance: await getPointsBalance(uid) }
+  const delta = await getSignupBonusPoints()
+  if (delta <= 0) return { ok: true, skipped: true, balance: await getPointsBalance(uid), delta: 0 }
   return adjustPoints({
     userId: uid,
-    delta: SIGNUP_BONUS_POINTS,
+    delta,
     reason: 'signup_bonus',
     refType: 'signup',
     refId: String(uid),

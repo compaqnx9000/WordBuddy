@@ -378,6 +378,7 @@ export async function ensureSchema() {
   `)
   await query('CREATE INDEX IF NOT EXISTS withdrawals_user ON withdrawals (user_id, created_at DESC)')
   await query('CREATE INDEX IF NOT EXISTS withdrawals_status ON withdrawals (status, created_at DESC)')
+  await query('ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS wechat_package TEXT')
   await query(`
     CREATE TABLE IF NOT EXISTS mnemonic_images (
       id BIGSERIAL PRIMARY KEY,
@@ -528,6 +529,15 @@ export async function ensureSchema() {
     UPDATE app_settings
     SET value = '1500', updated_at = now()
     WHERE key = 'reward_video_points' AND value = '5'
+  `)
+  await query(`
+    INSERT INTO app_settings (key, value)
+    VALUES
+      ('signup_bonus_points', '3000'),
+      ('invite_reward_inviter', '3000'),
+      ('invite_reward_invitee', '3000'),
+      ('makeup_reward_points', '200')
+    ON CONFLICT (key) DO NOTHING
   `)
   await query(`
     CREATE TABLE IF NOT EXISTS reward_video_grants (

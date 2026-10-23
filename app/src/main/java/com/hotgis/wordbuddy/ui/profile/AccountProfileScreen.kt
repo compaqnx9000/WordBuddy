@@ -150,7 +150,7 @@ fun AccountProfileScreen(
     var editError by remember { mutableStateOf<String?>(null) }
     var canBindInvite by remember { mutableStateOf(false) }
     var invitedByBuddyId by remember { mutableStateOf<String?>(null) }
-    var inviteeReward by remember { mutableStateOf(5000) }
+    var inviteeReward by remember { mutableStateOf(3000) }
 
     val resolvedBuddyId = buddyId?.trim().orEmpty()
 

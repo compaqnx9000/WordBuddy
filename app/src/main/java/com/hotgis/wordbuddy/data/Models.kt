@@ -240,6 +240,11 @@ data class PointOrder(
     val amountFen: Int,
     val status: String,
     val statusLabel: String = "",
+    val amountYuan: String = "",
+    val payChannel: String? = null,
+    val grantKind: String = "points",
+    val createdAt: String? = null,
+    val paidAt: String? = null,
 )
 
 data class PointOrderLookup(

@@ -268,7 +268,8 @@ struct LookupView: View {
                     }
                 }
             }
-            if !tips.isEmpty {
+            // 上架前关闭：不展示别人的谐音助记。恢复时删掉 `false &&`。
+            if false, !tips.isEmpty {
                 ThemeHairline(color: Theme.gold).padding(.vertical, 12)
                 Text("谐音助记")
                     .font(.system(size: 11, weight: .bold))
@@ -498,10 +499,6 @@ struct LookupView: View {
 
     private func generateImage() async {
         guard let entry else { return }
-        guard model.session != nil else {
-            model.showLogin = true
-            return
-        }
         imageBusy = true
         defer { imageBusy = false }
         let hint = entry.definitions.first?.label ?? ""
@@ -511,7 +508,8 @@ struct LookupView: View {
 
     private func loadTips(_ word: String) async {
         let key = word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        tips = (try? await model.api.fetchHomophones(token: model.session?.token, word: word)) ?? []
+        // 上架前不拉取全网谐音。
+        tips = []
         var notes: [Definition] = []
         if let token = model.session?.token {
             notes = (try? await model.api.fetchWordNotes(token: token, word: word)) ?? []

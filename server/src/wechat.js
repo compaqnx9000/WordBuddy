@@ -71,7 +71,9 @@ export function wechatConfig() {
 }
 
 export function wechatOutBillNo(withdrawalId) {
-  return `wd${withdrawalId}`
+  // 微信商户单号只能是数字和字母，且至少 5 位。wd24 这种短号会被拒。
+  const digits = String(withdrawalId ?? '').replace(/\D/g, '') || '0'
+  return `WD${digits.padStart(8, '0')}`.slice(0, 32)
 }
 
 function signV3(privateKey, method, urlPath, timestamp, nonce, body) {
@@ -150,7 +152,8 @@ export function interpretWechatTransfer(data = {}, httpStatus = 200) {
         ok: true,
         pending: true,
         tradeNo,
-        remark: '请打开微信确认收款',
+        remark: '请在微信中确认收款',
+        packageInfo: data.package_info || null,
       }
     }
     if (['ACCEPTED', 'PROCESSING', 'TRANSFERING'].includes(state)) {
@@ -248,7 +251,8 @@ export function buildWechatAppPayParams(prepayId) {
   const timeStamp = String(Math.floor(Date.now() / 1000))
   const nonceStr = crypto.randomBytes(16).toString('hex')
   const packageValue = 'Sign=WXPay'
-  const message = `${cfg.appId}\n${timeStamp}\n${nonceStr}\nprepay_id=${id}\n`
+  // APP 调起支付的第四行是 prepay_id 本身，不能写成 prepay_id=xxx。
+  const message = `${cfg.appId}\n${timeStamp}\n${nonceStr}\n${id}\n`
   const sign = signAppPayMessage(cfg.privateKey, message)
   return {
     ok: true,

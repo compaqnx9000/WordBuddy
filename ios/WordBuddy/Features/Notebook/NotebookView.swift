@@ -154,7 +154,7 @@ struct NotebookView: View {
         .confirmationDialog("更多", isPresented: $showMore, titleVisibility: .hidden) {
             Button("编辑") {
                 guard model.session != nil else {
-                    model.showLogin = true
+                    model.openLogin()
                     return
                 }
                 guard !visibleWords.isEmpty else {
@@ -167,7 +167,7 @@ struct NotebookView: View {
             }
             Button("排序") {
                 guard model.session != nil else {
-                    model.showLogin = true
+                    model.openLogin()
                     return
                 }
                 pendingOrder = true
@@ -322,7 +322,7 @@ struct NotebookView: View {
             HStack(spacing: 8) {
                 Button {
                     guard model.session != nil else {
-                        model.showLogin = true
+                        model.openLogin()
                         return
                     }
                     newName = ""
@@ -401,7 +401,7 @@ struct NotebookView: View {
                 guard canDelete else { return }
                 chipLongPressed = true
                 guard model.session != nil else {
-                    model.showLogin = true
+                    model.openLogin()
                     return
                 }
                 pendingDelete = notebook
@@ -478,7 +478,7 @@ struct NotebookView: View {
                                                         noteTouch(word.id)
                                                         openSwipeId = nil
                                                         guard model.session != nil else {
-                                                            model.showLogin = true
+                                                            model.openLogin()
                                                             return
                                                         }
                                                         guard !favoriteTargets.isEmpty else {
@@ -499,7 +499,7 @@ struct NotebookView: View {
                                                         noteTouch(word.id)
                                                         openSwipeId = nil
                                                         guard model.session != nil else {
-                                                            model.showLogin = true
+                                                            model.openLogin()
                                                             return
                                                         }
                                                         guard !moveTargets.isEmpty else {
@@ -518,7 +518,7 @@ struct NotebookView: View {
                                                         noteTouch(word.id)
                                                         openSwipeId = nil
                                                         guard model.session != nil else {
-                                                            model.showLogin = true
+                                                            model.openLogin()
                                                             return
                                                         }
                                                         Task { await model.deleteWord(word.id) }
@@ -583,7 +583,7 @@ struct NotebookView: View {
                                             Button("收藏到…") {
                                                 noteTouch(word.id)
                                                 guard model.session != nil else {
-                                                    model.showLogin = true
+                                                    model.openLogin()
                                                     return
                                                 }
                                                 guard !favoriteTargets.isEmpty else {
@@ -597,7 +597,7 @@ struct NotebookView: View {
                                                 Button("取消收藏", role: .destructive) {
                                                     noteTouch(word.id)
                                                     guard model.session != nil else {
-                                                        model.showLogin = true
+                                                        model.openLogin()
                                                         return
                                                     }
                                                     Task { _ = await model.toggleCatalogFavorite(word) }
@@ -607,7 +607,7 @@ struct NotebookView: View {
                                             Button("移动到…") {
                                                 noteTouch(word.id)
                                                 guard model.session != nil else {
-                                                    model.showLogin = true
+                                                    model.openLogin()
                                                     return
                                                 }
                                                 guard !moveTargets.isEmpty else {
@@ -620,7 +620,7 @@ struct NotebookView: View {
                                             Button("删除", role: .destructive) {
                                                 noteTouch(word.id)
                                                 guard model.session != nil else {
-                                                    model.showLogin = true
+                                                    model.openLogin()
                                                     return
                                                 }
                                                 Task { await model.deleteWord(word.id) }

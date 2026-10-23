@@ -28,9 +28,9 @@ struct LoginView: View {
     @State private var needPassword = false
     @State private var bindToken: String?
     @State private var bindProvider = "微信"
-    @State private var sending = false
     @State private var loggingIn = false
     @State private var countdown = 0
+    @State private var countdownTask: Task<Void, Never>?
     @State private var errorMessage: String?
 
     private var bindingPhone: Bool { bindToken != nil }
@@ -52,6 +52,14 @@ struct LoginView: View {
 
                 brand
                     .padding(.top, 4)
+
+                if let notice = model.loginNotice, !notice.isEmpty {
+                    Text(notice)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.pink)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 16)
+                }
 
                 if !needPassword && !bindingPhone {
                     Text("登录后可同步收藏与生词本")
@@ -266,11 +274,10 @@ struct LoginView: View {
     }
 
     private var canSend: Bool {
-        countdown <= 0 && !sending && phone.count == 11
+        countdown <= 0 && phone.count == 11
     }
 
     private var sendTitle: String {
-        if sending { return "发送中" }
         if countdown > 0 { return "\(countdown)s" }
         return "获取验证码"
     }
@@ -323,22 +330,39 @@ struct LoginView: View {
             errorMessage = "请输入11位手机号"
             return
         }
-        sending = true
+        guard countdown <= 0 else { return }
         errorMessage = nil
-        defer { sending = false }
+        startCountdown()
         do {
             let debug = try await model.sendCode(phone: phone)
             if let debug, !debug.isEmpty {
                 code = String(debug.filter(\.isNumber).prefix(6))
             }
-            countdown = 60
-            while countdown > 0 {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                countdown -= 1
-            }
         } catch {
             errorMessage = error.localizedDescription
+            let message = error.localizedDescription
+            if !message.contains("频繁"), !message.contains("稍后再试") {
+                stopCountdown()
+            }
         }
+    }
+
+    private func startCountdown() {
+        countdownTask?.cancel()
+        countdown = 60
+        countdownTask = Task { @MainActor in
+            while countdown > 0, !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled, countdown > 0 else { return }
+                countdown -= 1
+            }
+        }
+    }
+
+    private func stopCountdown() {
+        countdownTask?.cancel()
+        countdownTask = nil
+        countdown = 0
     }
 
     private func submit() async {
@@ -516,6 +540,7 @@ private struct LoginField: View {
                             .keyboardType(keyboard)
                     }
                 }
+                .id(secure ? (revealed ? "plain" : "secure") : "text")
                 .font(.system(size: 15))
                 .foregroundStyle(Theme.onSurface)
                 .textInputAutocapitalization(.never)
@@ -525,7 +550,7 @@ private struct LoginField: View {
                 Button {
                     revealed.toggle()
                 } label: {
-                    Image(systemName: revealed ? "eye.slash" : "eye")
+                    Image(systemName: revealed ? "eye" : "eye.slash")
                         .font(.system(size: 16))
                         .foregroundStyle(Theme.onSurfaceVariant)
                 }

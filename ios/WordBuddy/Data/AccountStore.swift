@@ -68,6 +68,24 @@ enum ShanghaiDate {
     }
 }
 
+/// Guest AI mnemonic-image trial (device-local; server also allows unauthenticated free gens).
+enum GuestAiImageStore {
+    private static let defaults = UserDefaults.standard
+    private static let usedKey = "hotwords_guest_ai_image_used"
+    static let maxFreeUses = 1
+
+    static var usedCount: Int {
+        get { max(0, defaults.integer(forKey: usedKey)) }
+        set { defaults.set(max(0, newValue), forKey: usedKey) }
+    }
+
+    static var hasRemaining: Bool { usedCount < maxFreeUses }
+
+    static func markUsed() {
+        usedCount = min(maxFreeUses, usedCount + 1)
+    }
+}
+
 enum SettingsStore {
     private static let defaults = UserDefaults.standard
     private static let accentKey = "hotwords_accent"

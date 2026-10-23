@@ -64,8 +64,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.hotgis.wordbuddy.ads.DrawFeedController
 import com.hotgis.wordbuddy.auth.BiometricAuth
+import com.hotgis.wordbuddy.reminder.AppUpdateNotifier
 import com.hotgis.wordbuddy.reminder.StudyReminder
 import com.hotgis.wordbuddy.data.Accent
+import com.hotgis.wordbuddy.data.AppUpdateInfo
+import com.hotgis.wordbuddy.data.AppUpdater
 import com.hotgis.wordbuddy.data.Definition
 import com.hotgis.wordbuddy.data.AppTheme
 import com.hotgis.wordbuddy.data.Notebook
@@ -174,6 +177,27 @@ fun HotWordsRoot(
             context,
             Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
+    }
+    var pendingUpdateNotice by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    val updateNoticePermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val info = pendingUpdateNotice
+        pendingUpdateNotice = null
+        if (granted && info != null) AppUpdateNotifier.show(context, info)
+    }
+    LaunchedEffect(Unit) {
+        val info = runCatching { AppUpdater.fetchLatest() }.getOrNull()
+        if (info == null || !info.hasUpdate) {
+            AppUpdateNotifier.cancel(context)
+            return@LaunchedEffect
+        }
+        if (notificationsAllowed()) {
+            AppUpdateNotifier.show(context, info)
+        } else if (Build.VERSION.SDK_INT >= 33) {
+            pendingUpdateNotice = info
+            updateNoticePermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val words by viewModel.filteredWords.collectAsStateWithLifecycle()

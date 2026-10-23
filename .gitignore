@@ -44,3 +44,4 @@ ios/**/xcuserdata/
 *.xcuserstate
 h5/node_modules/
 h5/dist/
+secrets/
