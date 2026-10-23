@@ -49,6 +49,7 @@ import {
   handleAlipayNotify,
   handleWechatPayNotify,
   listPointPackages,
+  continuePointOrder,
   listUserPointOrders,
   pointPayConfig,
   simulatePayOrder,
@@ -63,10 +64,12 @@ import {
 import { aiImagePointsCost, grantSignupBonus, listPointsLedger } from './points.js'
 import { alipayConfig, buildAppAuthInfo, exchangeAlipayAuthCode, fetchAlipayUserProfile } from './alipay.js'
 import {
+  applyWechatAuthorizationNotify,
   createWithdrawal,
   listWithdrawals,
   withdrawConfig,
 } from './withdrawals.js'
+import { parseWechatAuthNotify } from './wechat.js'
 import { exchangeWechatCode, fetchWechatUserProfile, wechatLoginConfig } from './wechatLogin.js'
 import {
   bindInviteCode,
@@ -702,7 +705,15 @@ router.post('/me/wechat/bind', authRequired, async (req, res) => {
       `UPDATE users
        SET wechat_openid = $2,
            wechat_unionid = COALESCE($3, wechat_unionid),
-           wechat_account = $2
+           wechat_account = $2,
+           wechat_authorization_id = CASE
+             WHEN wechat_openid IS DISTINCT FROM $2 THEN NULL
+             ELSE wechat_authorization_id
+           END,
+           wechat_out_authorization_no = CASE
+             WHEN wechat_openid IS DISTINCT FROM $2 THEN NULL
+             ELSE wechat_out_authorization_no
+           END
        WHERE id = $1`,
       [req.user.id, openid, exchanged.unionid],
     )
@@ -1125,6 +1136,7 @@ router.patch('/me', authRequired, async (req, res) => {
     return
   }
 
+  const clearWechatAuth = Boolean(req.body?.wechatAccount != null && !wechatAccount)
   const updated = (
     await query(
       `UPDATE users SET
@@ -1140,7 +1152,9 @@ router.patch('/me', authRequired, async (req, res) => {
          alipay_account = $11,
          alipay_name = $12,
          wechat_account = $13,
-         wechat_openid = $14
+         wechat_openid = $14,
+         wechat_authorization_id = CASE WHEN $15 THEN NULL ELSE wechat_authorization_id END,
+         wechat_out_authorization_no = CASE WHEN $15 THEN NULL ELSE wechat_out_authorization_no END
        WHERE id = $1
        RETURNING ${USER_PROFILE_SQL}`,
       [
@@ -1158,6 +1172,7 @@ router.patch('/me', authRequired, async (req, res) => {
         alipayName,
         wechatAccount,
         wechatOpenId,
+        clearWechatAuth,
       ],
     )
   ).rows[0]
@@ -2870,6 +2885,7 @@ router.get('/me/point-orders', authRequired, async (req, res) => {
       page: req.query.page,
       pageSize: req.query.pageSize,
       grantKind: req.query.grantKind,
+      hideClosed: true,
     })
     res.json(data)
   } catch (error) {
@@ -2898,6 +2914,29 @@ router.get('/me/point-orders/:id', authRequired, async (req, res) => {
   } catch (error) {
     console.error('[point-orders/get]', error)
     res.status(500).json({ error: '加载订单失败' })
+  }
+})
+
+router.post('/me/point-orders/:id/continue', authRequired, async (req, res) => {
+  try {
+    const result = await continuePointOrder({
+      userId: req.user.id,
+      orderId: Number(req.params.id),
+    })
+    if (!result.ok) {
+      res.status(400).json({ error: result.error || '无法继续支付' })
+      return
+    }
+    res.json({
+      order: result.order,
+      channel: result.channel,
+      orderInfo: result.orderInfo,
+      wechatPay: result.wechatPay,
+      sandbox: result.sandbox,
+    })
+  } catch (error) {
+    console.error('[point-orders/continue]', error)
+    res.status(500).json({ error: '无法继续支付' })
   }
 })
 
@@ -2941,6 +2980,31 @@ router.post('/wechat/notify', async (req, res) => {
     res.status(result.httpStatus || (result.ok ? 200 : 500)).json(result.reply || { code: 'FAIL', message: '失败' })
   } catch (error) {
     console.error('[wechat/notify]', error)
+    res.status(500).json({ code: 'FAIL', message: '失败' })
+  }
+})
+
+/** 商家转账「免确认收款授权」结果回调 */
+router.post('/wechat/auth-notify', async (req, res) => {
+  try {
+    const parsed = parseWechatAuthNotify(req.body || {})
+    if (!parsed.ok) {
+      res.status(400).json({ code: 'FAIL', message: parsed.error || '解密失败' })
+      return
+    }
+    const applied = await applyWechatAuthorizationNotify({
+      outAuthorizationNo: parsed.outAuthorizationNo,
+      authorizationId: parsed.authorizationId,
+      openid: parsed.openid,
+      state: parsed.state,
+    })
+    if (!applied.ok) {
+      res.status(500).json({ code: 'FAIL', message: applied.error || '处理失败' })
+      return
+    }
+    res.status(200).json({ code: 'SUCCESS', message: '成功' })
+  } catch (error) {
+    console.error('[wechat/auth-notify]', error)
     res.status(500).json({ code: 'FAIL', message: '失败' })
   }
 })

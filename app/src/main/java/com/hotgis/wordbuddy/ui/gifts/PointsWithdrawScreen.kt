@@ -573,7 +573,7 @@ fun PointsWithdrawScreen(
         StellarConfirmDialog(
             title = "确认提现",
             message = if (channel == "wechat") {
-                "将消耗 ${selectedTier.pointsCost} 搭币，向微信发放 ${selectedTier.label}（¥${selectedTier.amountYuan}）。每天只能提现一次，微信和支付宝共用这一次。接下来会打开微信，请在微信里确认收款后才会到账。"
+                "将消耗 ${selectedTier.pointsCost} 搭币，向微信发放 ${selectedTier.label}（¥${selectedTier.amountYuan}）。每天只能提现一次，微信和支付宝共用这一次。首次提现会打开微信确认收款并授权免确认；授权后再次提现将直接到账零钱。"
             } else {
                 "将消耗 ${selectedTier.pointsCost} 搭币，向${channelName}账号「${maskPayoutAccount(selectedAccount)}」发放 ${selectedTier.label}（¥${selectedTier.amountYuan}）。每天只能提现一次，微信和支付宝共用这一次。"
             },
@@ -604,7 +604,7 @@ fun PointsWithdrawScreen(
                                     when (launch.result) {
                                         "cancel" -> "已取消确认。可在提现记录里再次打开微信收款页"
                                         "fail" -> "无法打开微信确认收款"
-                                        else -> "请在微信里点确认收款，到账后零钱才会增加"
+                                        else -> "请在微信里确认收款并授权；之后提现将直接到账"
                                     }
                                 },
                                 onFailure = { it.message ?: "无法打开微信确认收款" },
@@ -740,7 +740,7 @@ private fun WithdrawHistoryCard(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = "去微信确认收款",
+                    text = "去微信确认/授权",
                     color = Stellar.OnPrimary,
                     fontSize = 14.ssp(),
                     fontWeight = FontWeight.SemiBold,

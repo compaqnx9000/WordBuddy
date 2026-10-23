@@ -3,7 +3,17 @@ import { pool, query } from './db.js'
 import { adjustPoints, aiImagePointsCost } from './points.js'
 import { adjustImageCredits, findImageCreditPackage } from './imageCredits.js'
 import { alipayConfig, buildAppPayOrderInfo, callAlipay, verifyNotify } from './alipay.js'
-import { createWechatAppPrepay, parseWechatPayNotify, wechatConfig } from './wechat.js'
+import {
+  buildWechatAppPayParams,
+  closeWechatPayByOutTradeNo,
+  createWechatAppPrepay,
+  parseWechatPayNotify,
+  queryWechatPayByOutTradeNo,
+  wechatConfig,
+  wechatExpireAt,
+} from './wechat.js'
+
+export const POINT_ORDER_TTL_MS = 10 * 60 * 1000
 
 function defaultPackages() {
   const cost = Math.max(1, aiImagePointsCost())
@@ -85,6 +95,10 @@ function mapOrder(row) {
     providerTradeNo: row.provider_trade_no || row.alipay_trade_no || null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
     paidAt: row.paid_at ? new Date(row.paid_at).toISOString() : null,
+    expiresAt:
+      row.status === 'pending' && row.created_at
+        ? new Date(new Date(row.created_at).getTime() + POINT_ORDER_TTL_MS).toISOString()
+        : null,
   }
 }
 
@@ -134,8 +148,16 @@ export async function createPointOrder({ userId, packageId, channel = 'alipay' }
       description: grantKind === 'images' ? `词搭子-助记配图${pkg.points}张` : `词搭子-${pkg.title}`,
       amountFen: pkg.priceFen,
       attach: String(row.id),
+      timeExpire: wechatExpireAt(Date.now() + POINT_ORDER_TTL_MS),
     })
-    if (!built.ok) return { ok: false, error: built.error || '微信下单失败' }
+    if (!built.ok) {
+      await query(`UPDATE point_orders SET status = 'closed', updated_at = now() WHERE id = $1`, [row.id])
+      return { ok: false, error: built.error || '微信下单失败' }
+    }
+    await query(`UPDATE point_orders SET wechat_prepay_id = $2, updated_at = now() WHERE id = $1`, [
+      row.id,
+      built.prepayId,
+    ])
     return {
       ok: true,
       order: mapOrder(row),
@@ -156,7 +178,10 @@ export async function createPointOrder({ userId, packageId, channel = 'alipay' }
       totalAmountYuan: (pkg.priceFen / 100).toFixed(2),
       body: grantKind === 'images' ? `${pkg.points}张助记配图，仅可用于单词配图` : `${pkg.points}搭币`,
     })
-    if (!built.ok) return { ok: false, error: built.error }
+    if (!built.ok) {
+      await query(`UPDATE point_orders SET status = 'closed', updated_at = now() WHERE id = $1`, [row.id])
+      return { ok: false, error: built.error }
+    }
     orderInfo = built.orderInfo
   }
 
@@ -210,7 +235,7 @@ export async function fulfillPaidOrder({
       await client.query('COMMIT')
       return { ok: true, already: true, order: mapOrder(row) }
     }
-    if (row.status !== 'pending') {
+    if (row.status !== 'pending' && row.status !== 'closed') {
       await client.query('ROLLBACK')
       return { ok: false, error: '订单状态不可支付' }
     }
@@ -476,11 +501,128 @@ export async function handleWechatPayNotify(body) {
   return { ok: true, httpStatus: 200, reply: { code: 'SUCCESS', message: '成功' } }
 }
 
-export async function listUserPointOrders(userId, { page = 1, pageSize = 20, grantKind } = {}) {
+async function settleOrCloseExpired(row) {
+  if (!row || row.status !== 'pending') return
+  const channel = row.pay_channel || 'alipay'
+  try {
+    if (channel === 'wechat') {
+      const queried = await queryWechatPayByOutTradeNo(row.out_trade_no)
+      if (queried.ok && queried.tradeState === 'SUCCESS') {
+        await fulfillPaidOrder({
+          outTradeNo: row.out_trade_no,
+          providerTradeNo: queried.transactionId,
+          paidAmountFen: queried.amountFen,
+        })
+        return
+      }
+      if (!queried.ok || queried.tradeState === 'NOTPAY' || queried.tradeState === 'USERPAYING') {
+        const closed = await closeWechatPayByOutTradeNo(row.out_trade_no)
+        if (closed?.paid) {
+          const again = await queryWechatPayByOutTradeNo(row.out_trade_no)
+          if (again.ok && again.tradeState === 'SUCCESS') {
+            await fulfillPaidOrder({
+              outTradeNo: row.out_trade_no,
+              providerTradeNo: again.transactionId,
+              paidAmountFen: again.amountFen,
+            })
+            return
+          }
+        }
+      }
+    } else {
+      const confirmed = await confirmAlipayOrder(row)
+      if (confirmed?.ok) return
+    }
+  } catch (error) {
+    console.error('[point-orders/expire]', row.id, error)
+  }
+  await query(
+    `UPDATE point_orders SET status = 'closed', updated_at = now()
+     WHERE id = $1 AND status = 'pending'`,
+    [row.id],
+  )
+}
+
+export async function expireStalePointOrders(userId) {
+  const rows = (
+    await query(
+      `SELECT * FROM point_orders
+       WHERE user_id = $1 AND status = 'pending'
+         AND created_at <= now() - interval '10 minutes'`,
+      [userId],
+    )
+  ).rows
+  for (const row of rows) {
+    await settleOrCloseExpired(row)
+  }
+}
+
+export async function continuePointOrder({ userId, orderId }) {
+  await expireStalePointOrders(userId)
+  const row = (
+    await query('SELECT * FROM point_orders WHERE id = $1 AND user_id = $2', [orderId, userId])
+  ).rows[0]
+  if (!row) return { ok: false, error: '订单不存在' }
+  if (row.status === 'paid') return { ok: false, error: '这笔订单已经支付' }
+  if (row.status !== 'pending') return { ok: false, error: '订单已取消，请重新购买' }
+  const left = new Date(row.created_at).getTime() + POINT_ORDER_TTL_MS - Date.now()
+  if (left <= 0) {
+    await settleOrCloseExpired(row)
+    return { ok: false, error: '超过 10 分钟未支付，订单已取消' }
+  }
+  const channel = row.pay_channel || 'alipay'
+  if (channel === 'wechat') {
+    const prepayId = String(row.wechat_prepay_id || '').trim()
+    if (!prepayId) return { ok: false, error: '这笔订单无法继续支付，请重新购买' }
+    const built = buildWechatAppPayParams(prepayId)
+    if (!built.ok) return built
+    return {
+      ok: true,
+      order: mapOrder(row),
+      channel: 'wechat',
+      wechatPay: built.pay,
+      orderInfo: null,
+      sandbox: false,
+    }
+  }
+  const ali = alipayConfig()
+  if (ali.sandbox) {
+    return {
+      ok: true,
+      order: mapOrder(row),
+      channel: 'alipay',
+      orderInfo: null,
+      wechatPay: null,
+      sandbox: true,
+    }
+  }
+  const minutes = Math.max(1, Math.ceil(left / 60_000))
+  const image = row.grant_kind === 'images'
+  const built = buildAppPayOrderInfo({
+    outTradeNo: row.out_trade_no,
+    subject: image ? `词搭子-助记配图${row.points}张` : '词搭子搭币',
+    totalAmountYuan: (Number(row.amount_fen) / 100).toFixed(2),
+    body: image ? `${row.points}张助记配图，仅可用于单词配图` : `${row.points}搭币`,
+    timeoutExpress: `${minutes}m`,
+  })
+  if (!built.ok) return built
+  return {
+    ok: true,
+    order: mapOrder(row),
+    channel: 'alipay',
+    orderInfo: built.orderInfo,
+    wechatPay: null,
+    sandbox: false,
+  }
+}
+
+export async function listUserPointOrders(userId, { page = 1, pageSize = 20, grantKind, hideClosed = false } = {}) {
+  await expireStalePointOrders(userId)
   const p = Math.max(1, Number(page) || 1)
   const size = Math.min(50, Math.max(1, Number(pageSize) || 20))
   const kind = grantKind === 'images' || grantKind === 'points' ? grantKind : null
-  const where = kind ? 'WHERE user_id = $1 AND grant_kind = $2' : 'WHERE user_id = $1'
+  let where = kind ? 'WHERE user_id = $1 AND grant_kind = $2' : 'WHERE user_id = $1'
+  if (hideClosed) where += ` AND status <> 'closed'`
   const params = kind ? [userId, kind] : [userId]
   const total = (
     await query(`SELECT count(*)::int AS n FROM point_orders ${where}`, params)

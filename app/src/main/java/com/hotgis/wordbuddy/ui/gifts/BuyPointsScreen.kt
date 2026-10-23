@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -58,6 +59,7 @@ import com.hotgis.wordbuddy.ui.design.ssp
 import com.hotgis.wordbuddy.ui.lookup.Stellar
 import com.hotgis.wordbuddy.ui.lookup.stellarGlass
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
+import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -87,6 +89,8 @@ fun BuyPointsScreen(
     var showHistory by remember { mutableStateOf(false) }
     var history by remember { mutableStateOf<List<PointOrder>>(emptyList()) }
     var historyLoading by remember { mutableStateOf(false) }
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var resumingId by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(imageCredits) {
         balance = imageCredits
@@ -121,6 +125,95 @@ fun BuyPointsScreen(
                     Toast.makeText(context, it.message ?: "加载购买记录失败", Toast.LENGTH_SHORT).show()
                 }
             historyLoading = false
+        }
+    }
+
+    LaunchedEffect(showHistory) {
+        if (!showHistory) return@LaunchedEffect
+        while (true) {
+            delay(1000)
+            nowMillis = System.currentTimeMillis()
+        }
+    }
+
+    val expiredPendingIds = history
+        .filter { it.status == "pending" && it.payLeftMs(nowMillis) <= 0L }
+        .map { it.id }
+    LaunchedEffect(showHistory, expiredPendingIds) {
+        if (showHistory && expiredPendingIds.isNotEmpty()) loadHistory()
+    }
+
+    fun settlePaid(token: String, created: PointPurchaseResult, credits: Int) {
+        scope.launch {
+            val paid = payOrder(activity ?: return@launch, api, token, created)
+            if (paid == null) {
+                buyingId = null
+                resumingId = null
+                if (showHistory) loadHistory()
+                return@launch
+            }
+            fun applyCredits(next: Int) {
+                balance = next
+                onCreditsUpdated(next)
+            }
+            if (paid.imageCredits != null) {
+                applyCredits(paid.imageCredits)
+                buyingId = null
+                resumingId = null
+                Toast.makeText(context, "已到账 $credits 张配图", Toast.LENGTH_SHORT).show()
+            } else {
+                var credited = false
+                for (attempt in 0 until 12) {
+                    if (attempt > 0) delay(500)
+                    val lookup = runCatching {
+                        withContext(Dispatchers.IO) { api.getPointOrder(token, created.orderId) }
+                    }.getOrNull()
+                    if (lookup?.order?.status == "paid") {
+                        val next = lookup.imageCredits ?: (balance + credits).coerceAtLeast(0)
+                        applyCredits(next)
+                        credited = true
+                        break
+                    }
+                }
+                buyingId = null
+                resumingId = null
+                Toast.makeText(
+                    context,
+                    if (credited) "已到账 $credits 张配图" else "支付结果确认中，请稍后查看剩余配图",
+                    if (credited) Toast.LENGTH_SHORT else Toast.LENGTH_LONG,
+                ).show()
+            }
+            if (showHistory) loadHistory()
+        }
+    }
+
+    fun resume(order: PointOrder) {
+        val token = authToken
+        if (token.isNullOrBlank()) {
+            onLogin()
+            return
+        }
+        if (activity == null) {
+            Toast.makeText(context, "无法调起支付", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (buyingId != null || resumingId != null) return
+        if (order.payLeftMs(System.currentTimeMillis()) <= 0L) {
+            Toast.makeText(context, "超过 10 分钟未支付，订单已取消", Toast.LENGTH_SHORT).show()
+            loadHistory()
+            return
+        }
+        resumingId = order.id
+        scope.launch {
+            val created = runCatching {
+                withContext(Dispatchers.IO) { api.continuePointOrder(token, order.id) }
+            }.getOrElse {
+                Toast.makeText(context, it.message ?: "无法继续支付", Toast.LENGTH_SHORT).show()
+                resumingId = null
+                loadHistory()
+                return@launch
+            }
+            settlePaid(token, created, order.points)
         }
     }
 
@@ -355,9 +448,15 @@ fun BuyPointsScreen(
     }
 
     if (showHistory) {
+        val visibleHistory = history.filter { order ->
+            order.status != "pending" || order.payLeftMs(nowMillis) > 0L
+        }
         PurchaseHistoryDialog(
-            items = history,
+            items = visibleHistory,
             loading = historyLoading,
+            nowMillis = nowMillis,
+            resumingId = resumingId,
+            onContinue = { resume(it) },
             onDismiss = { showHistory = false },
         )
     }
@@ -424,12 +523,12 @@ private fun PackageCard(
         ) {
             if (busy) {
                 CircularProgressIndicator(
-                    color = Stellar.OnSurface,
+                    color = Stellar.OnPrimary,
                     strokeWidth = 2.dp,
                     modifier = Modifier.size(18.sdp()),
                 )
             } else {
-                Text("购买", color = Stellar.OnSurface, fontSize = 14.ssp(), fontWeight = FontWeight.SemiBold)
+                Text("购买", color = Stellar.OnPrimary, fontSize = 14.ssp(), fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -439,6 +538,9 @@ private fun PackageCard(
 private fun PurchaseHistoryDialog(
     items: List<PointOrder>,
     loading: Boolean,
+    nowMillis: Long,
+    resumingId: Long?,
+    onContinue: (PointOrder) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Dialog(
@@ -493,7 +595,12 @@ private fun PurchaseHistoryDialog(
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         items(items, key = { it.id }) { item ->
-                            PurchaseHistoryCard(item)
+                            PurchaseHistoryCard(
+                                item = item,
+                                nowMillis = nowMillis,
+                                busy = resumingId == item.id,
+                                onContinue = { onContinue(item) },
+                            )
                         }
                     }
                 }
@@ -503,13 +610,19 @@ private fun PurchaseHistoryDialog(
 }
 
 @Composable
-private fun PurchaseHistoryCard(item: PointOrder) {
+private fun PurchaseHistoryCard(
+    item: PointOrder,
+    nowMillis: Long,
+    busy: Boolean,
+    onContinue: () -> Unit,
+) {
     val channel = item.payChannel ?: "alipay"
     val channelName = if (channel == "wechat") "微信" else "支付宝"
     val amount = item.amountYuan.ifBlank {
         val fen = item.amountFen.coerceAtLeast(0)
         if (fen % 100 == 0) (fen / 100).toString() else "%.2f".format(fen / 100.0)
     }
+    val pendingLeft = if (item.status == "pending") item.payLeftMs(nowMillis) else 0L
     Column(
         Modifier
             .fillMaxWidth()
@@ -528,7 +641,11 @@ private fun PurchaseHistoryCard(item: PointOrder) {
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = item.statusLabel.ifBlank { item.status },
+                text = if (pendingLeft > 0L) {
+                    "待支付 ${formatPayLeft(pendingLeft)}"
+                } else {
+                    item.statusLabel.ifBlank { item.status }
+                },
                 color = when (item.status) {
                     "paid" -> Stellar.Cyan
                     "refunded" -> Stellar.Pink
@@ -548,10 +665,50 @@ private fun PurchaseHistoryCard(item: PointOrder) {
             when (item.status) {
                 "paid", "refunded" -> formatWithdrawTime(item.paidAt)
                 "closed" -> "—"
-                else -> "待支付"
+                else -> "剩余 ${formatPayLeft(pendingLeft)}"
             },
         )
+        if (pendingLeft > 0L) {
+            Spacer(Modifier.height(10.sdp()))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.sdp()))
+                    .background(if (busy) Stellar.Cyan.copy(alpha = 0.4f) else Stellar.Cyan)
+                    .clickable(enabled = !busy, onClick = onContinue)
+                    .padding(vertical = 10.sdp()),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(
+                        color = Stellar.OnPrimary,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(18.sdp()),
+                    )
+                } else {
+                    Text(
+                        text = "继续支付",
+                        color = Stellar.OnPrimary,
+                        fontSize = 14.ssp(),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
     }
+}
+
+private fun PointOrder.payLeftMs(nowMillis: Long): Long {
+    val raw = expiresAt ?: return 0L
+    val expires = runCatching { Instant.parse(raw).toEpochMilli() }.getOrDefault(0L)
+    return (expires - nowMillis).coerceAtLeast(0L)
+}
+
+private fun formatPayLeft(ms: Long): String {
+    val totalSec = (ms / 1000L).toInt().coerceAtLeast(0)
+    val minutes = totalSec / 60
+    val seconds = totalSec % 60
+    return "%d:%02d".format(minutes, seconds)
 }
 
 private data class PaidOutcome(val balance: Int?, val imageCredits: Int? = null)

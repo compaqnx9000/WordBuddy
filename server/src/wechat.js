@@ -53,7 +53,11 @@ export function wechatConfig() {
   )
   const apiV3Key = String(process.env.WECHAT_API_V3_KEY || '').trim()
   const notifyUrl = String(process.env.WECHAT_PAY_NOTIFY_URL || '').trim()
+  const authNotifyUrl =
+    String(process.env.WECHAT_AUTH_NOTIFY_URL || '').trim() ||
+    (notifyUrl ? notifyUrl.replace(/\/wechat\/notify\/?$/i, '/wechat/auth-notify') : '')
   const sceneId = String(process.env.WECHAT_TRANSFER_SCENE_ID || '1000').trim() || '1000'
+  const wechatpaySerial = String(process.env.WECHAT_PAY_SERIAL || process.env.WECHAT_PUB_KEY_ID || '').trim()
   const merchantReady = Boolean(mchId && appId && serialNo && privateKey)
   return {
     mchId,
@@ -62,6 +66,8 @@ export function wechatConfig() {
     privateKey,
     apiV3Key,
     notifyUrl,
+    authNotifyUrl,
+    wechatpaySerial,
     sceneId,
     merchantReady,
     transferReady: merchantReady,
@@ -74,6 +80,15 @@ export function wechatOutBillNo(withdrawalId) {
   // 微信商户单号只能是数字和字母，且至少 5 位。wd24 这种短号会被拒。
   const digits = String(withdrawalId ?? '').replace(/\D/g, '') || '0'
   return `WD${digits.padStart(8, '0')}`.slice(0, 32)
+}
+
+/** Stable merchant-side免确认授权单号 per user (digits/letters only, ≤32). */
+export function wechatOutAuthorizationNo(userId, generation = 1) {
+  const digits = String(userId ?? '').replace(/\D/g, '') || '0'
+  const gen = Math.max(1, Number(generation) || 1)
+  const base = `WXA${digits.padStart(8, '0')}`
+  if (gen <= 1) return base.slice(0, 32)
+  return `${base}G${gen}`.slice(0, 32)
 }
 
 function signV3(privateKey, method, urlPath, timestamp, nonce, body) {
@@ -101,19 +116,23 @@ function authorization(cfg, method, urlPath, body) {
   return `WECHATPAY2-SHA256-RSA2048 mchid="${cfg.mchId}",nonce_str="${nonce}",signature="${signature}",timestamp="${timestamp}",serial_no="${cfg.serialNo}"`
 }
 
-async function callWechat(method, urlPath, bodyObj) {
+async function callWechat(method, urlPath, bodyObj, { needWechatpaySerial = false } = {}) {
   const cfg = wechatConfig()
   if (!cfg.merchantReady) {
     return { ok: false, error: '微信商户号/API证书尚未配置完整（需 MCH_ID、证书序列号、apiclient_key）' }
   }
   const body = bodyObj == null ? '' : JSON.stringify(bodyObj)
+  const headers = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    Authorization: authorization(cfg, method, urlPath, body),
+  }
+  if (needWechatpaySerial && cfg.wechatpaySerial) {
+    headers['Wechatpay-Serial'] = cfg.wechatpaySerial
+  }
   const response = await fetch(`${HOST}${urlPath}`, {
     method,
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Authorization: authorization(cfg, method, urlPath, body),
-    },
+    headers,
     body: method === 'GET' ? undefined : body,
     signal: AbortSignal.timeout(25_000),
   })
@@ -188,11 +207,118 @@ export async function queryWechatTransfer(outBillNo) {
   return { ...interpretWechatTransfer(result.data || {}, result.httpStatus), raw: result.data }
 }
 
+export function interpretWechatAuthorization(data = {}, httpStatus = 200) {
+  if (httpStatus === 404 || data.code === 'NOT_FOUND') {
+    return { ok: false, missing: true, error: data.message || '授权记录不存在' }
+  }
+  if (httpStatus < 200 || httpStatus >= 300) {
+    return { ok: false, error: data.message || data.code || '查询授权失败', subCode: data.code || null }
+  }
+  const state = String(data.state || '').toUpperCase()
+  return {
+    ok: true,
+    state,
+    takingEffect: state === 'TAKING_EFFECT',
+    waitConfirm: state === 'WAIT_USER_CONFIRM',
+    closed: state === 'CLOSED',
+    authorizationId: data.authorization_id || null,
+    outAuthorizationNo: data.out_authorization_no || null,
+    openid: data.openid || null,
+    raw: data,
+  }
+}
+
+export async function queryWechatAuthorization(outAuthorizationNo) {
+  const no = String(outAuthorizationNo || '').trim()
+  if (!no) return { ok: false, missing: true, error: '缺少授权单号' }
+  const pathUrl = `/v3/fund-app/mch-transfer/user-confirm-authorization/out-authorization-no/${encodeURIComponent(no)}`
+  const result = await callWechat('GET', pathUrl, null)
+  if (!result.ok) return result
+  return interpretWechatAuthorization(result.data || {}, result.httpStatus)
+}
+
+function httpsNotify(url) {
+  const u = String(url || '').trim()
+  return /^https:\/\//i.test(u) ? u.slice(0, 255) : ''
+}
+
+function transferBodyBase({ outBillNo, amountFen, remark }) {
+  const cfg = wechatConfig()
+  const notify = httpsNotify(cfg.notifyUrl)
+  return {
+    appid: cfg.appId,
+    out_bill_no: String(outBillNo).slice(0, 32),
+    transfer_scene_id: cfg.sceneId,
+    transfer_amount: Math.max(1, Number(amountFen) || 0),
+    transfer_remark: String(remark || '搭币提现').slice(0, 32),
+    user_recv_perception: cfg.sceneId === '1005' ? '劳务报酬' : '现金奖励',
+    transfer_scene_report_infos: sceneReportInfos(cfg.sceneId),
+    ...(notify ? { notify_url: notify } : {}),
+  }
+}
+
+async function finishTransferPost(outBillNo, post) {
+  if (!post.ok) return post
+  if (post.httpStatus >= 500 || post.data?.code === 'SYSTEM_ERROR') {
+    const queried = await queryWechatTransfer(outBillNo)
+    if (queried.ok || queried.missing === false) return queried
+    return { ok: true, pending: true, remark: '微信结果确认中，请稍后在记录中查看' }
+  }
+  if (post.httpStatus >= 400) {
+    return {
+      ok: false,
+      error: post.data?.message || post.data?.code || '微信打款失败',
+      subCode: post.data?.code || null,
+      authInvalid: /授权|AUTHORIZ/i.test(String(post.data?.message || post.data?.code || '')),
+      raw: post.data,
+    }
+  }
+  return interpretWechatTransfer(post.data || {}, post.httpStatus)
+}
+
+/**
+ * 用户已免确认授权后的直达零钱转账（无需拉起确认页）。
+ * POST /v3/fund-app/mch-transfer/transfer-bills/transfer
+ */
+export async function transferToWechatAuthorized({
+  outBillNo,
+  amountFen,
+  remark = '搭币提现',
+  authorizationId,
+  outAuthorizationNo,
+} = {}) {
+  const cfg = wechatConfig()
+  if (!cfg.transferReady) {
+    return { ok: false, error: '微信商家转账未配置商户号/证书' }
+  }
+  const authId = String(authorizationId || '').trim()
+  const outAuth = String(outAuthorizationNo || '').trim()
+  if (!authId && !outAuth) {
+    return { ok: false, error: '缺少免确认收款授权' }
+  }
+  const body = {
+    ...transferBodyBase({ outBillNo, amountFen, remark }),
+    ...(authId ? { authorization_id: authId } : { out_authorization_no: outAuth }),
+  }
+  const post = await callWechat('POST', '/v3/fund-app/mch-transfer/transfer-bills/transfer', body, {
+    needWechatpaySerial: true,
+  })
+  return finishTransferPost(outBillNo, post)
+}
+
+/**
+ * 首次：发起转账并引导确认收款 + 免确认授权。
+ * POST /v3/fund-app/mch-transfer/transfer-bills/pre-transfer-with-authorization
+ * 无授权信息时回退旧的 transfer-bills（仅确认收款）。
+ */
 export async function transferToWechat({
   outBillNo,
   amountFen,
   openid,
   remark = '搭币提现',
+  outAuthorizationNo,
+  userDisplayName = '词搭子用户',
+  authorizationId,
 } = {}) {
   const cfg = wechatConfig()
   if (!cfg.transferReady) {
@@ -202,25 +328,51 @@ export async function transferToWechat({
   if (!isWechatOpenId(id)) {
     return { ok: false, error: '请先在个人资料中绑定微信账号' }
   }
+
+  const authId = String(authorizationId || '').trim()
+  if (authId) {
+    const authorized = await transferToWechatAuthorized({
+      outBillNo,
+      amountFen,
+      remark,
+      authorizationId: authId,
+      outAuthorizationNo,
+    })
+    if (authorized.ok || !authorized.authInvalid) return authorized
+  }
+
   const amount = Math.max(1, Number(amountFen) || 0)
-  const body = {
-    appid: cfg.appId,
-    out_bill_no: String(outBillNo).slice(0, 32),
-    transfer_scene_id: cfg.sceneId,
+  const outAuth = String(outAuthorizationNo || '').trim()
+  const authNotify = httpsNotify(cfg.authNotifyUrl)
+  const canRequestAuth = Boolean(outAuth && authNotify)
+  const base = {
+    ...transferBodyBase({ outBillNo, amountFen: amount, remark }),
     openid: id,
-    transfer_amount: amount,
-    transfer_remark: String(remark).slice(0, 32),
-    user_recv_perception: cfg.sceneId === '1005' ? '劳务报酬' : '现金奖励',
-    transfer_scene_report_infos: sceneReportInfos(cfg.sceneId),
   }
-  const post = await callWechat('POST', '/v3/fund-app/mch-transfer/transfer-bills', body)
-  if (!post.ok) return post
-  if (post.httpStatus >= 500 || post.data?.code === 'SYSTEM_ERROR') {
-    const queried = await queryWechatTransfer(outBillNo)
-    if (queried.ok || queried.missing === false) return queried
-    return { ok: true, pending: true, remark: '微信结果确认中，请稍后在记录中查看' }
+
+  if (canRequestAuth) {
+    const body = {
+      ...base,
+      authorization_info: {
+        user_display_name: String(userDisplayName || '词搭子用户').slice(0, 32),
+        out_authorization_no: outAuth.slice(0, 32),
+        authorization_notify_url: authNotify,
+      },
+    }
+    const post = await callWechat(
+      'POST',
+      '/v3/fund-app/mch-transfer/transfer-bills/pre-transfer-with-authorization',
+      body,
+      { needWechatpaySerial: true },
+    )
+    const finished = await finishTransferPost(outBillNo, post)
+    if (finished.ok || finished.pending) return { ...finished, requestedAuth: true }
+    // 若免确认预下单失败，回退到普通确认收款，避免提现不可用
+    console.error('[wechat-transfer] pre-transfer-with-auth failed', post.httpStatus, post.data)
   }
-  return interpretWechatTransfer(post.data || {}, post.httpStatus)
+
+  const post = await callWechat('POST', '/v3/fund-app/mch-transfer/transfer-bills', base)
+  return finishTransferPost(outBillNo, post)
 }
 
 function signAppPayMessage(privateKey, message) {
@@ -238,6 +390,61 @@ function signAppPayMessage(privateKey, message) {
     }
   }
   throw lastError || new Error('微信商户私钥无效')
+}
+
+/** WeChat time_expire: yyyy-MM-DDTHH:mm:ss+08:00 */
+export function wechatExpireAt(epochMs) {
+  const d = new Date(Number(epochMs) || Date.now())
+  const pad = (n) => String(n).padStart(2, '0')
+  // Asia/Shanghai offset fixed +08:00 for merchant APIs
+  const utc = d.getTime() + 8 * 60 * 60 * 1000
+  const t = new Date(utc)
+  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}T${pad(t.getUTCHours())}:${pad(t.getUTCMinutes())}:${pad(t.getUTCSeconds())}+08:00`
+}
+
+export async function queryWechatPayByOutTradeNo(outTradeNo) {
+  const cfg = wechatConfig()
+  const tradeNo = String(outTradeNo || '').trim()
+  if (!tradeNo) return { ok: false, error: '缺少商户订单号' }
+  const pathUrl = `/v3/pay/transactions/out-trade-no/${encodeURIComponent(tradeNo)}?mchid=${encodeURIComponent(cfg.mchId)}`
+  const result = await callWechat('GET', pathUrl, null)
+  if (!result.ok) return result
+  if (result.httpStatus === 404 || result.data?.code === 'ORDER_NOT_EXIST') {
+    return { ok: false, missing: true, error: result.data?.message || '订单不存在' }
+  }
+  if (result.httpStatus < 200 || result.httpStatus >= 300) {
+    return { ok: false, error: result.data?.message || result.data?.code || '查单失败', raw: result.data }
+  }
+  const data = result.data || {}
+  return {
+    ok: true,
+    tradeState: String(data.trade_state || '').toUpperCase(),
+    transactionId: data.transaction_id || null,
+    outTradeNo: data.out_trade_no || tradeNo,
+    amountFen: Number(data.amount?.total || 0) || 0,
+    raw: data,
+  }
+}
+
+export async function closeWechatPayByOutTradeNo(outTradeNo) {
+  const cfg = wechatConfig()
+  const tradeNo = String(outTradeNo || '').trim()
+  if (!tradeNo) return { ok: false, error: '缺少商户订单号' }
+  const pathUrl = `/v3/pay/transactions/out-trade-no/${encodeURIComponent(tradeNo)}/close`
+  const post = await callWechat('POST', pathUrl, { mchid: cfg.mchId })
+  if (!post.ok) return post
+  // 204 No Content = closed; ORDERPAID means already paid
+  if (post.httpStatus === 204 || (post.httpStatus >= 200 && post.httpStatus < 300)) {
+    return { ok: true, closed: true }
+  }
+  const code = String(post.data?.code || '')
+  if (code === 'ORDERPAID') {
+    return { ok: true, paid: true }
+  }
+  if (code === 'ORDERCLOSED') {
+    return { ok: true, closed: true }
+  }
+  return { ok: false, error: post.data?.message || code || '关单失败', raw: post.data }
 }
 
 /** Build Android PayReq fields from prepay_id (RSA2 sign). */
@@ -278,6 +485,7 @@ export async function createWechatAppPrepay({
   amountFen,
   attach = '',
   notifyUrl = '',
+  timeExpire = '',
 } = {}) {
   const cfg = wechatConfig()
   if (!cfg.payReady) {
@@ -301,6 +509,8 @@ export async function createWechatAppPrepay({
     notify_url: String(notifyUrl || cfg.notifyUrl).slice(0, 255),
     amount: { total, currency: 'CNY' },
   }
+  const expire = String(timeExpire || '').trim()
+  if (expire) body.time_expire = expire
   const attachText = String(attach || '').trim().slice(0, 128)
   if (attachText) body.attach = attachText
 
@@ -336,13 +546,12 @@ function decryptAesGcm(apiV3Key, associatedData, nonce, ciphertext) {
 }
 
 /**
- * Decrypt WeChat Pay notify body (resource.ciphertext).
- * Returns { ok, outTradeNo, transactionId, tradeState, amountFen }.
+ * Decrypt WeChat notify body (resource.ciphertext).
  */
-export function parseWechatPayNotify(body) {
+export function decryptWechatNotify(body) {
   const cfg = wechatConfig()
   if (!cfg.apiV3Key) {
-    return { ok: false, error: '缺少 WECHAT_API_V3_KEY，无法解密支付回调' }
+    return { ok: false, error: '缺少 WECHAT_API_V3_KEY，无法解密回调' }
   }
   const resource = body?.resource
   if (!resource?.ciphertext) {
@@ -357,23 +566,54 @@ export function parseWechatPayNotify(body) {
       resource.ciphertext,
     )
   } catch (error) {
-    console.error('[wechat-pay] decrypt', error?.message || error)
-    return { ok: false, error: '支付回调解密失败' }
+    console.error('[wechat] decrypt', error?.message || error)
+    return { ok: false, error: '回调解密失败' }
   }
   let data
   try {
     data = JSON.parse(plain)
   } catch {
-    return { ok: false, error: '支付回调明文无法解析' }
+    return { ok: false, error: '回调明文无法解析' }
   }
-  const tradeState = String(data.trade_state || '').toUpperCase()
   return {
     ok: true,
     eventType: String(body?.event_type || ''),
+    data,
+  }
+}
+
+/**
+ * Decrypt WeChat Pay notify body (resource.ciphertext).
+ * Returns { ok, outTradeNo, transactionId, tradeState, amountFen }.
+ */
+export function parseWechatPayNotify(body) {
+  const decrypted = decryptWechatNotify(body)
+  if (!decrypted.ok) return decrypted
+  const data = decrypted.data || {}
+  const tradeState = String(data.trade_state || '').toUpperCase()
+  return {
+    ok: true,
+    eventType: decrypted.eventType,
     outTradeNo: String(data.out_trade_no || '').trim(),
     transactionId: String(data.transaction_id || '').trim() || null,
     tradeState,
     amountFen: Number(data.amount?.total || 0) || 0,
+    raw: data,
+  }
+}
+
+/** Parse 免确认收款授权结果通知. */
+export function parseWechatAuthNotify(body) {
+  const decrypted = decryptWechatNotify(body)
+  if (!decrypted.ok) return decrypted
+  const data = decrypted.data || {}
+  return {
+    ok: true,
+    eventType: decrypted.eventType,
+    outAuthorizationNo: String(data.out_authorization_no || '').trim(),
+    authorizationId: String(data.authorization_id || '').trim() || null,
+    openid: String(data.openid || '').trim() || null,
+    state: String(data.state || '').toUpperCase(),
     raw: data,
   }
 }

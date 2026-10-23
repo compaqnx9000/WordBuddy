@@ -9,9 +9,11 @@ import {
 } from './alipay.js'
 import {
   isWechatOpenId,
+  queryWechatAuthorization,
   queryWechatTransfer,
   transferToWechat,
   wechatConfig,
+  wechatOutAuthorizationNo,
   wechatOutBillNo,
 } from './wechat.js'
 
@@ -52,7 +54,7 @@ export function withdrawConfig() {
     const parts = [amountText]
     parts.push(
       wechatReady
-        ? '微信请先在个人资料中绑定微信；提交后可能要在微信里确认收款。'
+        ? '微信请先在个人资料中绑定微信。首次提现需在微信确认收款并授权；授权后再次提现将直接到账零钱。'
         : '微信商家转账尚未配置商户 API 证书，暂时无法打到微信。',
     )
     parts.push(
@@ -146,6 +148,11 @@ export async function listWithdrawals(userId, { page = 1, pageSize = 20 } = {}) 
   } catch (error) {
     console.error('[withdrawals/reconcile]', error)
   }
+  try {
+    await syncWechatAuthorizationForUser(userId)
+  } catch (error) {
+    console.error('[withdrawals/sync-auth]', error)
+  }
   const p = Math.max(1, Number(page) || 1)
   const size = Math.min(50, Math.max(1, Number(pageSize) || 20))
   const offset = (p - 1) * size
@@ -183,7 +190,9 @@ export async function createWithdrawal(userId, { channel, account, realName, amo
   }
   const profile = (
     await query(
-      'SELECT alipay_account, alipay_name, wechat_account, wechat_openid FROM users WHERE id = $1',
+      `SELECT alipay_account, alipay_name, wechat_account, wechat_openid, nickname,
+              wechat_out_authorization_no, wechat_authorization_id, wechat_auth_generation
+       FROM users WHERE id = $1`,
       [userId],
     )
   ).rows[0]
@@ -313,6 +322,8 @@ export async function createWithdrawal(userId, { channel, account, realName, amo
       amountFen,
       withdrawalId: row.id,
       sandbox: cfg.sandbox,
+      userId,
+      profile,
     })
   } catch (error) {
     console.error('[withdrawals/payout]', error)
@@ -468,7 +479,116 @@ async function finalizeWithdrawal({ withdrawalId, userId, pointsCost, payout, cf
   }
 }
 
-async function performPayout({ channel, account, realName, amountFen, withdrawalId, sandbox }) {
+async function ensureWechatAuthNos(userId, profile = {}) {
+  let outNo = String(profile.wechat_out_authorization_no || '').trim()
+  let authId = String(profile.wechat_authorization_id || '').trim()
+  let generation = Math.max(1, Number(profile.wechat_auth_generation) || 1)
+  if (!outNo) {
+    outNo = wechatOutAuthorizationNo(userId, generation)
+    await query(
+      `UPDATE users
+         SET wechat_out_authorization_no = $2, wechat_auth_generation = $3
+       WHERE id = $1`,
+      [userId, outNo, generation],
+    )
+  }
+  if (authId) {
+    const checked = await queryWechatAuthorization(outNo)
+    if (checked.takingEffect && checked.authorizationId) {
+      if (checked.authorizationId !== authId) {
+        await query(`UPDATE users SET wechat_authorization_id = $2 WHERE id = $1`, [
+          userId,
+          checked.authorizationId,
+        ])
+        authId = checked.authorizationId
+      }
+      return { outAuthorizationNo: outNo, authorizationId: authId }
+    }
+    if (checked.closed || checked.missing) {
+      generation += 1
+      outNo = wechatOutAuthorizationNo(userId, generation)
+      authId = ''
+      await query(
+        `UPDATE users
+           SET wechat_out_authorization_no = $2,
+               wechat_authorization_id = NULL,
+               wechat_auth_generation = $3
+         WHERE id = $1`,
+        [userId, outNo, generation],
+      )
+    }
+  }
+  return { outAuthorizationNo: outNo, authorizationId: authId || null }
+}
+
+export async function syncWechatAuthorizationForUser(userId) {
+  const row = (
+    await query(
+      `SELECT wechat_out_authorization_no, wechat_authorization_id, wechat_auth_generation
+       FROM users WHERE id = $1`,
+      [userId],
+    )
+  ).rows[0]
+  const outNo = String(row?.wechat_out_authorization_no || '').trim()
+  if (!outNo) return null
+  const checked = await queryWechatAuthorization(outNo)
+  if (checked.takingEffect && checked.authorizationId) {
+    await query(`UPDATE users SET wechat_authorization_id = $2 WHERE id = $1`, [
+      userId,
+      checked.authorizationId,
+    ])
+    return checked
+  }
+  if (checked.closed) {
+    await query(`UPDATE users SET wechat_authorization_id = NULL WHERE id = $1`, [userId])
+  }
+  return checked
+}
+
+export async function applyWechatAuthorizationNotify({
+  outAuthorizationNo,
+  authorizationId,
+  openid,
+  state,
+}) {
+  const outNo = String(outAuthorizationNo || '').trim()
+  if (!outNo) return { ok: false, error: '缺少授权单号' }
+  const st = String(state || '').toUpperCase()
+  if (st === 'TAKING_EFFECT' && authorizationId) {
+    const updated = await query(
+      `UPDATE users
+         SET wechat_authorization_id = $2,
+             wechat_out_authorization_no = COALESCE(wechat_out_authorization_no, $1)
+       WHERE wechat_out_authorization_no = $1
+          OR ($3::text IS NOT NULL AND wechat_openid = $3)
+       RETURNING id`,
+      [outNo, String(authorizationId).trim(), openid || null],
+    )
+    return { ok: true, matched: updated.rowCount > 0 }
+  }
+  if (st === 'CLOSED') {
+    await query(
+      `UPDATE users
+         SET wechat_authorization_id = NULL
+       WHERE wechat_out_authorization_no = $1
+          OR ($2::text IS NOT NULL AND wechat_openid = $2)`,
+      [outNo, openid || null],
+    )
+    return { ok: true, closed: true }
+  }
+  return { ok: true, ignored: true }
+}
+
+async function performPayout({
+  channel,
+  account,
+  realName,
+  amountFen,
+  withdrawalId,
+  sandbox,
+  userId,
+  profile,
+}) {
   if (sandbox) {
     return {
       ok: true,
@@ -478,11 +598,19 @@ async function performPayout({ channel, account, realName, amountFen, withdrawal
     }
   }
   if (channel === 'wechat') {
+    const auth = await ensureWechatAuthNos(userId, profile || {})
+    const display =
+      String(profile?.nickname || '').trim() ||
+      `用户${String(userId).slice(-6)}` ||
+      '词搭子用户'
     return transferToWechat({
       outBillNo: wechatOutBillNo(withdrawalId),
       amountFen,
       openid: account,
       remark: `搭币提现#${withdrawalId}`,
+      outAuthorizationNo: auth.outAuthorizationNo,
+      authorizationId: auth.authorizationId,
+      userDisplayName: display.slice(0, 32),
     })
   }
   return transferToAlipay({
@@ -497,7 +625,8 @@ async function performPayout({ channel, account, realName, amountFen, withdrawal
 
 export async function reconcilePendingWithdrawals(userId) {
   const pending = await query(
-    `SELECT w.*, u.alipay_name
+    `SELECT w.*, u.alipay_name, u.nickname, u.wechat_out_authorization_no,
+            u.wechat_authorization_id, u.wechat_auth_generation
      FROM withdrawals w
      JOIN users u ON u.id = w.user_id
      WHERE w.user_id = $1
@@ -513,14 +642,22 @@ export async function reconcilePendingWithdrawals(userId) {
     let payout = null
     try {
       if (row.channel === 'wechat') {
+        const auth = await ensureWechatAuthNos(userId, row)
+        const display =
+          String(row.nickname || '').trim() || `用户${String(userId).slice(-6)}` || '词搭子用户'
+        const wxArgs = {
+          outBillNo: wechatOutBillNo(row.id),
+          amountFen: Number(row.amount_fen || 0),
+          openid: row.account,
+          remark: `搭币提现#${row.id}`,
+          outAuthorizationNo: auth.outAuthorizationNo,
+          authorizationId: auth.authorizationId,
+          userDisplayName: display.slice(0, 32),
+        }
         const queried = await queryWechatTransfer(wechatOutBillNo(row.id))
         if (!row.wechat_package && queried.pending) {
-          const replay = await transferToWechat({
-            outBillNo: wechatOutBillNo(row.id),
-            amountFen: Number(row.amount_fen || 0),
-            openid: row.account,
-            remark: `搭币提现#${row.id}`,
-          })
+          // 已有待确认单：不要走授权后转账，只重放预下单以取回 package_info
+          const replay = await transferToWechat({ ...wxArgs, authorizationId: null })
           if (replay.packageInfo) {
             await query(
               `UPDATE withdrawals
@@ -533,14 +670,16 @@ export async function reconcilePendingWithdrawals(userId) {
         }
         if (queried.ok || queried.missing === false) payout = queried
         else if (queried.missing) {
-          payout = await transferToWechat({
-            outBillNo: wechatOutBillNo(row.id),
-            amountFen: Number(row.amount_fen || 0),
-            openid: row.account,
-            remark: `搭币提现#${row.id}`,
-          })
+          payout = await transferToWechat(wxArgs)
         } else if (!queried.ok && !queried.pending) {
           payout = queried
+        }
+        if (payout && payout.ok && !payout.pending) {
+          try {
+            await syncWechatAuthorizationForUser(userId)
+          } catch (error) {
+            console.error('[withdrawals/sync-auth]', row.id, error)
+          }
         }
       } else {
         const outBizNo = withdrawalOutBizNo(row.id)

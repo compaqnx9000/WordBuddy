@@ -379,6 +379,9 @@ export async function ensureSchema() {
   await query('CREATE INDEX IF NOT EXISTS withdrawals_user ON withdrawals (user_id, created_at DESC)')
   await query('CREATE INDEX IF NOT EXISTS withdrawals_status ON withdrawals (status, created_at DESC)')
   await query('ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS wechat_package TEXT')
+  await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_out_authorization_no TEXT')
+  await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_authorization_id TEXT')
+  await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_auth_generation INTEGER NOT NULL DEFAULT 1')
   await query(`
     CREATE TABLE IF NOT EXISTS mnemonic_images (
       id BIGSERIAL PRIMARY KEY,

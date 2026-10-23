@@ -62,9 +62,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import com.hotgis.wordbuddy.BuildConfig
 import com.hotgis.wordbuddy.ads.DrawFeedController
 import com.hotgis.wordbuddy.auth.BiometricAuth
-import com.hotgis.wordbuddy.reminder.AppUpdateNotifier
 import com.hotgis.wordbuddy.reminder.StudyReminder
 import com.hotgis.wordbuddy.data.Accent
 import com.hotgis.wordbuddy.data.AppUpdateInfo
@@ -118,8 +118,11 @@ import com.hotgis.wordbuddy.ui.shorts.ShortShareHelper
 import com.hotgis.wordbuddy.ui.shorts.ShortsScreen
 import com.hotgis.wordbuddy.ui.podcast.PodcastScreen
 import com.hotgis.wordbuddy.ui.theme.HotWordsTheme
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private enum class Overlay { None, Card, Settings }
 
@@ -178,27 +181,8 @@ fun HotWordsRoot(
             Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
     }
-    var pendingUpdateNotice by remember { mutableStateOf<AppUpdateInfo?>(null) }
-    val updateNoticePermission = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        val info = pendingUpdateNotice
-        pendingUpdateNotice = null
-        if (granted && info != null) AppUpdateNotifier.show(context, info)
-    }
-    LaunchedEffect(Unit) {
-        val info = runCatching { AppUpdater.fetchLatest() }.getOrNull()
-        if (info == null || !info.hasUpdate) {
-            AppUpdateNotifier.cancel(context)
-            return@LaunchedEffect
-        }
-        if (notificationsAllowed()) {
-            AppUpdateNotifier.show(context, info)
-        } else if (Build.VERSION.SDK_INT >= 33) {
-            pendingUpdateNotice = info
-            updateNoticePermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
+    var updatePrompt by remember { mutableStateOf<AppUpdateInfo?>(null) }
+    var promptedVersion by remember { mutableIntStateOf(0) }
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val words by viewModel.filteredWords.collectAsStateWithLifecycle()
     val notebooks by viewModel.notebooks.collectAsStateWithLifecycle()
@@ -423,7 +407,45 @@ fun HotWordsRoot(
         }
     }
 
+    val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            val info = runCatching { AppUpdater.fetchLatest() }.getOrNull() ?: return@repeatOnLifecycle
+            val skipped = AppUpdater.skippedVersionCode(context)
+            if (!info.hasUpdate || info.versionCode <= skipped) return@repeatOnLifecycle
+            if (promptedVersion != info.versionCode) {
+                promptedVersion = info.versionCode
+                updatePrompt = info
+            }
+        }
+    }
+
+    fun installUpdate(info: AppUpdateInfo) {
+        val host = activity
+        if (host == null) {
+            Toast.makeText(context, "无法开始更新", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Toast.makeText(context, "开始下载 ${info.versionName}…", Toast.LENGTH_SHORT).show()
+        scope.launch {
+            val file = runCatching {
+                AppUpdater.downloadApk(context, info)
+            }.getOrElse {
+                Toast.makeText(context, it.message ?: "下载失败", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            if (!AppUpdater.canRequestInstall(context)) {
+                AppUpdater.openInstallPermissionSettings(host)
+                Toast.makeText(context, "请允许安装未知应用后再试", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            runCatching { AppUpdater.installApk(context, file) }
+                .onFailure {
+                    Toast.makeText(context, it.message ?: "无法打开安装程序", Toast.LENGTH_LONG).show()
+                }
+        }
+    }
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             try {
@@ -1610,6 +1632,31 @@ fun HotWordsRoot(
             }
             ui.catalogCopyProgress?.let { progress ->
                 CatalogCopyProgressCover(progress)
+            }
+            updatePrompt?.let { info ->
+                StellarConfirmDialog(
+                    title = "发现新版本",
+                    message = buildString {
+                        append("当前版本 ${BuildConfig.VERSION_NAME}\n")
+                        append("最新版本 ${info.versionName}\n\n")
+                        if (info.notes.isNotBlank()) {
+                            append(info.notes)
+                            append("\n\n")
+                        }
+                        append("将在应用内下载并安装，无需打开浏览器。")
+                    },
+                    confirmText = "立即更新",
+                    dismissText = "跳过这个版本",
+                    onDismiss = { updatePrompt = null },
+                    onDismissClick = {
+                        AppUpdater.skipVersion(context, info.versionCode)
+                        updatePrompt = null
+                    },
+                    onConfirm = {
+                        updatePrompt = null
+                        installUpdate(info)
+                    },
+                )
             }
             }
         }

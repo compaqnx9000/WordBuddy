@@ -3,6 +3,7 @@ package com.hotgis.wordbuddy.data
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.Context.MODE_PRIVATE
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -15,6 +16,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 object AppUpdater {
+    private const val PREFS = "app_update_prompt"
+    private const val KEY_SKIPPED = "skipped_version_code"
+
+    fun skippedVersionCode(context: Context): Int =
+        context.applicationContext
+            .getSharedPreferences(PREFS, MODE_PRIVATE)
+            .getInt(KEY_SKIPPED, 0)
+
+    fun skipVersion(context: Context, versionCode: Int) {
+        context.applicationContext
+            .getSharedPreferences(PREFS, MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_SKIPPED, versionCode)
+            .apply()
+    }
+
     suspend fun fetchLatest(api: WordBuddyApi = WordBuddyApi()): AppUpdateInfo =
         api.checkAppUpdate()
 

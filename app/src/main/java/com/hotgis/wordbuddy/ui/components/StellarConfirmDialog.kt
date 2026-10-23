@@ -48,6 +48,7 @@ fun StellarConfirmDialog(
     destructive: Boolean = false,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    onDismissClick: (() -> Unit)? = null,
 ) {
     val shape = RoundedCornerShape(24.sdp())
     val palette = LocalStellar.current
@@ -109,7 +110,7 @@ fun StellarConfirmDialog(
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier
                             .clip(RoundedCornerShape(999.dp))
-                            .clickable(onClick = onDismiss)
+                            .clickable(onClick = onDismissClick ?: onDismiss)
                             .padding(horizontal = 14.sdp(), vertical = 10.sdp()),
                     )
                     Spacer(Modifier.padding(horizontal = 4.sdp()))

@@ -1266,27 +1266,37 @@ class WordBuddyApi {
                     .put("packageId", packageId)
                     .put("channel", channel),
             )
-            val order = root.optJSONObject("order") ?: JSONObject()
-            val wx = root.optJSONObject("wechatPay")
-            PointPurchaseResult(
-                orderId = order.optLong("id"),
-                channel = root.optString("channel").ifBlank { channel },
-                orderInfo = root.optString("orderInfo").takeIf { it.isNotBlank() },
-                wechatPay = wx?.let {
-                    WechatPayOrderParams(
-                        appId = it.optString("appId"),
-                        partnerId = it.optString("partnerId"),
-                        prepayId = it.optString("prepayId"),
-                        packageValue = it.optString("packageValue").ifBlank { "Sign=WXPay" },
-                        nonceStr = it.optString("nonceStr"),
-                        timeStamp = it.optString("timeStamp"),
-                        sign = it.optString("sign"),
-                    )
-                },
-                sandbox = root.optBoolean("sandbox", true),
-                points = order.optInt("points"),
-            )
+            parsePointPurchase(root, channel)
         }
+
+    suspend fun continuePointOrder(token: String, orderId: Long): PointPurchaseResult =
+        withContext(Dispatchers.IO) {
+            val root = request("POST", "/me/point-orders/$orderId/continue", auth = token)
+            parsePointPurchase(root, root.optString("channel").ifBlank { "alipay" })
+        }
+
+    private fun parsePointPurchase(root: JSONObject, channel: String): PointPurchaseResult {
+        val order = root.optJSONObject("order") ?: JSONObject()
+        val wx = root.optJSONObject("wechatPay")
+        return PointPurchaseResult(
+            orderId = order.optLong("id"),
+            channel = root.optString("channel").ifBlank { channel },
+            orderInfo = root.optString("orderInfo").takeIf { it.isNotBlank() },
+            wechatPay = wx?.let {
+                WechatPayOrderParams(
+                    appId = it.optString("appId"),
+                    partnerId = it.optString("partnerId"),
+                    prepayId = it.optString("prepayId"),
+                    packageValue = it.optString("packageValue").ifBlank { "Sign=WXPay" },
+                    nonceStr = it.optString("nonceStr"),
+                    timeStamp = it.optString("timeStamp"),
+                    sign = it.optString("sign"),
+                )
+            },
+            sandbox = root.optBoolean("sandbox", true),
+            points = order.optInt("points"),
+        )
+    }
 
     suspend fun simulatePointOrderPay(token: String, orderId: Long): PointOrderPayResult =
         withContext(Dispatchers.IO) {
@@ -1343,6 +1353,7 @@ class WordBuddyApi {
         grantKind = obj.optString("grantKind").ifBlank { "points" },
         createdAt = obj.optString("createdAt").takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
         paidAt = obj.optString("paidAt").takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
+        expiresAt = obj.optString("expiresAt").takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) },
     )
 
     suspend fun copyNotebookWords(

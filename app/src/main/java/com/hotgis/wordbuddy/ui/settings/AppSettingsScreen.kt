@@ -644,7 +644,7 @@ private fun PreferencesCard(
         PreferenceToggle(
             icon = Icons.Filled.Notifications,
             title = "每日提醒",
-            subtitle = "每天 20:00 提醒你坚持背单词",
+            subtitle = "每天 20:00 提醒你坚持背单词；手机重启后需再打开一次应用才会继续提醒",
             checked = dailyReminder,
             accentOnHover = Stellar.Cyan,
             onChecked = onDailyReminder,

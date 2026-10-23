@@ -1,8 +1,8 @@
 {
-  "versionCode": 194,
-  "versionName": "2.03",
+  "versionCode": 202,
+  "versionName": "2.11",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "启动时若有新版本，会通知你去「我-关于你的词搭子-检测更新」。",
-  "releasedAt": "2026-10-23T01:40:00.000Z"
+  "notes": "去掉开机自启动；每日提醒仅在用户打开开关后使用系统闹钟。",
+  "releasedAt": "2026-10-23T12:10:00.000Z"
 }

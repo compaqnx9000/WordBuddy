@@ -180,8 +180,8 @@ fun ProfileScreen(
             activity?.let(RewardVideoController::preload)
         }
     }
-    LaunchedEffect(rewardVideo.cooldownRemainingSec, rewardVideo.usedToday) {
-        val remaining = rewardVideo.cooldownRemainingSec
+    LaunchedEffect(rewardVideo.cooldownRemainingSec, rewardVideo.usedToday, rewardVideo.remaining) {
+        val remaining = if (rewardVideo.remaining <= 0) 0 else rewardVideo.cooldownRemainingSec
         rewardCooldownDeadlineMs = if (remaining > 0) {
             System.currentTimeMillis() + remaining * 1000L
         } else {
@@ -634,6 +634,8 @@ fun ProfileScreen(
                     title = "看视频领搭币",
                     trailing = when {
                         !loggedIn -> "登录后每日 ${rewardVideo.dailyLimit} 次"
+                        rewardVideo.remaining <= 0 ->
+                            "今日已看完 ${rewardVideo.usedToday}/${rewardVideo.dailyLimit}"
                         rewardCooldownLeft > 0 ->
                             "需间隔 5 分钟 · 还剩 ${formatRewardCooldown(rewardCooldownLeft)}"
                         else ->

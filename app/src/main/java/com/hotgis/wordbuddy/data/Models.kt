@@ -245,6 +245,7 @@ data class PointOrder(
     val grantKind: String = "points",
     val createdAt: String? = null,
     val paidAt: String? = null,
+    val expiresAt: String? = null,
 )
 
 data class PointOrderLookup(

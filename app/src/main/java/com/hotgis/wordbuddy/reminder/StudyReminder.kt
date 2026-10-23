@@ -142,17 +142,12 @@ object StudyReminder {
 /**
  * Receives our own alarm only. Declared non-exported so other apps cannot broadcast
  * the fire action and spam notifications.
+ *
+ * No BOOT_COMPLETED receiver: store privacy checks treat boot auto-start as
+ * undeclared self-start. After reboot, [WordBuddyApp] re-arms the alarm on next open.
  */
 class StudyReminderAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         StudyReminder.showAndReschedule(context)
-    }
-}
-
-/** Exported for the system-only BOOT_COMPLETED broadcast, which re-arms the alarm. */
-class StudyReminderBootReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
-        StudyReminder.sync(context, SettingsStore(context).loadSettings().dailyReminder)
     }
 }

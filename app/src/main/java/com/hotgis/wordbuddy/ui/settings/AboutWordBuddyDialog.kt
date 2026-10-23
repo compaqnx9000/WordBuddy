@@ -262,13 +262,6 @@ fun AboutWordBuddyDialog(onDismiss: () -> Unit) {
                         pendingUpdate = null
                         detailMessage = LegalDocuments.agreement
                     },
-                    onOpenPrivacySummary = {
-                        detailTitle = LegalDocuments.PRIVACY_SUMMARY_TITLE
-                        detailConfirm = "知道了"
-                        detailDismiss = ""
-                        pendingUpdate = null
-                        detailMessage = LegalDocuments.privacySummary
-                    },
                     onOpenPrivacy = {
                         detailTitle = LegalDocuments.PRIVACY_TITLE
                         detailConfirm = "知道了"
@@ -384,7 +377,6 @@ private fun AboutMenuDivider() {
 @Composable
 private fun AboutLegalFooter(
     onOpenAgreement: () -> Unit,
-    onOpenPrivacySummary: () -> Unit,
     onOpenPrivacy: () -> Unit,
 ) {
     val year = Calendar.getInstance().get(Calendar.YEAR)
@@ -398,8 +390,7 @@ private fun AboutLegalFooter(
         verticalArrangement = Arrangement.spacedBy(10.sdp()),
     ) {
         AboutLegalLink("《软件许可及服务协议》", onOpenAgreement)
-        AboutLegalLink("《隐私保护指引摘要》", onOpenPrivacySummary)
-        AboutLegalLink("《隐私保护指引》", onOpenPrivacy)
+        AboutLegalLink("《隐私保护指引（隐私政策）》", onOpenPrivacy)
         Spacer(Modifier.height(4.sdp()))
         Text(
             text = "运营者：北京博冠鸿图科技有限公司\n联系电话：18500090601\n客服邮箱：hi@wordbuddy.cc\nApp备案号：京ICP备2026067138号-1A",

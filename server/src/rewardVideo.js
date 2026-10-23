@@ -78,13 +78,15 @@ export async function rewardVideoStatus(userId) {
   const dailyLimit = perks.videoDailyLimit
   const used = await usedToday(userId, today)
   const totalPoints = await getPointsBalance(userId)
-  const lastAt = await lastGrantAt(userId)
+  const remaining = Math.max(0, dailyLimit - used)
+  // 当天次数用完后不再倒计时，没有下一次可看的视频。
+  const lastAt = remaining > 0 ? await lastGrantAt(userId) : null
   const cooldownLeft = cooldownRemainingSec(lastAt)
   return {
     pointsPerWatch,
     dailyLimit,
     usedToday: used,
-    remaining: Math.max(0, dailyLimit - used),
+    remaining,
     totalPoints,
     today,
     level: perks.level,
