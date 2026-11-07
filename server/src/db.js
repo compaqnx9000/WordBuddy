@@ -31,9 +31,9 @@ export async function ensureSchema() {
   await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device_platform TEXT')
   await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ip TEXT')
   await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ip_location TEXT')
-  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_level INTEGER NOT NULL DEFAULT 0`)
-  await query(`ALTER TABLE users ALTER COLUMN user_level SET DEFAULT 0`)
-  await query(`UPDATE users SET user_level = 0 WHERE user_level IS NULL OR user_level < 0 OR user_level > 7`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS user_level INTEGER NOT NULL DEFAULT 1`)
+  await query(`ALTER TABLE users ALTER COLUMN user_level SET DEFAULT 1`)
+  // Level 0–7 → 1–8 migration runs in index.js via migrateUserLevelsToOneBased().
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0`)
   await query(`UPDATE users SET session_version = 0 WHERE session_version IS NULL`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname TEXT`)
@@ -53,6 +53,10 @@ export async function ensureSchema() {
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_unionid TEXT`)
   await query(
     `CREATE UNIQUE INDEX IF NOT EXISTS users_wechat_openid_unique ON users (wechat_openid) WHERE wechat_openid IS NOT NULL`,
+  )
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_user_id TEXT`)
+  await query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS users_apple_user_id_unique ON users (apple_user_id) WHERE apple_user_id IS NOT NULL`,
   )
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_by_user_id BIGINT REFERENCES users (id) ON DELETE SET NULL`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_bound_at TIMESTAMPTZ`)
@@ -539,7 +543,8 @@ export async function ensureSchema() {
       ('signup_bonus_points', '3000'),
       ('invite_reward_inviter', '3000'),
       ('invite_reward_invitee', '3000'),
-      ('makeup_reward_points', '200')
+      ('makeup_reward_points', '200'),
+      ('reward_video_cooldown_sec', '300')
     ON CONFLICT (key) DO NOTHING
   `)
   await query(`

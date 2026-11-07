@@ -743,7 +743,10 @@ private suspend fun payOrder(
             return null
         }
         return when {
-            result.success -> PaidOutcome(null)
+            result.success -> {
+                reportOceanPurchase(activity, created, channel = "wechat")
+                PaidOutcome(null)
+            }
             result.cancelled -> {
                 Toast.makeText(activity, "已取消支付", Toast.LENGTH_SHORT).show()
                 null
@@ -761,6 +764,7 @@ private suspend fun payOrder(
             Toast.makeText(activity, it.message ?: "支付失败", Toast.LENGTH_SHORT).show()
             return null
         }
+        reportOceanPurchase(activity, created, channel = created.channel.ifBlank { "alipay" })
         return PaidOutcome(sim.balance, sim.imageCredits)
     }
     val result = runCatching {
@@ -770,7 +774,10 @@ private suspend fun payOrder(
         return null
     }
     return when {
-        result.success || result.pending -> PaidOutcome(null)
+        result.success || result.pending -> {
+            reportOceanPurchase(activity, created, channel = "alipay")
+            PaidOutcome(null)
+        }
         result.cancelled -> {
             Toast.makeText(activity, "已取消支付", Toast.LENGTH_SHORT).show()
             null
@@ -780,4 +787,19 @@ private suspend fun payOrder(
             null
         }
     }
+}
+
+private fun reportOceanPurchase(
+    activity: Activity,
+    created: PointPurchaseResult,
+    channel: String,
+) {
+    val fen = created.amountFen.takeIf { it > 0 } ?: 1
+    com.hotgis.wordbuddy.ads.OceanConvertHolder.reportPurchase(
+        context = activity,
+        productName = "助记配图",
+        productId = created.orderId.toString(),
+        amountFen = fen,
+        channel = channel,
+    )
 }

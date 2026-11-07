@@ -115,7 +115,7 @@ enum SettingsStore {
     }
 
     static var accentStyle: AccentStyle {
-        get { AccentStyle(rawValue: defaults.string(forKey: accentStyleKey) ?? "") ?? .cyberNeon }
+        get { AccentStyle(rawValue: defaults.string(forKey: accentStyleKey) ?? "") ?? .forestStar }
         set { defaults.set(newValue.rawValue, forKey: accentStyleKey) }
     }
 

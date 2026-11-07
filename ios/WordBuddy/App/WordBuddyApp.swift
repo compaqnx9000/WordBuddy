@@ -40,6 +40,15 @@ final class WordBuddyAppDelegate: NSObject, UIApplicationDelegate {
         return true
     }
 
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-shot-login") { return }
+        #endif
+        Task { @MainActor in
+            _ = PangleAds.shared.ensureConsent()
+        }
+    }
+
     func application(
         _ app: UIApplication,
         open url: URL,

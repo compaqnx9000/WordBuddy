@@ -124,6 +124,10 @@ struct RootView: View {
     private func applyScreenshotLaunchArguments() {
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
+        if args.contains("-shot-login") {
+            showColdSplash = false
+            model.openLogin()
+        }
         guard let flag = args.firstIndex(of: "-shot-tab"), flag + 1 < args.count else { return }
         showColdSplash = false
         let name = args[flag + 1]

@@ -22,6 +22,7 @@ data class AuthResult(
     val session: UserSession?,
     val isNewUser: Boolean = false,
     val needsPhoneBind: Boolean = false,
+    val needsPassword: Boolean = false,
 )
 
 data class AppUpdateInfo(
@@ -253,8 +254,14 @@ class WordBuddyApi {
     private fun parseAuth(root: JSONObject): AuthResult {
         val isNewUser = root.optBoolean("isNewUser")
         val needsPhoneBind = root.optBoolean("needsPhoneBind")
+        val needsPassword = root.optBoolean("needsPassword")
         if (!root.has("token") || root.isNull("token")) {
-            return AuthResult(session = null, isNewUser = isNewUser, needsPhoneBind = needsPhoneBind)
+            return AuthResult(
+                session = null,
+                isNewUser = isNewUser,
+                needsPhoneBind = needsPhoneBind,
+                needsPassword = needsPassword,
+            )
         }
         val user = root.getJSONObject("user")
         val session = parseUserSession(token = root.getString("token"), root = root, user = user)
@@ -327,7 +334,7 @@ class WordBuddyApi {
             auth = token,
             body = JSONObject().put("activeMs", activeMs),
         )
-        if (!root.has("level")) -1 else root.optInt("level", 0)
+        if (!root.has("level")) -1 else root.optInt("level", 1).coerceIn(1, 8)
     }
 
     suspend fun fetchMeSnapshot(token: String): MeSnapshot? = withContext(Dispatchers.IO) {
@@ -530,10 +537,10 @@ class WordBuddyApi {
         val avatarUrl = optNullableString(root, "avatarUrl")
             ?: optNullableString(user, "avatarUrl")
         val level = when {
-            user.has("level") && !user.isNull("level") -> user.optInt("level", 0)
-            root.has("level") && !root.isNull("level") -> root.optInt("level", 0)
-            else -> 0
-        }.coerceIn(0, 7)
+            user.has("level") && !user.isNull("level") -> user.optInt("level", 1)
+            root.has("level") && !root.isNull("level") -> root.optInt("level", 1)
+            else -> 1
+        }.coerceIn(1, 8)
         return UserSession(
             token = token,
             userId = user.optLong("id"),
@@ -997,7 +1004,7 @@ class WordBuddyApi {
             streakDays = obj.optInt("streakDays", 0).coerceAtLeast(0),
             lastCheckInDate = last,
             checkedInToday = checkedInToday,
-            todayReward = obj.optInt("todayReward", 10).coerceAtLeast(1),
+            todayReward = obj.optInt("todayReward", 100).coerceAtLeast(1),
             recentDates = recentDates,
             imageCredits = obj.optInt("imageCredits", 0).coerceAtLeast(0),
             makeupReward = obj.optInt("makeupReward", 200).coerceAtLeast(0),
@@ -1295,6 +1302,7 @@ class WordBuddyApi {
             },
             sandbox = root.optBoolean("sandbox", true),
             points = order.optInt("points"),
+            amountFen = order.optInt("amountFen"),
         )
     }
 

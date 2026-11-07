@@ -39,8 +39,8 @@ android {
         applicationId = "com.hotgis.wordbuddy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 202
-        versionName = "2.11"
+        versionCode = 210
+        versionName = "2.19"
         ndk {
             // Pangle AAR only ships armeabi-v7a / arm64-v8a (no x86_64).
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
@@ -135,6 +135,11 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.pangle.mediation.sdk)
+    implementation(libs.app.convert)
+    // GroMore 第三方 ADN：Sigmob（瀑布流竞价需要 adapter + wind SDK）
+    implementation(libs.pangle.mediation.sigmob.adapter)
+    implementation(libs.sigmob.wind.sdk)
+    implementation(libs.sigmob.wind.common)
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.zxing:core:3.5.3")

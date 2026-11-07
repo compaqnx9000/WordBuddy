@@ -9,7 +9,7 @@ data class UserSession(
     val phone: String,
     val vocabNotebookId: Long,
     val avatarUrl: String? = null,
-    val level: Int = 0,
+    val level: Int = 1,
     val nickname: String? = null,
     val shippingName: String? = null,
     val shippingPhone: String? = null,
@@ -43,13 +43,28 @@ data class UserSession(
 class SessionStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    init {
+        migrateLevelOneBasedIfNeeded()
+    }
+
+    /** Old builds stored Lv0–7; bump once so icon slots stay aligned (Lv1=default). */
+    private fun migrateLevelOneBasedIfNeeded() {
+        if (prefs.getBoolean(KEY_LEVEL_ONE_BASED, false)) return
+        val editor = prefs.edit()
+        if (prefs.contains(KEY_LEVEL)) {
+            val raw = prefs.getInt(KEY_LEVEL, 0)
+            editor.putInt(KEY_LEVEL, (raw + 1).coerceIn(LauncherIcons.MIN_LEVEL, LauncherIcons.MAX_LEVEL))
+        }
+        editor.putBoolean(KEY_LEVEL_ONE_BASED, true).apply()
+    }
+
     fun load(): UserSession? {
         val token = prefs.getString(KEY_TOKEN, null)?.trim().orEmpty()
         val phone = prefs.getString(KEY_PHONE, null)?.trim().orEmpty()
         val userId = prefs.getLong(KEY_USER_ID, 0L)
         val vocabId = prefs.getLong(KEY_VOCAB_ID, 0L)
         val avatarUrl = prefs.getString(KEY_AVATAR, null)?.trim()?.takeIf { it.isNotEmpty() }
-        val level = prefs.getInt(KEY_LEVEL, 0).let(LauncherIcons::clamp)
+        val level = prefs.getInt(KEY_LEVEL, 1).let(LauncherIcons::clamp)
         if (token.isEmpty() || userId <= 0L) return null
         // Migrate: keep last-login phone for the next logout prefill.
         if (phone.filter { it.isDigit() }.length == 11 &&
@@ -133,6 +148,7 @@ class SessionStore(context: Context) {
         private const val KEY_VOCAB_ID = "vocab_notebook_id"
         private const val KEY_AVATAR = "avatar_url"
         private const val KEY_LEVEL = "user_level"
+        private const val KEY_LEVEL_ONE_BASED = "user_level_one_based"
         private const val KEY_NICKNAME = "nickname"
         private const val KEY_SHIP_NAME = "shipping_name"
         private const val KEY_SHIP_PHONE = "shipping_phone"

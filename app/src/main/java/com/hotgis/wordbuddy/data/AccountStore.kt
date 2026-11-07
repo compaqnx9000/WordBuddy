@@ -107,7 +107,7 @@ class AccountStore(context: Context) {
                 phone = phone,
                 vocabNotebookId = obj.optLong("vocabNotebookId", 0L),
                 avatarUrl = obj.optString("avatarUrl").trim().takeIf { it.isNotEmpty() },
-                level = obj.optInt("level", 0),
+                level = obj.optInt("level", 1),
                 nickname = obj.optString("nickname").trim().takeIf { it.isNotEmpty() },
                 shippingName = obj.optString("shippingName").trim().takeIf { it.isNotEmpty() },
                 shippingPhone = obj.optString("shippingPhone").trim().takeIf { it.isNotEmpty() },

@@ -33,6 +33,7 @@ struct AccountProfileView: View {
     @State private var showUnbindAlipay = false
     @State private var showUnbindWechat = false
     @State private var wechatBinding = false
+    @State private var alipayBinding = false
 
     private static let regions = [
         "北京", "天津", "上海", "重庆",
@@ -121,12 +122,11 @@ struct AccountProfileView: View {
                     }
                 }
 
-                // 上架前关闭微信、支付宝绑定。恢复时取消下面这一段注释。
-                // profileGroup {
-                //     alipayRow
-                //     divider()
-                //     wechatRow
-                // }
+                profileGroup {
+                    alipayRow
+                    divider()
+                    wechatRow
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -269,21 +269,21 @@ struct AccountProfileView: View {
                 BuddyQRDialog(buddyId: buddyId) { showQR = false }
             }
         }
-        .alert("解绑支付宝", isPresented: $showUnbindAlipay) {
+        .alert("解除支付宝绑定", isPresented: $showUnbindAlipay) {
             Button("解绑", role: .destructive) {
                 Task { await unbindAlipay() }
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("解绑后需要重新绑定才能再次使用该支付宝账号。")
+            Text("解绑后不能用该账号提现。需要时可以重新打开支付宝绑定。")
         }
-        .alert("解绑微信", isPresented: $showUnbindWechat) {
+        .alert("解除微信绑定", isPresented: $showUnbindWechat) {
             Button("解绑", role: .destructive) {
                 Task { await unbindWechat() }
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("解绑后不能再用此微信登录当前账号。需要时可重新绑定。")
+            Text("解绑后不能用该微信提现，也不能用此微信直接登录当前账号。需要时可重新调起微信绑定。")
         }
     }
 
@@ -360,67 +360,117 @@ struct AccountProfileView: View {
         }
     }
 
+    @ViewBuilder
     private var alipayRow: some View {
-        let bound = !(session?.alipayAccount?.isEmpty ?? true)
-        return HStack {
+        let account = session?.alipayAccount?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let bound = !account.isEmpty
+        if bound || alipayBinding {
+            alipayRowBody(account: account, bound: bound)
+        } else {
+            Button {
+                Task { await bindAlipayAccount() }
+            } label: {
+                alipayRowBody(account: account, bound: bound)
+            }
+            .buttonStyle(.plain)
+            .disabled(busy)
+        }
+    }
+
+    private func alipayRowBody(account: String, bound: Bool) -> some View {
+        HStack(spacing: 12) {
             Text("支付宝账号").foregroundStyle(Theme.onSurfaceVariant)
-            Spacer()
-            if bound {
-                Text("已绑定").foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
+            Spacer(minLength: 8)
+            if alipayBinding {
+                Text("正在打开支付宝…")
+                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
+                    .lineLimit(1)
+            } else if bound {
+                Text(alipayBoundLabel(account))
+                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
+                    .lineLimit(1)
                 Button("解绑") { showUnbindAlipay = true }
                     .font(.body.weight(.semibold))
                     .foregroundStyle(Theme.pink)
                     .buttonStyle(.plain)
-                    .padding(.leading, 10)
+                    .disabled(busy)
             } else {
-                Button {
-                    model.banner = "支付宝绑定即将支持"
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("去绑定").foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Theme.onSurfaceVariant.opacity(0.55))
-                    }
+                HStack(spacing: 6) {
+                    Text("去绑定").foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.onSurfaceVariant.opacity(0.55))
                 }
-                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
+        .contentShape(Rectangle())
     }
 
+    @ViewBuilder
     private var wechatRow: some View {
-        let bound = !(session?.wechatAccount?.isEmpty ?? true)
-        return HStack {
+        let bound = !(session?.wechatAccount?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        if bound || wechatBinding {
+            wechatRowBody(bound: bound)
+        } else {
+            Button {
+                Task { await bindWechatAccount() }
+            } label: {
+                wechatRowBody(bound: bound)
+            }
+            .buttonStyle(.plain)
+            .disabled(busy)
+        }
+    }
+
+    private func wechatRowBody(bound: Bool) -> some View {
+        HStack(spacing: 12) {
             Text("微信账号").foregroundStyle(Theme.onSurfaceVariant)
-            Spacer()
+            Spacer(minLength: 8)
             if wechatBinding {
-                Text("正在打开微信…").foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
+                Text("正在打开微信…")
+                    .foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
+                    .lineLimit(1)
             } else if bound {
                 Text("已绑定").foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
                 Button("解绑") { showUnbindWechat = true }
                     .font(.body.weight(.semibold))
                     .foregroundStyle(Theme.pink)
                     .buttonStyle(.plain)
-                    .padding(.leading, 10)
+                    .disabled(busy)
             } else {
-                Button {
-                    Task { await bindWechatAccount() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("去绑定").foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Theme.onSurfaceVariant.opacity(0.55))
-                    }
+                HStack(spacing: 6) {
+                    Text("去绑定").foregroundStyle(Theme.onSurfaceVariant.opacity(0.92))
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.onSurfaceVariant.opacity(0.55))
                 }
-                .buttonStyle(.plain)
-                .disabled(busy)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
+        .contentShape(Rectangle())
+    }
+
+    private func alipayBoundLabel(_ account: String) -> String {
+        if isAlipayAuthIdentity(account) { return "已绑定" }
+        let name = session?.alipayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let masked = maskAlipayAccount(account)
+        return name.isEmpty ? masked : "\(masked) · \(name)"
+    }
+
+    private func maskAlipayAccount(_ value: String) -> String {
+        let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.contains("@"), text.count > 5, let at = text.firstIndex(of: "@") {
+            let head = text[..<at].prefix(2)
+            return "\(head)***\(text[at...])"
+        }
+        let digits = text.filter(\.isNumber)
+        if digits.count >= 7 {
+            return String(digits.prefix(3)) + "****" + String(digits.suffix(4))
+        }
+        return text
     }
 
     private func profileGroup<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -596,7 +646,14 @@ struct AccountProfileView: View {
     }
 
     private func unbindAlipay() async {
-        _ = await model.patchProfile(alipayAccount: "", alipayName: "", successMessage: "已解绑支付宝")
+        _ = await model.patchProfile(alipayAccount: "", alipayName: "", successMessage: "已解除支付宝绑定")
+    }
+
+    private func bindAlipayAccount() async {
+        guard !alipayBinding else { return }
+        alipayBinding = true
+        defer { alipayBinding = false }
+        await model.bindAlipay()
     }
 
     private func bindWechatAccount() async {
@@ -607,7 +664,7 @@ struct AccountProfileView: View {
     }
 
     private func unbindWechat() async {
-        _ = await model.patchProfile(wechatAccount: "", successMessage: "已解绑微信")
+        _ = await model.patchProfile(wechatAccount: "", successMessage: "已解除微信绑定")
     }
 }
 

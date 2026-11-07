@@ -29,7 +29,7 @@ data class CheckInState(
     val lastCheckInDate: String? = null,
     val checkedInToday: Boolean = false,
     /** Points awarded if the user checks in now (or already earned today). */
-    val todayReward: Int = 1,
+    val todayReward: Int = 100,
     /** Real check-in dates (yyyy-MM-dd) in the recent window from server logs. */
     val recentDates: List<String> = emptyList(),
     /** Purchased mnemonic-image uses. Not withdrawable and not spendable in the mall. */
@@ -67,11 +67,7 @@ class CheckInStore(context: Context) {
         val checkedToday = last == today
         val continuous = last != null && (last == today || last == today.minusDays(1))
         val streakDays = if (continuous) storedStreak else 0
-        val todayReward = when {
-            checkedToday -> rewardForDay(storedStreak)
-            last == today.minusDays(1) -> rewardForDay(storedStreak + 1)
-            else -> 1
-        }
+        val todayReward = rewardForDay(storedStreak)
         return CheckInState(
             totalPoints = totalPoints,
             streakDays = streakDays,
@@ -108,8 +104,8 @@ class CheckInStore(context: Context) {
 
         fun todayShanghai(): LocalDate = LocalDate.now(SHANGHAI)
 
-        /** Day 1→10, day 2→20 … day 7→70, then 70 every day. */
-        fun rewardForDay(streakDay: Int): Int = streakDay.coerceIn(1, 7) * 10
+        /** Every daily check-in awards the same amount. */
+        fun rewardForDay(streakDay: Int): Int = 100
 
         fun consecutiveEndingAt(claimed: Set<LocalDate>, date: LocalDate): Int {
             var n = 0

@@ -93,6 +93,11 @@ export function withdrawConfig() {
   }
 }
 
+function yuanLabel(amountFen) {
+  const fen = Math.max(0, Number(amountFen) || 0)
+  return (fen / 100).toFixed(2)
+}
+
 function mapWithdrawal(row) {
   if (!row) return null
   const amountFen = Math.max(0, Number(row.amount_fen || 0))
@@ -365,9 +370,9 @@ async function finalizeWithdrawal({ withdrawalId, userId, pointsCost, payout, cf
         error: locked.status === 'failed' ? locked.error_message || '打款失败' : undefined,
         message:
           locked.status === 'success'
-            ? `提现成功：¥${cfg.amountYuan} 已打款到${channel === 'wechat' ? '微信' : '支付宝'}`
+            ? `提现成功：¥${yuanLabel(locked.amount_fen)} 已打款到${channel === 'wechat' ? '微信' : '支付宝'}`
             : locked.status === 'pending'
-              ? `提现已提交：¥${cfg.amountYuan} ${channel === 'wechat' ? '微信' : '支付宝'}处理中`
+              ? `提现已提交：¥${yuanLabel(locked.amount_fen)} ${channel === 'wechat' ? '微信' : '支付宝'}处理中`
               : locked.error_message,
         item: mapWithdrawal(locked),
         totalPoints: Number(checkIn?.total_points || 0),
@@ -452,14 +457,15 @@ async function finalizeWithdrawal({ withdrawalId, userId, pointsCost, payout, cf
     ).rows[0]
     await client.query('COMMIT')
     const dest = channel === 'wechat' ? '微信' : '支付宝'
+    const yuan = yuanLabel(updated.amount_fen)
     const message =
       status === 'pending'
         ? payout.packageInfo
-          ? `提现已提交：¥${cfg.amountYuan}，请在微信中确认收款`
-          : `提现已提交：¥${cfg.amountYuan} ${dest}处理中`
+          ? `提现已提交：¥${yuan}，请在微信中确认收款`
+          : `提现已提交：¥${yuan} ${dest}处理中`
         : cfg.sandbox
-          ? `沙箱提现成功：已模拟向${dest}打款 ¥${cfg.amountYuan}`
-          : `提现成功：¥${cfg.amountYuan} 已打款到${dest}`
+          ? `沙箱提现成功：已模拟向${dest}打款 ¥${yuan}`
+          : `提现成功：¥${yuan} 已打款到${dest}`
     return {
       ok: true,
       message,

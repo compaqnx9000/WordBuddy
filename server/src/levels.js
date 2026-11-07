@@ -1,20 +1,32 @@
 import { pool, query } from './db.js'
 
 const SETTING_KEY = 'level_rules'
+const MIGRATION_KEY = 'user_level_one_based'
+const MAKEUP_SYNC_KEY = 'makeup_per_day_equals_level'
+
+/** Display / storage levels are 1–8 (was historically 0–7). */
+export const MIN_LEVEL = 1
+export const MAX_LEVEL = 8
 
 /** One calendar day counts only after this much foreground use. */
 const DEFAULT_MINUTES = 30
 
 const DEFAULT_LEVELS = [
-  { level: 0, minDays: 0, videoDailyLimit: 20, checkInBonusPercent: 0, makeupPerDay: 1, mallDiscountPercent: 0 },
-  { level: 1, minDays: 30, videoDailyLimit: 22, checkInBonusPercent: 0, makeupPerDay: 1, mallDiscountPercent: 0 },
-  { level: 2, minDays: 100, videoDailyLimit: 24, checkInBonusPercent: 0, makeupPerDay: 2, mallDiscountPercent: 0 },
-  { level: 3, minDays: 365, videoDailyLimit: 26, checkInBonusPercent: 20, makeupPerDay: 2, mallDiscountPercent: 0 },
-  { level: 4, minDays: 730, videoDailyLimit: 28, checkInBonusPercent: 50, makeupPerDay: 2, mallDiscountPercent: 0 },
-  { level: 5, minDays: 1095, videoDailyLimit: 30, checkInBonusPercent: 100, makeupPerDay: 2, mallDiscountPercent: 0 },
-  { level: 6, minDays: 1460, videoDailyLimit: 32, checkInBonusPercent: 150, makeupPerDay: 2, mallDiscountPercent: 10 },
-  { level: 7, minDays: 1825, videoDailyLimit: 34, checkInBonusPercent: 200, makeupPerDay: 2, mallDiscountPercent: 10 },
+  { level: 1, minDays: 0, videoDailyLimit: 20, checkInBonusPercent: 0, makeupPerDay: 1, mallDiscountPercent: 0 },
+  { level: 2, minDays: 30, videoDailyLimit: 22, checkInBonusPercent: 0, makeupPerDay: 2, mallDiscountPercent: 0 },
+  { level: 3, minDays: 100, videoDailyLimit: 24, checkInBonusPercent: 0, makeupPerDay: 3, mallDiscountPercent: 0 },
+  { level: 4, minDays: 365, videoDailyLimit: 26, checkInBonusPercent: 20, makeupPerDay: 4, mallDiscountPercent: 0 },
+  { level: 5, minDays: 730, videoDailyLimit: 28, checkInBonusPercent: 50, makeupPerDay: 5, mallDiscountPercent: 0 },
+  { level: 6, minDays: 1095, videoDailyLimit: 30, checkInBonusPercent: 100, makeupPerDay: 6, mallDiscountPercent: 0 },
+  { level: 7, minDays: 1460, videoDailyLimit: 32, checkInBonusPercent: 150, makeupPerDay: 7, mallDiscountPercent: 10 },
+  { level: 8, minDays: 1825, videoDailyLimit: 34, checkInBonusPercent: 200, makeupPerDay: 8, mallDiscountPercent: 10 },
 ]
+
+export function clampUserLevel(value, fallback = MIN_LEVEL) {
+  const n = Math.trunc(Number(value))
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, n))
+}
 
 function todayShanghai(now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {
@@ -38,10 +50,23 @@ export function defaultLevelRules() {
   }
 }
 
+/** Old installs stored Lv0–Lv7; remap rows to Lv1–Lv8 once. */
+function remapLegacyLevels(incoming) {
+  if (!Array.isArray(incoming) || !incoming.length) return incoming
+  const nums = incoming.map((row) => Math.trunc(Number(row?.level)))
+  const hasZero = nums.includes(0)
+  const hasEight = nums.includes(8)
+  if (!hasZero || hasEight) return incoming
+  return incoming.map((row) => ({
+    ...row,
+    level: Math.trunc(Number(row?.level)) + 1,
+  }))
+}
+
 export function normalizeLevelRules(raw) {
   const base = defaultLevelRules()
   const minutesPerValidDay = clampInt(raw?.minutesPerValidDay, 5, 180, base.minutesPerValidDay)
-  const incoming = Array.isArray(raw?.levels) ? raw.levels : []
+  const incoming = remapLegacyLevels(Array.isArray(raw?.levels) ? raw.levels : [])
   const byLevel = new Map(incoming.map((row) => [Math.trunc(Number(row?.level)), row]))
   const levels = base.levels.map((fallback) => {
     const row = byLevel.get(fallback.level) || {}
@@ -66,7 +91,7 @@ export function normalizeLevelRules(raw) {
     }
   }
   if (levels[0].minDays !== 0) {
-    return { ok: false, error: 'Lv0 的有效天数必须是 0' }
+    return { ok: false, error: 'Lv1 的有效天数必须是 0' }
   }
   return { ok: true, rules: { minutesPerValidDay, levels } }
 }
@@ -96,6 +121,69 @@ export async function setLevelRules(raw) {
   return { ok: true, ...parsed.rules }
 }
 
+/**
+ * One-time: bump stored user_level 0–7 → 1–8 and rewrite saved level_rules.
+ */
+export async function migrateUserLevelsToOneBased() {
+  const flag = (
+    await query('SELECT value FROM app_settings WHERE key = $1', [MIGRATION_KEY])
+  ).rows[0]
+  if (String(flag?.value || '') === '1') return { ok: true, skipped: true }
+
+  // Historical storage was 0–7; bump once to 1–8.
+  await query(
+    `UPDATE users
+     SET user_level = LEAST($2::int, GREATEST($1::int, COALESCE(user_level, 0) + 1))`,
+    [MIN_LEVEL, MAX_LEVEL],
+  )
+
+  const rulesRow = (
+    await query('SELECT value FROM app_settings WHERE key = $1', [SETTING_KEY])
+  ).rows[0]
+  if (rulesRow?.value) {
+    try {
+      const parsed = normalizeLevelRules(JSON.parse(rulesRow.value))
+      if (parsed.ok) {
+        await query(
+          `UPDATE app_settings SET value = $2, updated_at = now() WHERE key = $1`,
+          [SETTING_KEY, JSON.stringify(parsed.rules)],
+        )
+      }
+    } catch {
+      /* ignore bad JSON; defaults apply on read */
+    }
+  }
+
+  await query(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES ($1, '1', now())
+     ON CONFLICT (key) DO UPDATE SET value = '1', updated_at = now()`,
+    [MIGRATION_KEY],
+  )
+  return { ok: true, migrated: true }
+}
+
+/** One-time: daily makeup allowance is the level number (Lv1 → 1 … Lv8 → 8). */
+export async function syncMakeupPerDayToLevel() {
+  const flag = (
+    await query('SELECT value FROM app_settings WHERE key = $1', [MAKEUP_SYNC_KEY])
+  ).rows[0]
+  if (String(flag?.value || '') === '1') return { ok: true, skipped: true }
+
+  const rules = await getLevelRules()
+  const levels = rules.levels.map((row) => ({ ...row, makeupPerDay: row.level }))
+  const saved = await setLevelRules({ ...rules, levels })
+  if (!saved.ok) return saved
+
+  await query(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES ($1, '1', now())
+     ON CONFLICT (key) DO UPDATE SET value = '1', updated_at = now()`,
+    [MAKEUP_SYNC_KEY],
+  )
+  return { ok: true, migrated: true }
+}
+
 export function perkForDays(validDays, rules) {
   const days = Math.max(0, Math.trunc(Number(validDays) || 0))
   const levels = [...(rules?.levels || defaultLevelRules().levels)].sort((a, b) => b.minDays - a.minDays)
@@ -103,7 +191,7 @@ export function perkForDays(validDays, rules) {
   const ordered = [...(rules?.levels || [])].sort((a, b) => a.level - b.level)
   const next = ordered.find((row) => row.minDays > days) || null
   return {
-    level: current.level,
+    level: clampUserLevel(current.level),
     minDays: current.minDays,
     videoDailyLimit: current.videoDailyLimit,
     checkInBonusPercent: current.checkInBonusPercent,

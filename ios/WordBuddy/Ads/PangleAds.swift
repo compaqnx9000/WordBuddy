@@ -1,5 +1,4 @@
-// 上架前关闭穿山甲。上架后把这一行改成 `#if true` 即可恢复开屏、信息流和激励视频。
-#if false
+#if true
 import AppTrackingTransparency
 import SwiftUI
 import UIKit
@@ -24,7 +23,18 @@ final class PangleAds: NSObject {
     private var started = false
     private var starting = false
     private var waiters: [(Bool) -> Void] = []
+    private var consent: Task<Void, Never>?
     private let rewards = RewardPresenter()
+
+    /// Shows the tracking prompt once the window is on screen. Ads must wait for this.
+    func ensureConsent() -> Task<Void, Never> {
+        if let consent { return consent }
+        let task = Task { @MainActor in
+            await Self.askForTrackingIfNeeded()
+        }
+        consent = task
+        return task
+    }
 
     func start(_ done: @escaping (Bool) -> Void) {
         if started {
@@ -34,7 +44,10 @@ final class PangleAds: NSObject {
         waiters.append(done)
         guard !starting else { return }
         starting = true
-        requestTrackingThenStart()
+        Task { @MainActor in
+            await self.ensureConsent().value
+            self.startSDK()
+        }
     }
 
     func showReward(userId: String?) async -> RewardShowResult {
@@ -47,14 +60,41 @@ final class PangleAds: NSObject {
         return await rewards.show(userId: userId)
     }
 
-    private func requestTrackingThenStart() {
-        guard ATTrackingManager.trackingAuthorizationStatus == .notDetermined else {
-            startSDK()
-            return
+    /// The system drops the alert if it is requested before the app is active and a key window exists.
+    /// On iPad that silent drop left review with no tracking prompt, while the ad SDK had already started.
+    private static func askForTrackingIfNeeded() async {
+        guard ATTrackingManager.trackingAuthorizationStatus == .notDetermined else { return }
+        for attempt in 0..<4 {
+            await waitForVisibleWindow()
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+            }
+            guard ATTrackingManager.trackingAuthorizationStatus == .notDetermined else { return }
+            let status = await requestTracking()
+            if status != .notDetermined { return }
         }
-        ATTrackingManager.requestTrackingAuthorization { _ in
-            Task { @MainActor in
-                self.startSDK()
+    }
+
+    private static func waitForVisibleWindow() async {
+        for _ in 0..<40 {
+            let active = UIApplication.shared.applicationState == .active
+            let visible = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .contains { scene in
+                    scene.activationState == .foregroundActive && scene.windows.contains(where: \.isKeyWindow)
+                }
+            if active && visible {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                return
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
+
+    private static func requestTracking() async -> ATTrackingManager.AuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            ATTrackingManager.requestTrackingAuthorization { status in
+                continuation.resume(returning: status)
             }
         }
     }

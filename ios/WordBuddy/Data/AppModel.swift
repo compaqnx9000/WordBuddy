@@ -55,7 +55,7 @@ final class AppModel: ObservableObject {
     /// Whole-notebook favorite. Shown as a live progress card, not the alert banner.
     @Published var catalogCopyProgress: CatalogCopyProgress?
     @Published var accent: Accent = .us
-    @Published var accentStyle: AccentStyle = .cyberNeon
+    @Published var accentStyle: AccentStyle = .forestStar
     @Published var hideDefinitions = true
     @Published var speakOnPageChange = true
     @Published var imageProvider: ImageProvider = .pollinations
@@ -76,7 +76,12 @@ final class AppModel: ObservableObject {
     /// Notebook the `favoritedByText` index was loaded from.
     private var favoritedIndexNotebookId: Int64?
     @Published var checkIn = CheckInState()
-    @Published var rewardVideo = RewardVideoOffer()
+    @Published var rewardVideo = RewardVideoOffer() {
+        didSet { startRewardCooldown() }
+    }
+    /// Seconds until the next reward video, ticking down on the Me page. 0 means ready.
+    @Published private(set) var rewardCooldownLeft = 0
+    private var rewardCooldownTask: Task<Void, Never>?
     @Published var rewardBusy = false
     @Published var accounts: [RememberedAccount] = []
     @Published var pendingLookup: String?
@@ -252,6 +257,43 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Opens Alipay, then stores the payer identity used for cash withdrawal.
+    func bindAlipay() async {
+        guard let session else {
+            openLogin()
+            return
+        }
+        guard let scheme = URL(string: "alipays://"), UIApplication.shared.canOpenURL(scheme) else {
+            banner = "请先安装支付宝，再绑定收款账号"
+            return
+        }
+        do {
+            let info = try await api.fetchAlipayBindAuthInfo(token: session.token)
+            let code = try await SocialAuth.shared.signInAlipay(authInfo: info)
+            var latest = try await api.bindAlipay(token: session.token, authCode: code)
+            if latest.vocabNotebookId == 0 {
+                latest.vocabNotebookId = session.vocabNotebookId
+            }
+            if latest.phone.isEmpty {
+                latest.phone = session.phone
+            }
+            if latest.wechatAccount == nil { latest.wechatAccount = session.wechatAccount }
+            self.session = latest
+            SessionStore.save(latest)
+            AccountStore.upsert(latest)
+            accounts = AccountStore.list()
+            banner = "支付宝已绑定"
+        } catch {
+            if (error as? SocialAuthError)?.errorDescription == "已取消支付宝授权" {
+                banner = "已取消绑定"
+                return
+            }
+            if !noteSessionError(error) {
+                banner = error.localizedDescription
+            }
+        }
+    }
+
     func noteLoginCoverVisible(_ visible: Bool) {
         loginCoverVisible = visible
     }
@@ -320,7 +362,7 @@ final class AppModel: ObservableObject {
         guard let session else { return }
         do {
             let level = try await api.reportActivity(token: session.token, activeMs: activeMs)
-            guard level >= 0, level != session.level else { return }
+            guard level >= 1, level != session.level else { return }
             var updated = session
             updated.level = level
             self.session = updated
@@ -747,10 +789,8 @@ final class AppModel: ObservableObject {
             banner = "今日奖励视频已达 \(rewardVideo.dailyLimit) 次"
             return
         }
-        if rewardVideo.cooldownRemainingSec > 0 {
-            let left = rewardVideo.cooldownRemainingSec
-            let label = left >= 60 ? "\(Int(ceil(Double(left) / 60.0))) 分钟" : "\(left) 秒"
-            banner = "看视频领搭币需间隔 5 分钟，请再等 \(label)"
+        if rewardCooldownLeft > 0 {
+            banner = "看视频领搭币需间隔 \(formatRewardCooldown(rewardVideo.cooldownSec))，请再等 \(formatRewardCooldown(rewardCooldownLeft))"
             return
         }
         guard !rewardBusy else { return }
@@ -765,6 +805,34 @@ final class AppModel: ObservableObject {
             banner = message
         }
         rewardBusy = false
+    }
+
+    /// Restarts the reward-video cooldown from the latest server snapshot.
+    private func startRewardCooldown() {
+        rewardCooldownTask?.cancel()
+        rewardCooldownTask = nil
+        let remaining = rewardVideo.remaining <= 0 ? 0 : max(0, rewardVideo.cooldownRemainingSec)
+        guard remaining > 0 else {
+            rewardCooldownLeft = 0
+            return
+        }
+        let deadline = Date().addingTimeInterval(TimeInterval(remaining))
+        rewardCooldownLeft = remaining
+        rewardCooldownTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                let left = Self.cooldownSecondsLeft(until: deadline)
+                self.rewardCooldownLeft = left
+                if left <= 0 { break }
+            }
+        }
+    }
+
+    private static func cooldownSecondsLeft(until deadline: Date) -> Int {
+        let millis = deadline.timeIntervalSinceNow * 1000
+        if millis <= 0 { return 0 }
+        return max(0, Int((millis + 999) / 1000))
     }
 
     private func claimRewardVideo() async {

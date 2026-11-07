@@ -154,6 +154,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				403055575B8C5BD537A7ACB1 /* BUAdSDK.xcframework in Frameworks */,
+				A71B4D428FBF93BA3C0C6145 /* CSJMediation.xcframework in Frameworks */,
+				2DB56195580169A539FF6A82 /* AdSupport.framework in Frameworks */,
+				A5F9002F8C05978B3A454886 /* AppTrackingTransparency.framework in Frameworks */,
 				9C929AEF3ACAA41057CCA836 /* WechatOpenSDK.xcframework in Frameworks */,
 				9557EB43E90170EAD393E6AE /* AlipaySDK.xcframework in Frameworks */,
 				58864DF08D96D1AD4E72A1C3 /* Security.framework in Frameworks */,
@@ -462,6 +466,7 @@
 			files = (
 				7038FA7C3337D623CF88FCC5 /* Assets.xcassets in Resources */,
 				A1C0FF1CE0A11A0E00000001 /* PrivacyInfo.xcprivacy in Resources */,
+				73DF417466B9CC39B9A8E415 /* CSJAdSDK.bundle in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -629,7 +634,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 5;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -642,7 +647,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -693,7 +698,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 5;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -712,7 +717,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

@@ -71,6 +71,7 @@ import {
 } from './withdrawals.js'
 import { parseWechatAuthNotify } from './wechat.js'
 import { exchangeWechatCode, fetchWechatUserProfile, wechatLoginConfig } from './wechatLogin.js'
+import { verifyAppleIdentityToken } from './appleLogin.js'
 import {
   bindInviteCode,
   findUserByBuddyId,
@@ -344,6 +345,125 @@ async function consumeSms(smsId) {
   if (smsId) await query('UPDATE sms_codes SET consumed_at = now() WHERE id = $1', [smsId])
 }
 
+function occupiedIdentity(value) {
+  const text = String(value || '').trim()
+  return text || null
+}
+
+function identityClash(ownerValue, shellValue) {
+  const owner = occupiedIdentity(ownerValue)
+  const shell = occupiedIdentity(shellValue)
+  return Boolean(owner && shell && owner !== shell)
+}
+
+/**
+ * WeChat/Alipay login creates a phone-less account first. If that phone already
+ * belongs to an account, attach this login method to the existing account and
+ * drop the empty shell. The existing password stays as it is.
+ */
+async function linkShellToExistingPhone(shellId, ownerId, password) {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const shell = (
+      await client.query(
+        `SELECT id, phone, wechat_openid, wechat_unionid, wechat_account,
+                wechat_authorization_id, wechat_out_authorization_no,
+                alipay_account, alipay_name
+         FROM users WHERE id = $1 FOR UPDATE`,
+        [shellId],
+      )
+    ).rows[0]
+    const owner = (
+      await client.query(
+        `SELECT id, phone, password_hash, wechat_openid, wechat_unionid, wechat_account,
+                wechat_authorization_id, wechat_out_authorization_no,
+                alipay_account, alipay_name
+         FROM users WHERE id = $1 FOR UPDATE`,
+        [ownerId],
+      )
+    ).rows[0]
+    if (!shell || !owner) {
+      await client.query('ROLLBACK')
+      return { ok: false, error: '账号不存在' }
+    }
+    if (String(shell.phone || '').trim()) {
+      await client.query('ROLLBACK')
+      return { ok: false, error: '已绑定手机号，无需重复绑定' }
+    }
+    if (identityClash(owner.wechat_openid, shell.wechat_openid)) {
+      await client.query('ROLLBACK')
+      return { ok: false, error: '该手机号已绑定其他微信，请用原来的微信或手机号登录' }
+    }
+    if (identityClash(owner.alipay_account, shell.alipay_account)) {
+      await client.query('ROLLBACK')
+      return { ok: false, error: '该手机号已绑定其他支付宝，请用原来的支付宝或手机号登录' }
+    }
+    const hadPassword = Boolean(String(owner.password_hash || '').trim())
+    if (!hadPassword && !password) {
+      await client.query('ROLLBACK')
+      return { ok: false, error: '请设置登录密码（6 到 32 位）' }
+    }
+    const passwordHash = hadPassword ? null : hashPassword(password)
+    await client.query(
+      `UPDATE users SET
+         wechat_openid = NULL,
+         wechat_unionid = NULL,
+         wechat_account = NULL,
+         wechat_authorization_id = NULL,
+         wechat_out_authorization_no = NULL,
+         alipay_account = NULL,
+         alipay_name = NULL
+       WHERE id = $1`,
+      [shell.id],
+    )
+    await client.query(
+      `UPDATE users SET
+         wechat_openid = COALESCE(NULLIF(btrim(wechat_openid), ''), $2),
+         wechat_unionid = COALESCE(NULLIF(btrim(wechat_unionid), ''), $3),
+         wechat_account = COALESCE(NULLIF(btrim(wechat_account), ''), $4),
+         wechat_authorization_id = COALESCE(NULLIF(btrim(wechat_authorization_id), ''), $5),
+         wechat_out_authorization_no = COALESCE(NULLIF(btrim(wechat_out_authorization_no), ''), $6),
+         alipay_account = COALESCE(NULLIF(btrim(alipay_account), ''), $7),
+         alipay_name = COALESCE(NULLIF(btrim(alipay_name), ''), $8),
+         password_hash = COALESCE(password_hash, $9),
+         password_changed_at = CASE WHEN $9::text IS NOT NULL THEN now() ELSE password_changed_at END
+       WHERE id = $1`,
+      [
+        owner.id,
+        occupiedIdentity(shell.wechat_openid),
+        occupiedIdentity(shell.wechat_unionid),
+        occupiedIdentity(shell.wechat_account),
+        occupiedIdentity(shell.wechat_authorization_id),
+        occupiedIdentity(shell.wechat_out_authorization_no),
+        occupiedIdentity(shell.alipay_account),
+        occupiedIdentity(shell.alipay_name),
+        passwordHash,
+      ],
+    )
+    await client.query('DELETE FROM users WHERE id = $1', [shell.id])
+    await client.query('COMMIT')
+    const shellAlipay = occupiedIdentity(shell.alipay_account)
+    const shellWechat = occupiedIdentity(shell.wechat_openid)
+    return {
+      ok: true,
+      ownerId: Number(owner.id),
+      phone: owner.phone,
+      setPassword: !hadPassword,
+      method: shellAlipay && !shellWechat ? 'alipay' : 'wechat',
+    }
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      /* already aborted */
+    }
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
 async function applyWechatProfile(userId, wxProfile) {
   return applyOauthProfile(userId, wxProfile, 'wechat')
 }
@@ -391,7 +511,7 @@ async function applyOauthProfile(userId, profile, source = 'oauth') {
   )
 }
 
-async function finishLogin(req, res, user, method, invite = null) {
+async function finishLogin(req, res, user, method, invite = null, options = {}) {
   const vocabNotebookId = await createDefaultNotebookIfEmpty(user.id)
   // Single-device policy: each successful login invalidates older JWTs.
   const sessionVersion = await rotateSessionVersion(user.id)
@@ -406,7 +526,7 @@ async function finishLogin(req, res, user, method, invite = null) {
   const phone = String(profile.phone || user.phone || '').trim()
   const payload = {
     isNewUser: false,
-    needsPhoneBind: !phone,
+    needsPhoneBind: options.needsPhoneBind ?? !phone,
     token: signToken({ id: user.id, phone: phone || null }, sessionVersion),
     user: profile,
     vocabNotebookId: Number(vocabNotebookId),
@@ -680,6 +800,69 @@ router.post('/auth/alipay', async (req, res) => {
   }
 })
 
+function appleDisplayName(value) {
+  const name = String(value || '')
+    .replace(/[\u0000-\u001f]/g, '')
+    .trim()
+    .slice(0, 32)
+  return name
+}
+
+router.post('/auth/apple', async (req, res) => {
+  try {
+    const verified = await verifyAppleIdentityToken(req.body?.identityToken, req.body?.nonce)
+    if (!verified.ok) {
+      await recordLoginEvent(req, { method: 'apple', success: false })
+      res.status(400).json({ error: verified.error || 'Apple 登录失败' })
+      return
+    }
+    const existing = (
+      await query(
+        'SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE apple_user_id = $1',
+        [verified.sub],
+      )
+    ).rows[0]
+    let user = existing
+    if (!existing) {
+      user = (
+        await query(
+          `INSERT INTO users (phone, apple_user_id)
+           VALUES (NULL, $1)
+           RETURNING id, phone, password_hash, avatar_url, user_level`,
+          [verified.sub],
+        )
+      ).rows[0]
+      try {
+        await grantSignupBonus(user.id)
+        await grantSignupImageCredit(user.id)
+      } catch (err) {
+        console.error('[signup] bonus failed', err)
+      }
+    }
+    const nickname = appleDisplayName(req.body?.fullName)
+    await query(
+      `UPDATE users SET
+         email = CASE
+           WHEN $2::text IS NULL OR btrim($2::text) = '' THEN email
+           WHEN email IS NULL OR btrim(email) = '' THEN $2
+           ELSE email
+         END,
+         nickname = CASE
+           WHEN $3::text IS NULL OR btrim($3::text) = '' THEN nickname
+           WHEN nickname IS NULL OR btrim(nickname) = '' THEN $3
+           ELSE nickname
+         END
+       WHERE id = $1`,
+      [user.id, verified.email || null, nickname || null],
+    )
+    await finishLogin(req, res, user, 'apple', null, { needsPhoneBind: false })
+  } catch (error) {
+    console.error('[apple] login', error)
+    await recordLoginEvent(req, { method: 'apple', success: false })
+    sendAppError(res, error)
+  }
+})
+
 /** Bind WeChat OpenID to the current logged-in account (profile payout). */
 router.post('/me/wechat/bind', authRequired, async (req, res) => {
   try {
@@ -748,10 +931,7 @@ router.post('/auth/bind-phone', authRequired, async (req, res) => {
     res.status(400).json({ error: '请输入正确的手机号' })
     return
   }
-  if (!password) {
-    res.status(400).json({ error: '请设置登录密码（6 到 32 位）' })
-    return
-  }
+  await finalizeDueAccountByPhone(phone)
   const me = (
     await query(
       'SELECT id, phone, password_hash, wechat_openid, alipay_account FROM users WHERE id = $1',
@@ -784,9 +964,41 @@ router.post('/auth/bind-phone', authRequired, async (req, res) => {
     ])
   ).rows[0]
   if (taken) {
-    res.status(400).json({
-      error: '该手机号已注册。请用手机号登录；如需合并微信，请联系客服。',
-    })
+    const ownerPass = (
+      await query('SELECT password_hash FROM users WHERE id = $1', [taken.id])
+    ).rows[0]
+    const ownerHasPassword = Boolean(String(ownerPass?.password_hash || '').trim())
+    if (!ownerHasPassword && !password) {
+      res.json({ needsPassword: true })
+      return
+    }
+    let merged
+    try {
+      merged = await linkShellToExistingPhone(me.id, taken.id, password)
+    } catch (error) {
+      console.error('[auth] bind-phone merge', error)
+      res.status(400).json({ error: '绑定到已有账号失败，请稍后重试' })
+      return
+    }
+    if (!merged.ok) {
+      res.status(400).json({ error: merged.error })
+      return
+    }
+    if (checked.smsId) await consumeSms(checked.smsId)
+    if (merged.setPassword) {
+      await recordPasswordEvent(req, merged.ownerId, 'bind_phone')
+    }
+    const owner = (
+      await query(
+        'SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE id = $1',
+        [merged.ownerId],
+      )
+    ).rows[0]
+    await finishLogin(req, res, owner, merged.method)
+    return
+  }
+  if (!password) {
+    res.json({ needsPassword: true })
     return
   }
   try {
@@ -983,7 +1195,7 @@ router.get('/me', authRequired, async (req, res) => {
     res.status(404).json({ error: '用户不存在' })
     return
   }
-  const level = Math.min(7, Math.max(0, Number.isFinite(Number(row.user_level)) ? Number(row.user_level) : 0))
+  const level = Math.min(8, Math.max(1, Number.isFinite(Number(row.user_level)) ? Number(row.user_level) : 1))
   const checkIn = await getUserCheckIn(req.user.id)
   const profile = mapUserProfile(row, req.user)
   let deletion = null
@@ -1267,7 +1479,7 @@ function shortNetworkRegion(location) {
 }
 
 function mapUserProfile(row, fallbackUser = {}) {
-  const level = Math.min(7, Math.max(0, Number.isFinite(Number(row?.user_level)) ? Number(row.user_level) : 0))
+  const level = Math.min(8, Math.max(1, Number.isFinite(Number(row?.user_level)) ? Number(row.user_level) : 1))
   const location = row?.last_ip_location || null
   return {
     id: Number(row?.id || fallbackUser.id),

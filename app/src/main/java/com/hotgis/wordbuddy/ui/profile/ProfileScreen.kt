@@ -319,7 +319,7 @@ fun ProfileScreen(
         if (rewardCooldownLeft > 0) {
             Toast.makeText(
                 context,
-                "看视频领搭币需间隔 5 分钟，请再等 ${formatRewardCooldown(rewardCooldownLeft)}",
+                "看视频领搭币需间隔 ${formatRewardCooldown(rewardVideo.cooldownSec)}，请再等 ${formatRewardCooldown(rewardCooldownLeft)}",
                 Toast.LENGTH_SHORT,
             ).show()
             return
@@ -637,7 +637,7 @@ fun ProfileScreen(
                         rewardVideo.remaining <= 0 ->
                             "今日已看完 ${rewardVideo.usedToday}/${rewardVideo.dailyLimit}"
                         rewardCooldownLeft > 0 ->
-                            "需间隔 5 分钟 · 还剩 ${formatRewardCooldown(rewardCooldownLeft)}"
+                            "需间隔 ${formatRewardCooldown(rewardVideo.cooldownSec)} · 还剩 ${formatRewardCooldown(rewardCooldownLeft)}"
                         else ->
                             "剩余 ${rewardVideo.remaining}/${rewardVideo.dailyLimit} · +${rewardVideo.pointsPerWatch}"
                     },
@@ -1086,7 +1086,7 @@ private fun buildCheckInDaySlots(today: LocalDate, state: CheckInState): List<Ch
                 val daysAhead = (date.toEpochDay() - today.toEpochDay()).toInt()
                 CheckInStore.rewardForDay(afterSigningToday + daysAhead)
             }
-            else -> 1
+            else -> CheckInStore.rewardForDay(1)
         }
         CheckInDaySlot(
             date = date,
@@ -1522,5 +1522,9 @@ private fun formatRewardCooldown(totalSec: Int): String {
     val sec = totalSec.coerceAtLeast(0)
     val m = sec / 60
     val s = sec % 60
-    return if (m > 0) "${m}分${s}秒" else "${s}秒"
+    return when {
+        m > 0 && s == 0 -> "${m}分钟"
+        m > 0 -> "${m}分${s}秒"
+        else -> "${s}秒"
+    }
 }

@@ -400,7 +400,7 @@ private fun AboutLegalFooter(
             lineHeight = 18.ssp(),
         )
         Text(
-            text = "北京博冠鸿图科技有限公司 版权所有\nCopyright © 2024-$year 北京博冠鸿图科技有限公司. All Rights Reserved.",
+            text = "北京博冠鸿图科技有限公司 版权所有\nCopyright © 2024-$year Beijing Boguan Hongtu Technology Co., Ltd. All Rights Reserved.",
             color = Stellar.OnSurface.copy(alpha = 0.72f),
             fontSize = 11.ssp(),
             textAlign = TextAlign.Center,

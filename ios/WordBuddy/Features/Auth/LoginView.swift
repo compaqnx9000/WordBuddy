@@ -28,6 +28,7 @@ struct LoginView: View {
     @State private var needPassword = false
     @State private var bindToken: String?
     @State private var bindProvider = "微信"
+    @State private var bindNeedPassword = false
     @State private var loggingIn = false
     @State private var countdown = 0
     @State private var countdownTask: Task<Void, Never>?
@@ -74,23 +75,25 @@ struct LoginView: View {
                 formCard
                     .glassPanel(neon: true)
 
-                // 上架前关闭第三方登录（微信、支付宝）。恢复时取消下面这一段注释，并同时提供「通过 Apple 登录」。
-                // if !needPassword && !bindingPhone {
-                //     Text("其他登录方式")
-                //         .font(.system(size: 12))
-                //         .foregroundStyle(Theme.onSurfaceVariant.opacity(0.75))
-                //         .padding(.top, 28)
-                //     HStack(spacing: 28) {
-                //         socialButton("WeChat", label: "微信登录", tint: Color(hex: 0x07C160)) {
-                //             Task { await loginWithWechat() }
-                //         }
-                //         socialButton("Alipay", label: "支付宝登录", tint: Color(hex: 0x1677FF)) {
-                //             Task { await loginWithAlipay() }
-                //         }
-                //     }
-                //     .padding(.top, 14)
-                //     .disabled(loggingIn)
-                // }
+                if !needPassword && !bindingPhone {
+                    Text("其他登录方式")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.onSurfaceVariant.opacity(0.75))
+                        .padding(.top, 28)
+                    HStack(spacing: 20) {
+                        appleButton {
+                            Task { await loginWithApple() }
+                        }
+                        socialButton("WeChat", label: "微信登录", tint: Color(hex: 0x07C160)) {
+                            Task { await loginWithWechat() }
+                        }
+                        socialButton("Alipay", label: "支付宝登录", tint: Color(hex: 0x1677FF)) {
+                            Task { await loginWithAlipay() }
+                        }
+                    }
+                    .padding(.top, 14)
+                    .disabled(loggingIn)
+                }
 
                 Text(footer)
                     .font(.system(size: 12))
@@ -150,6 +153,7 @@ struct LoginView: View {
                 .padding(.top, 16)
                 .onChange(of: phone) { _, value in
                     phone = String(value.filter(\.isNumber).prefix(11))
+                    if bindingPhone { bindNeedPassword = false }
                     if !needPassword { errorMessage = nil }
                 }
 
@@ -170,7 +174,7 @@ struct LoginView: View {
                 .padding(.top, 12)
             }
 
-            if bindingPhone {
+            if bindingPhone && bindNeedPassword {
                 loginField("设置密码（至少 6 位）", text: $password, icon: "lock", secure: true)
                     .padding(.top, 12)
                 loginField("再输入一次密码", text: $passwordConfirm, icon: "lock", secure: true)
@@ -248,8 +252,11 @@ struct LoginView: View {
     }
 
     private var subtitle: String {
+        if bindingPhone && bindNeedPassword {
+            return "这个手机号还没注册，请设置登录密码。"
+        }
         if bindingPhone {
-            return "\(bindProvider)登录成功。请绑定手机号并设置登录密码。"
+            return "\(bindProvider)登录成功。请验证手机号。已经注册过的手机号，验证后直接进入原账号，不用再填密码。"
         }
         if needPassword { return "验证通过后设置密码，之后可用手机号+密码登录" }
         switch mode {
@@ -268,6 +275,7 @@ struct LoginView: View {
     }
 
     private var submitTitle: String {
+        if bindingPhone && bindNeedPassword { return "设置密码并进入" }
         if bindingPhone { return "绑定并进入" }
         if needPassword { return "设置密码并进入" }
         return "登录"
@@ -299,6 +307,18 @@ struct LoginView: View {
             return
         }
         dismiss()
+    }
+
+    private func appleButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "apple.logo")
+                .font(.system(size: 26, weight: .medium))
+                .foregroundStyle(.black)
+                .frame(width: 52, height: 52)
+                .background(Color.white.opacity(0.92), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("通过 Apple 登录")
     }
 
     private func socialButton(_ image: String, label: String, tint: Color, action: @escaping () -> Void) -> some View {
@@ -426,6 +446,17 @@ struct LoginView: View {
         }
     }
 
+    private func loginWithApple() async {
+        await socialLogin(provider: "Apple", requirePhone: false) {
+            let credential = try await SocialAuth.shared.signInApple()
+            return try await model.api.loginWithApple(
+                identityToken: credential.identityToken,
+                nonce: credential.nonce,
+                fullName: credential.fullName
+            )
+        }
+    }
+
     private func loginWithWechat() async {
         await socialLogin(provider: "微信") {
             let code = try await SocialAuth.shared.signInWechat()
@@ -441,19 +472,25 @@ struct LoginView: View {
         }
     }
 
-    private func socialLogin(provider: String, run: () async throws -> AuthResult) async {
+    private func socialLogin(
+        provider: String,
+        requirePhone: Bool = true,
+        run: () async throws -> AuthResult
+    ) async {
         guard !loggingIn else { return }
         loggingIn = true
         errorMessage = nil
         defer { loggingIn = false }
         do {
             let result = try await run()
-            if result.needsPhoneBind || (result.session?.phone.isEmpty ?? true) {
+            let missingPhone = result.needsPhoneBind || (result.session?.phone.isEmpty ?? true)
+            if requirePhone && missingPhone {
                 guard let token = result.session?.token, !token.isEmpty else {
                     errorMessage = "登录失败"
                     return
                 }
                 bindProvider = provider
+                bindNeedPassword = false
                 bindToken = token
                 phone = ""
                 code = ""
@@ -477,13 +514,15 @@ struct LoginView: View {
             errorMessage = "请输入6位验证码"
             return
         }
-        guard password.count >= 6 else {
-            errorMessage = "密码至少 6 位"
-            return
-        }
-        guard password == passwordConfirm else {
-            errorMessage = "两次密码不一致"
-            return
+        if bindNeedPassword {
+            guard password.count >= 6 else {
+                errorMessage = "密码至少 6 位"
+                return
+            }
+            guard password == passwordConfirm else {
+                errorMessage = "两次密码不一致"
+                return
+            }
         }
         loggingIn = true
         errorMessage = nil
@@ -493,8 +532,14 @@ struct LoginView: View {
                 token: token,
                 phone: phone,
                 code: code,
-                password: password
+                password: bindNeedPassword ? password : nil
             )
+            if result.needsPassword && result.session == nil {
+                bindNeedPassword = true
+                password = ""
+                passwordConfirm = ""
+                return
+            }
             bindToken = nil
             try await finish(result)
         } catch {

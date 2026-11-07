@@ -9,7 +9,7 @@ import paramiko
 HOST = "39.96.67.128"
 USER = "root"
 REMOTE_ROOT = "/var/www/wordbuddy"
-LOCAL_SITE = Path(r"D:\WORK\ZeroGLab\Cursor-Projects\HotWords\site")
+LOCAL_SITE = Path(__file__).resolve().parents[1] / "site"
 
 NGINX_LANDING = r"""
 server {

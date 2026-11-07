@@ -16,6 +16,8 @@ dependencyResolutionManagement {
         mavenCentral()
         // 穿山甲 / Pangle China SDK
         maven { url = uri("https://artifact.bytedance.com/repository/pangle") }
+        // 巨量广告转化 SDK（融合归因）
+        maven { url = uri("https://artifact.bytedance.com/repository/Volcengine/") }
         maven { url = uri("https://maven.aliyun.com/repository/public") }
     }
 }

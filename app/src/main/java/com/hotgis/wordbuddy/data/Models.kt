@@ -288,6 +288,7 @@ data class PointPurchaseResult(
     val wechatPay: WechatPayOrderParams?,
     val sandbox: Boolean,
     val points: Int,
+    val amountFen: Int = 0,
 )
 
 data class PointOrderPayResult(

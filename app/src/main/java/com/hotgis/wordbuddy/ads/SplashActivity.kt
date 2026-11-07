@@ -99,6 +99,7 @@ class SplashActivity : ComponentActivity() {
     }
 
     private fun startAdsOrMain() {
+        OceanConvertHolder.init(this)
         if (!CsjSdkHolder.isConfigured) {
             Log.w(TAG, "CSJ IDs not configured — skip splash ad")
             goMain()
@@ -262,9 +263,13 @@ class SplashActivity : ComponentActivity() {
                 "请先阅读《隐私保护指引（隐私政策）》。全文与 https://wordbuddy.cc/privacy.html 一致，" +
                 "说明账号、学习数据、助记配图、支付和广告。点「查看全文」即可阅读同一篇。\n\n" +
                 "在你点击「同意」之前，我们不会初始化广告 SDK，也不会读取设备标识或传感器列表。\n\n" +
-                "同意之后，为实现开屏、短视频和激励视频广告，本应用会接入穿山甲（GroMore）。" +
-                "相关 SDK 可能读取设备传感器列表；仅在加载或展示一条广告时读取一次 OAID，" +
-                "用于广告投放、频次控制、反作弊与支付安全，不会在后台按固定周期重复采集。\n\n" +
+                "同意之后，为实现开屏、短视频和激励视频广告，本应用以及穿山甲（GroMore，字节跳动系第三方 SDK）" +
+                "会通过系统接口读取 Android ID 和 OAID。方式为仅在加载或展示一条广告时读取一次，" +
+                "目的和范围仅限广告投放、频次控制、效果统计、反作弊与支付安全，" +
+                "不会在后台按固定周期重复采集，也不用于其他目的。相关 SDK 还可能读取设备传感器列表。\n\n" +
+                "为实现巨量引擎广告点击归因和激活上报，巨量广告转化 SDK（字节跳动系第三方 SDK）" +
+                "会在你同意后的每次冷启动时，通过系统接口再读取一次 Android ID 和 OAID。" +
+                "目的和范围仅限广告点击归因与激活上报，不用于其他目的。\n\n" +
                 "我们已关闭，且不会收集：IMEI、IMSI、设备 MAC 地址、软件安装列表、精确位置、" +
                 "通讯录、通话记录、日历、短信、本机号码、录音。\n\n" +
                 "相机和相册只在你主动更换头像，或把视频保存到相册时才会申请，不会在首次打开时弹出。\n\n" +

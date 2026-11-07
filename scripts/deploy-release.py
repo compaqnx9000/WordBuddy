@@ -12,7 +12,7 @@ HOST = "47.95.111.238"
 USER = "root"
 PASS = "Lenovot420"
 REMOTE_APP = "/opt/hotwords/server/public/app"
-LOCAL_ROOT = Path(r"D:\work\zeroG\Cursor-Prrojects\HotWords")
+LOCAL_ROOT = Path(__file__).resolve().parents[1]
 APK = LOCAL_ROOT / "outputs" / "WordBuddy-release.apk"
 VERSION = LOCAL_ROOT / "server" / "public" / "app" / "version.json"
 

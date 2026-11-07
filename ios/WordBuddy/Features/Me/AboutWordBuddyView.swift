@@ -133,7 +133,7 @@ struct AboutWordBuddyView: View {
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
                 .padding(.top, 4)
-            Text("北京博冠鸿图科技有限公司 版权所有\nCopyright © 2024-2026 北京博冠鸿图科技有限公司. All Rights Reserved.")
+            Text("北京博冠鸿图科技有限公司 版权所有\nCopyright © 2024-2026 Beijing Boguan Hongtu Technology Co., Ltd. All Rights Reserved.")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.onSurface.opacity(0.72))
                 .multilineTextAlignment(.center)

@@ -138,6 +138,8 @@ data class LoginUi(
     val needPassword: Boolean = false,
     /** WeChat login succeeded but phone is still missing. */
     val needBindPhone: Boolean = false,
+    /** Existing phone skips this; a brand-new phone must set a password. */
+    val bindNeedsPassword: Boolean = false,
     val buddyIdHint: String? = null,
     val sending: Boolean = false,
     val loggingIn: Boolean = false,
@@ -285,12 +287,13 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             if (session.phone.isBlank()) {
                 _login.value = LoginUi(
                     needBindPhone = true,
+                    bindNeedsPassword = false,
                     buddyIdHint = session.buddyId,
                 )
             }
             viewModelScope.launch { bootstrapSession() }
         } else {
-            LauncherIcons.apply(getApplication(), 0)
+            LauncherIcons.applyDefault(getApplication())
             viewModelScope.launch { bootstrapGuestCatalogs() }
         }
         viewModelScope.launch {
@@ -3099,7 +3102,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setLoginPhone(value: String) {
-        _login.update { it.copy(phone = value, needPassword = false, error = null) }
+        _login.update { it.copy(phone = value, needPassword = false, bindNeedsPassword = false, error = null) }
     }
 
     fun setLoginCode(value: String) {
@@ -3212,7 +3215,13 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 val session = result.session ?: error("登录失败")
-                if (state.needPassword) inviteStore.clear()
+                if (state.needPassword) {
+                    inviteStore.clear()
+                    com.hotgis.wordbuddy.ads.OceanConvertHolder.reportRegister(
+                        getApplication(),
+                        method = "mobile",
+                    )
+                }
                 enterSession(session)
             }.onFailure { error ->
                 _login.update { it.copy(error = error.message ?: "登录失败") }
@@ -3239,6 +3248,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     _login.update {
                         it.copy(
                             needBindPhone = true,
+                            bindNeedsPassword = false,
                             buddyIdHint = session.buddyId,
                             phone = "",
                             code = "",
@@ -3287,6 +3297,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     _login.update {
                         it.copy(
                             needBindPhone = true,
+                            bindNeedsPassword = false,
                             buddyIdHint = session.buddyId,
                             phone = "",
                             code = "",
@@ -3333,13 +3344,15 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val password = state.password.trim()
-        if (password.length !in 6..32) {
-            _login.update { it.copy(error = "请设置登录密码（6 到 32 位）") }
-            return
-        }
-        if (password != state.passwordConfirm) {
-            _login.update { it.copy(error = "两次输入的密码不一致") }
-            return
+        if (state.bindNeedsPassword) {
+            if (password.length !in 6..32) {
+                _login.update { it.copy(error = "请设置登录密码（6 到 32 位）") }
+                return
+            }
+            if (password != state.passwordConfirm) {
+                _login.update { it.copy(error = "两次输入的密码不一致") }
+                return
+            }
         }
         viewModelScope.launch {
             _login.update { it.copy(loggingIn = true, error = null) }
@@ -3348,10 +3361,26 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     token = token,
                     phone = phone,
                     code = state.code,
-                    password = password,
+                    password = if (state.bindNeedsPassword) password else null,
                 )
             }.onSuccess { result ->
+                if (result.needsPassword && result.session == null) {
+                    _login.update {
+                        it.copy(
+                            bindNeedsPassword = true,
+                            password = "",
+                            passwordConfirm = "",
+                            loggingIn = false,
+                            error = null,
+                        )
+                    }
+                    return@onSuccess
+                }
                 val session = result.session ?: error("绑定失败")
+                com.hotgis.wordbuddy.ads.OceanConvertHolder.reportRegister(
+                    getApplication(),
+                    method = "wechat",
+                )
                 enterSession(session)
                 _login.update { emptyLoginUi() }
             }.onFailure { error ->
@@ -3391,6 +3420,8 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             _rewardVideo.value = RewardVideoOffer()
             _avatarBitmap.value = null
         }
+        // 本安装首次登录/注册成功后上报一次，供巨量 SDK 检测与归因使用。
+        com.hotgis.wordbuddy.ads.OceanConvertHolder.reportRegister(getApplication())
         sessionStore.save(session)
         _session.value = session
         accountStore.upsert(session)
@@ -3509,7 +3540,7 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         _rewardVideo.value = RewardVideoOffer()
         _avatarBitmap.value = null
         _avatarBusy.value = false
-        LauncherIcons.apply(getApplication(), 0)
+        LauncherIcons.applyDefault(getApplication())
         repo.wipeCache()
         headsReady.clear()
         headsCache.clear()

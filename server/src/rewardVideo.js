@@ -4,11 +4,13 @@ import { adjustPoints, getPointsBalance } from './points.js'
 import { getUserPerks } from './levels.js'
 
 export const REWARD_VIDEO_DAILY_LIMIT = 20
-/** Minimum interval between two reward-video claims. */
+/** Default minimum interval between two reward-video claims. Live value is in app_settings. */
 export const REWARD_VIDEO_COOLDOWN_SEC = 5 * 60
+const REWARD_VIDEO_COOLDOWN_MAX = 24 * 60 * 60
 const REWARD_VIDEO_POINTS_MAX = 100000
 const REWARD_VIDEO_POINTS_DEFAULT = 1500
 const SETTING_KEY = 'reward_video_points'
+const COOLDOWN_KEY = 'reward_video_cooldown_sec'
 
 function clampPoints(value) {
   const n = Math.trunc(Number(value))
@@ -16,25 +18,60 @@ function clampPoints(value) {
   return Math.min(REWARD_VIDEO_POINTS_MAX, Math.max(1, n))
 }
 
-export async function getRewardVideoPoints() {
-  const row = (
-    await query('SELECT value FROM app_settings WHERE key = $1', [SETTING_KEY])
-  ).rows[0]
-  return clampPoints(row?.value) ?? REWARD_VIDEO_POINTS_DEFAULT
+function clampCooldown(value) {
+  const n = Math.trunc(Number(value))
+  if (!Number.isFinite(n)) return null
+  return Math.min(REWARD_VIDEO_COOLDOWN_MAX, Math.max(0, n))
 }
 
-export async function setRewardVideoPoints(points) {
-  const n = clampPoints(points)
-  if (n == null) return { ok: false, error: `搭币须为 1～${REWARD_VIDEO_POINTS_MAX} 的整数` }
+async function readSetting(key, client = null) {
+  const runner = client ? client.query.bind(client) : query
+  const row = (await runner('SELECT value FROM app_settings WHERE key = $1', [key])).rows[0]
+  return row?.value
+}
+
+async function writeSetting(key, value) {
   await query(
     `INSERT INTO app_settings (key, value, updated_at)
      VALUES ($1, $2, now())
      ON CONFLICT (key) DO UPDATE SET
        value = EXCLUDED.value,
        updated_at = now()`,
-    [SETTING_KEY, String(n)],
+    [key, String(value)],
   )
-  return { ok: true, pointsPerWatch: n, dailyLimit: REWARD_VIDEO_DAILY_LIMIT }
+}
+
+export async function getRewardVideoPoints() {
+  return clampPoints(await readSetting(SETTING_KEY)) ?? REWARD_VIDEO_POINTS_DEFAULT
+}
+
+export async function getRewardVideoCooldownSec(client = null) {
+  return clampCooldown(await readSetting(COOLDOWN_KEY, client)) ?? REWARD_VIDEO_COOLDOWN_SEC
+}
+
+export async function setRewardVideoConfig({ pointsPerWatch, cooldownSec }) {
+  const n = clampPoints(pointsPerWatch)
+  if (n == null) return { ok: false, error: `搭币须为 1～${REWARD_VIDEO_POINTS_MAX} 的整数` }
+  const hasCooldown = cooldownSec !== undefined && cooldownSec !== null && cooldownSec !== ''
+  const cooldown = hasCooldown ? clampCooldown(cooldownSec) : await getRewardVideoCooldownSec()
+  if (cooldown == null) {
+    return { ok: false, error: `间隔须为 0～${REWARD_VIDEO_COOLDOWN_MAX} 秒的整数` }
+  }
+  await writeSetting(SETTING_KEY, n)
+  if (hasCooldown) await writeSetting(COOLDOWN_KEY, cooldown)
+  return {
+    ok: true,
+    pointsPerWatch: n,
+    cooldownSec: cooldown,
+    dailyLimit: REWARD_VIDEO_DAILY_LIMIT,
+  }
+}
+
+function formatInterval(sec) {
+  const n = Math.max(0, Math.trunc(Number(sec) || 0))
+  if (n >= 60 && n % 60 === 0) return `${n / 60} 分钟`
+  if (n >= 60) return `${Math.floor(n / 60)} 分 ${n % 60} 秒`
+  return `${n} 秒`
 }
 
 async function usedToday(userId, today, client = null) {
@@ -65,15 +102,18 @@ async function lastGrantAt(userId, client = null) {
   return row?.created_at ? new Date(row.created_at) : null
 }
 
-function cooldownRemainingSec(lastAt) {
-  if (!lastAt) return 0
+function cooldownRemainingSec(lastAt, cooldownSec) {
+  if (!lastAt || cooldownSec <= 0) return 0
   const elapsedMs = Date.now() - lastAt.getTime()
-  return Math.max(0, Math.ceil((REWARD_VIDEO_COOLDOWN_SEC * 1000 - elapsedMs) / 1000))
+  return Math.max(0, Math.ceil((cooldownSec * 1000 - elapsedMs) / 1000))
 }
 
 export async function rewardVideoStatus(userId) {
   const today = todayShanghai()
-  const pointsPerWatch = await getRewardVideoPoints()
+  const [pointsPerWatch, cooldownSec] = await Promise.all([
+    getRewardVideoPoints(),
+    getRewardVideoCooldownSec(),
+  ])
   const perks = await getUserPerks(userId)
   const dailyLimit = perks.videoDailyLimit
   const used = await usedToday(userId, today)
@@ -81,7 +121,7 @@ export async function rewardVideoStatus(userId) {
   const remaining = Math.max(0, dailyLimit - used)
   // 当天次数用完后不再倒计时，没有下一次可看的视频。
   const lastAt = remaining > 0 ? await lastGrantAt(userId) : null
-  const cooldownLeft = cooldownRemainingSec(lastAt)
+  const cooldownLeft = cooldownRemainingSec(lastAt, cooldownSec)
   return {
     pointsPerWatch,
     dailyLimit,
@@ -90,7 +130,7 @@ export async function rewardVideoStatus(userId) {
     totalPoints,
     today,
     level: perks.level,
-    cooldownSec: REWARD_VIDEO_COOLDOWN_SEC,
+    cooldownSec,
     cooldownRemainingSec: cooldownLeft,
   }
 }
@@ -110,7 +150,8 @@ export async function claimRewardVideo(userId) {
       return { ok: false, error: `今日奖励视频已达 ${dailyLimit} 次`, status }
     }
     const lastAt = await lastGrantAt(userId, client)
-    const cooldownLeft = cooldownRemainingSec(lastAt)
+    const cooldownSec = await getRewardVideoCooldownSec(client)
+    const cooldownLeft = cooldownRemainingSec(lastAt, cooldownSec)
     if (cooldownLeft > 0) {
       await client.query('ROLLBACK')
       const status = await rewardVideoStatus(userId)
@@ -120,7 +161,7 @@ export async function claimRewardVideo(userId) {
           : `${cooldownLeft} 秒`
       return {
         ok: false,
-        error: `看视频领搭币需间隔 5 分钟，请再等 ${waitLabel}`,
+        error: `看视频领搭币需间隔 ${formatInterval(cooldownSec)}，请再等 ${waitLabel}`,
         status,
       }
     }

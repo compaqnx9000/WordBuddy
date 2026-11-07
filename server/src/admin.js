@@ -18,7 +18,12 @@ import {
   setMakeupRewardPoints,
   MAKEUP_REWARD_DEFAULT,
 } from './checkin.js'
-import { getRewardVideoPoints, setRewardVideoPoints, REWARD_VIDEO_DAILY_LIMIT } from './rewardVideo.js'
+import {
+  getRewardVideoPoints,
+  getRewardVideoCooldownSec,
+  setRewardVideoConfig,
+  REWARD_VIDEO_DAILY_LIMIT,
+} from './rewardVideo.js'
 import { getSignupBonusPoints, setSignupBonusPoints } from './points.js'
 import { getInviteRewardPoints, setInviteRewardPoints } from './invite.js'
 import { getLevelRules, setLevelRules, syncUserLevel } from './levels.js'
@@ -92,7 +97,7 @@ function mapUser(row) {
     lastIp: row.last_ip || null,
     lastIpLocation: row.last_ip_location || null,
     deviceCount: Number(row.device_count || 0),
-    level: Math.min(7, Math.max(0, Number.isFinite(Number(row.user_level)) ? Number(row.user_level) : 0)),
+    level: Math.min(8, Math.max(1, Number.isFinite(Number(row.user_level)) ? Number(row.user_level) : 1)),
     validDays: row.valid_days == null ? null : Math.max(0, Number(row.valid_days) || 0),
     imageCreditsPurchased: Math.max(0, Number(row.image_credits_purchased || 0)),
     imageCreditsRemaining: Math.max(0, Number(row.image_credits || 0)),
@@ -519,6 +524,116 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
   })
 })
 
+const CHINA_PROVINCE_DEFS = [
+  ['北京市', '北京'],
+  ['天津市', '天津'],
+  ['河北省', '河北'],
+  ['山西省', '山西'],
+  ['内蒙古自治区', '内蒙古'],
+  ['辽宁省', '辽宁'],
+  ['吉林省', '吉林'],
+  ['黑龙江省', '黑龙江'],
+  ['上海市', '上海'],
+  ['江苏省', '江苏'],
+  ['浙江省', '浙江'],
+  ['安徽省', '安徽'],
+  ['福建省', '福建'],
+  ['江西省', '江西'],
+  ['山东省', '山东'],
+  ['河南省', '河南'],
+  ['湖北省', '湖北'],
+  ['湖南省', '湖南'],
+  ['广东省', '广东'],
+  ['广西壮族自治区', '广西'],
+  ['海南省', '海南'],
+  ['重庆市', '重庆'],
+  ['四川省', '四川'],
+  ['贵州省', '贵州'],
+  ['云南省', '云南'],
+  ['西藏自治区', '西藏'],
+  ['陕西省', '陕西'],
+  ['甘肃省', '甘肃'],
+  ['青海省', '青海'],
+  ['宁夏回族自治区', '宁夏'],
+  ['新疆维吾尔自治区', '新疆'],
+  ['台湾省', '台湾', '臺灣'],
+  ['香港特别行政区', '香港'],
+  ['澳门特别行政区', '澳门', '澳門'],
+]
+
+const PROVINCE_ALIASES = CHINA_PROVINCE_DEFS
+  .flatMap((row) => [row[0], ...row.slice(1)].map((alias) => [alias, row[0]]))
+  .sort((a, b) => b[0].length - a[0].length)
+
+function matchChinaProvince(text) {
+  const value = String(text || '')
+  if (!value) return null
+  for (const [alias, name] of PROVINCE_ALIASES) {
+    if (value.includes(alias)) return name
+  }
+  return null
+}
+
+function classifyUserProvince(region, signupLocation, lastLocation) {
+  const candidates = [signupLocation, region, lastLocation]
+  for (const raw of candidates) {
+    const place = String(raw || '').split('·')[0].trim()
+    if (!place || place === '本地/内网' || place === '归属地未知') continue
+    const name = matchChinaProvince(place)
+    if (name) return { kind: 'province', name }
+    if (place === '海外') return { kind: 'overseas' }
+    if (!place.startsWith('中国') && !place.startsWith('中华人民共和国')) return { kind: 'overseas' }
+  }
+  const joined = [signupLocation, lastLocation].join(' ')
+  if (joined.includes('本地/内网')) return { kind: 'local' }
+  if (String(region || '').trim() === '海外') return { kind: 'overseas' }
+  return { kind: 'unknown' }
+}
+
+adminRouter.get('/user-provinces', adminRequired, async (req, res) => {
+  const result = await query(
+    `
+    SELECT u.region, u.last_ip_location,
+           s.ip_location AS signup_location
+    FROM users u
+    LEFT JOIN LATERAL (
+      SELECT e.ip_location
+      FROM login_events e
+      WHERE e.user_id = u.id
+        AND e.success = TRUE
+        AND COALESCE(e.ip_location, '') <> ''
+      ORDER BY e.created_at ASC
+      LIMIT 1
+    ) s ON TRUE
+    `,
+  )
+  const counts = new Map(CHINA_PROVINCE_DEFS.map((row) => [row[0], 0]))
+  let overseas = 0
+  let local = 0
+  let unknown = 0
+  for (const row of result.rows) {
+    const hit = classifyUserProvince(row.region, row.signup_location, row.last_ip_location)
+    if (hit.kind === 'province') counts.set(hit.name, (counts.get(hit.name) || 0) + 1)
+    else if (hit.kind === 'overseas') overseas += 1
+    else if (hit.kind === 'local') local += 1
+    else unknown += 1
+  }
+  const provinces = CHINA_PROVINCE_DEFS.map(([name, short]) => ({
+    name,
+    short,
+    count: counts.get(name) || 0,
+  }))
+  const located = provinces.reduce((sum, item) => sum + item.count, 0)
+  res.json({
+    total: result.rows.length,
+    located,
+    overseas,
+    local,
+    unknown,
+    provinces,
+  })
+})
+
 adminRouter.get('/users', adminRequired, async (req, res) => {
   const { page, pageSize, offset } = pageParams(req)
   const q = String(req.query.q || '').trim()
@@ -763,8 +878,8 @@ adminRouter.patch('/users/:id', adminRequired, async (req, res) => {
     res.status(400).json({ error: '密码需要 6 到 32 位' })
     return
   }
-  if (hasLevel && (!Number.isFinite(nextLevel) || nextLevel < 0 || nextLevel > 7 || !Number.isInteger(nextLevel))) {
-    res.status(400).json({ error: '用户等级需为 0–7' })
+  if (hasLevel && (!Number.isFinite(nextLevel) || nextLevel < 1 || nextLevel > 8 || !Number.isInteger(nextLevel))) {
+    res.status(400).json({ error: '用户等级需为 1–8' })
     return
   }
   if (nextPhone && nextPhone !== user.phone) {
@@ -1157,12 +1272,18 @@ adminRouter.get('/audit', adminRequired, async (req, res) => {
 })
 
 adminRouter.get('/reward-video', adminRequired, async (_req, res) => {
-  const pointsPerWatch = await getRewardVideoPoints()
-  res.json({ pointsPerWatch, dailyLimit: REWARD_VIDEO_DAILY_LIMIT })
+  const [pointsPerWatch, cooldownSec] = await Promise.all([
+    getRewardVideoPoints(),
+    getRewardVideoCooldownSec(),
+  ])
+  res.json({ pointsPerWatch, cooldownSec, dailyLimit: REWARD_VIDEO_DAILY_LIMIT })
 })
 
 adminRouter.put('/reward-video', adminRequired, async (req, res) => {
-  const saved = await setRewardVideoPoints(req.body?.pointsPerWatch)
+  const saved = await setRewardVideoConfig({
+    pointsPerWatch: req.body?.pointsPerWatch,
+    cooldownSec: req.body?.cooldownSec,
+  })
   if (!saved.ok) {
     res.status(400).json({ error: saved.error })
     return
@@ -1273,7 +1394,7 @@ adminRouter.get('/checkins', adminRequired, async (req, res) => {
       userId: Number(row.user_id),
       phone: row.phone,
       avatarUrl: row.avatar_url || null,
-      level: Math.min(7, Math.max(0, Number(row.user_level || 0))),
+      level: Math.min(8, Math.max(1, Number(row.user_level || 1))),
       totalPoints: Number(row.total_points || 0),
       streakDays: Number(row.streak_days || 0),
       lastCheckInDate: row.last_checkin_date ? String(row.last_checkin_date).slice(0, 10) : null,
@@ -1663,6 +1784,50 @@ adminRouter.get('/withdrawals', adminRequired, async (req, res) => {
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   )
+  const byUserRows = (
+    await query(
+      `SELECT u.id AS user_id, u.phone, u.nickname, u.buddy_id,
+              count(*)::int AS n,
+              count(*) FILTER (WHERE w.status = 'success' AND w.sandbox = FALSE)::int AS success_n,
+              COALESCE(SUM(w.amount_fen) FILTER (WHERE w.status = 'success' AND w.sandbox = FALSE), 0)::bigint AS success_fen,
+              COALESCE(SUM(w.points_spent) FILTER (WHERE w.status = 'success' AND w.sandbox = FALSE), 0)::bigint AS success_points,
+              count(*) FILTER (WHERE w.status = 'pending' AND w.sandbox = FALSE)::int AS pending_n,
+              COALESCE(SUM(w.amount_fen) FILTER (WHERE w.status = 'pending' AND w.sandbox = FALSE), 0)::bigint AS pending_fen,
+              count(*) FILTER (WHERE w.status = 'failed')::int AS failed_n,
+              count(*) FILTER (WHERE w.sandbox = TRUE AND w.status = 'success')::int AS sandbox_n,
+              COALESCE(SUM(w.amount_fen) FILTER (WHERE w.sandbox = TRUE AND w.status = 'success'), 0)::bigint AS sandbox_fen
+       FROM withdrawals w
+       JOIN users u ON u.id = w.user_id
+       GROUP BY u.id, u.phone, u.nickname, u.buddy_id
+       ORDER BY success_fen DESC, n DESC, u.id DESC`,
+    )
+  ).rows
+  const byUser = byUserRows.map((row) => {
+    const successFen = Number(row.success_fen || 0)
+    const pendingFen = Number(row.pending_fen || 0)
+    const sandboxFen = Number(row.sandbox_fen || 0)
+    return {
+      userId: Number(row.user_id),
+      phone: row.phone || null,
+      nickname: row.nickname || null,
+      buddyId: row.buddy_id || null,
+      count: Number(row.n || 0),
+      successCount: Number(row.success_n || 0),
+      successFen,
+      successYuan: (successFen / 100).toFixed(2),
+      successPoints: Number(row.success_points || 0),
+      pendingCount: Number(row.pending_n || 0),
+      pendingFen,
+      pendingYuan: (pendingFen / 100).toFixed(2),
+      failedCount: Number(row.failed_n || 0),
+      sandboxCount: Number(row.sandbox_n || 0),
+      sandboxFen,
+      sandboxYuan: (sandboxFen / 100).toFixed(2),
+    }
+  })
+  const allSuccessFen = byUser.reduce((sum, row) => sum + row.successFen, 0)
+  const allPendingFen = byUser.reduce((sum, row) => sum + row.pendingFen, 0)
+  const allSandboxFen = byUser.reduce((sum, row) => sum + row.sandboxFen, 0)
   res.json({
     items: result.rows.map(mapAdminWithdrawal),
     total,
@@ -1676,6 +1841,18 @@ adminRouter.get('/withdrawals', adminRequired, async (req, res) => {
       successFen: Number(summary.success_fen || 0),
       successPoints: Number(summary.success_points || 0),
     },
+    overall: {
+      userCount: byUser.length,
+      successFen: allSuccessFen,
+      successYuan: (allSuccessFen / 100).toFixed(2),
+      successCount: byUser.reduce((sum, row) => sum + row.successCount, 0),
+      pendingFen: allPendingFen,
+      pendingYuan: (allPendingFen / 100).toFixed(2),
+      pendingCount: byUser.reduce((sum, row) => sum + row.pendingCount, 0),
+      sandboxFen: allSandboxFen,
+      sandboxYuan: (allSandboxFen / 100).toFixed(2),
+    },
+    byUser,
   })
 })
 

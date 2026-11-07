@@ -1,5 +1,5 @@
 import { pool, query } from './db.js'
-import { applyCheckInBonus, getUserPerks } from './levels.js'
+import { getUserPerks } from './levels.js'
 
 /** Calendar date in Asia/Shanghai as yyyy-MM-dd. */
 export function todayShanghai(now = new Date()) {
@@ -11,10 +11,11 @@ export function todayShanghai(now = new Date()) {
   }).format(now)
 }
 
-export function rewardForDay(streakDay) {
-  const n = Math.trunc(Number(streakDay) || 0)
-  const day = Math.min(Math.max(n, 1), 7)
-  return day * 10
+/** Flat daily check-in reward. Streak length and level bonus do not change it. */
+export const DAILY_CHECKIN_REWARD = 100
+
+export function rewardForDay(_streakDay) {
+  return DAILY_CHECKIN_REWARD
 }
 
 /** Flat points for each successful makeup (not streak-based). Admin-configurable. */
@@ -254,8 +255,7 @@ export async function performUserCheckIn(userId, today = todayShanghai()) {
     dates.add(today)
     const prevPoints = Math.max(0, Number(existing?.total_points || 0))
     const newStreak = consecutiveEndingAt(dates, today)
-    const perks = await getUserPerks(userId)
-    const earned = applyCheckInBonus(rewardForDay(newStreak), perks.checkInBonusPercent)
+    const earned = rewardForDay(newStreak)
     const newTotal = prevPoints + earned
 
     await client.query(

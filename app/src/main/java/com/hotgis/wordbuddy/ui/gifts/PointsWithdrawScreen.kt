@@ -611,7 +611,7 @@ fun PointsWithdrawScreen(
                             )
                             Toast.makeText(context, tip, Toast.LENGTH_LONG).show()
                         } else {
-                            Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, withdrawNotice(result.message, result.item), Toast.LENGTH_LONG).show()
                         }
                         onSuccess()
                         reload()
@@ -748,6 +748,14 @@ private fun WithdrawHistoryCard(
             }
         }
     }
+}
+
+internal fun withdrawNotice(message: String, item: WithdrawalItem): String {
+    val yuan = item.amountYuan.ifBlank {
+        if (item.amountFen > 0) "%.2f".format(item.amountFen / 100.0) else ""
+    }
+    if (yuan.isBlank()) return message
+    return Regex("¥\\d+(?:\\.\\d+)?").replace(message, "¥$yuan")
 }
 
 @Composable

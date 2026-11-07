@@ -1,8 +1,8 @@
 {
-  "versionCode": 202,
-  "versionName": "2.11",
+  "versionCode": 210,
+  "versionName": "2.19",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "去掉开机自启动；每日提醒仅在用户打开开关后使用系统闹钟。",
-  "releasedAt": "2026-10-23T12:10:00.000Z"
+  "notes": "看视频领搭币的间隔提示会显示后台设置的时间。",
+  "releasedAt": "2026-11-04T12:33:00.000Z"
 }

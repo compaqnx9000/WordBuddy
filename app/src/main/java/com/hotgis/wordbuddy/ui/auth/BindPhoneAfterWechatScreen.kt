@@ -30,6 +30,10 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +47,7 @@ import com.hotgis.wordbuddy.ui.design.ssp
 import com.hotgis.wordbuddy.ui.lookup.Stellar
 import com.hotgis.wordbuddy.ui.lookup.stellarGlass
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
+import com.hotgis.wordbuddy.ui.settings.LegalDocuments
 
 @Composable
 fun BindPhoneAfterWechatScreen(
@@ -50,6 +55,7 @@ fun BindPhoneAfterWechatScreen(
     code: String,
     password: String,
     passwordConfirm: String,
+    askPassword: Boolean,
     buddyIdHint: String?,
     sending: Boolean,
     loggingIn: Boolean,
@@ -65,13 +71,29 @@ fun BindPhoneAfterWechatScreen(
     modifier: Modifier = Modifier,
 ) {
     val canSend = countdownSec <= 0 && !sending && phone.length == 11
+    var agreed by remember { mutableStateOf(false) }
+    var agreeHint by remember { mutableStateOf<String?>(null) }
+    var legalDoc by remember { mutableStateOf<Pair<String, String>?>(null) }
+    fun requireAgreement(action: () -> Unit) {
+        if (agreed) {
+            agreeHint = null
+            action()
+        } else {
+            agreeHint = "请先阅读并同意《用户协议》和《隐私协议》"
+        }
+    }
+    val submit = { requireAgreement(onBind) }
     Column(
         modifier
             .fillMaxSize()
             .stellarScreenBackground()
             .windowInsetsPadding(WindowInsets.statusBars)
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .imePadding()
+            .imePadding(),
+    ) {
+    Column(
+        Modifier
+            .weight(1f)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 28.sdp()),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -113,14 +135,17 @@ fun BindPhoneAfterWechatScreen(
             )
             Spacer(Modifier.height(6.sdp()))
             Text(
-                text = buildString {
-                    append("微信登录成功。")
-                    if (!buddyIdHint.isNullOrBlank()) {
-                        append("你的搭子号是 ")
-                        append(buddyIdHint)
-                        append("。")
+                text = if (askPassword) {
+                    "这个手机号还没注册，请设置登录密码。"
+                } else {
+                    buildString {
+                        append("请验证手机号。已经注册过的手机号，验证后直接进入原账号。")
+                        if (!buddyIdHint.isNullOrBlank()) {
+                            append("你的搭子号是 ")
+                            append(buddyIdHint)
+                            append("。")
+                        }
                     }
-                    append("请绑定手机号，以便找回账号与提现。微信头像已同步为搭子头像。")
                 },
                 color = Stellar.OnSurfaceVariant,
                 fontSize = 12.ssp(),
@@ -153,7 +178,7 @@ fun BindPhoneAfterWechatScreen(
                     Modifier
                         .clip(RoundedCornerShape(12.sdp()))
                         .background(if (canSend) Stellar.Cyan else Stellar.SurfaceHigh)
-                        .clickable(enabled = canSend, onClick = onSendCode)
+                        .clickable(enabled = canSend, onClick = { requireAgreement(onSendCode) })
                         .padding(horizontal = 12.sdp(), vertical = 14.sdp()),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -169,27 +194,29 @@ fun BindPhoneAfterWechatScreen(
                     )
                 }
             }
-            Spacer(Modifier.height(12.sdp()))
-            LoginField(
-                value = password,
-                onValueChange = onPasswordChange,
-                placeholder = "设置密码（至少 6 位）",
-                leading = Icons.Outlined.Lock,
-                keyboardType = KeyboardType.Password,
-                password = true,
-                imeAction = ImeAction.Next,
-            )
-            Spacer(Modifier.height(12.sdp()))
-            LoginField(
-                value = passwordConfirm,
-                onValueChange = onPasswordConfirmChange,
-                placeholder = "再输入一次密码",
-                leading = Icons.Outlined.Lock,
-                keyboardType = KeyboardType.Password,
-                password = true,
-                imeAction = ImeAction.Done,
-                onImeAction = onBind,
-            )
+            if (askPassword) {
+                Spacer(Modifier.height(12.sdp()))
+                LoginField(
+                    value = password,
+                    onValueChange = onPasswordChange,
+                    placeholder = "设置密码（至少 6 位）",
+                    leading = Icons.Outlined.Lock,
+                    keyboardType = KeyboardType.Password,
+                    password = true,
+                    imeAction = ImeAction.Next,
+                )
+                Spacer(Modifier.height(12.sdp()))
+                LoginField(
+                    value = passwordConfirm,
+                    onValueChange = onPasswordConfirmChange,
+                    placeholder = "再输入一次密码",
+                    leading = Icons.Outlined.Lock,
+                    keyboardType = KeyboardType.Password,
+                    password = true,
+                    imeAction = ImeAction.Done,
+                    onImeAction = submit,
+                )
+            }
             if (!error.isNullOrBlank()) {
                 Spacer(Modifier.height(12.sdp()))
                 Text(error, color = Stellar.Pink, fontSize = 13.ssp())
@@ -200,7 +227,7 @@ fun BindPhoneAfterWechatScreen(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.sdp()))
                     .background(Stellar.Cyan)
-                    .clickable(enabled = !loggingIn, onClick = onBind)
+                    .clickable(enabled = !loggingIn, onClick = submit)
                     .padding(vertical = 14.sdp()),
                 contentAlignment = Alignment.Center,
             ) {
@@ -212,7 +239,7 @@ fun BindPhoneAfterWechatScreen(
                     )
                 } else {
                     Text(
-                        text = "完成绑定并进入",
+                        text = if (askPassword) "设置密码并进入" else "完成绑定并进入",
                         color = Stellar.OnPrimary,
                         fontSize = 16.ssp(),
                         fontWeight = FontWeight.Bold,
@@ -222,11 +249,34 @@ fun BindPhoneAfterWechatScreen(
         }
         Spacer(Modifier.height(18.sdp()))
         Text(
-            text = "返回将退出当前微信登录，需重新授权。",
+            text = "返回将退出当前登录，需重新授权。",
             color = Stellar.OnSurfaceVariant.copy(alpha = 0.7f),
             fontSize = 12.ssp(),
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(28.sdp()))
+        Spacer(Modifier.height(12.sdp()))
+    }
+        LoginLegalFooter(
+            agreed = agreed,
+            error = agreeHint,
+            onAgreedChange = { checked ->
+                agreed = checked
+                if (checked) agreeHint = null
+            },
+            onOpenUserAgreement = {
+                legalDoc = "用户协议" to LegalDocuments.agreement
+            },
+            onOpenPrivacyAgreement = {
+                legalDoc = "隐私协议" to LegalDocuments.privacy
+            },
+            modifier = Modifier.padding(horizontal = 16.sdp(), vertical = 8.sdp()),
+        )
+    }
+    legalDoc?.let { (title, body) ->
+        LegalDocumentDialog(
+            title = title,
+            body = body,
+            onDismiss = { legalDoc = null },
+        )
     }
 }

@@ -34,6 +34,8 @@ import androidx.compose.material.icons.outlined.PhoneIphone
 import androidx.compose.material.icons.outlined.Sms
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -51,15 +53,23 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.hotgis.wordbuddy.R
 import com.hotgis.wordbuddy.ui.LoginMode
 import com.hotgis.wordbuddy.ui.design.sdp
@@ -67,6 +77,7 @@ import com.hotgis.wordbuddy.ui.design.ssp
 import com.hotgis.wordbuddy.ui.lookup.Stellar
 import com.hotgis.wordbuddy.ui.lookup.stellarGlass
 import com.hotgis.wordbuddy.ui.lookup.stellarScreenBackground
+import com.hotgis.wordbuddy.ui.settings.LegalDocuments
 
 @Composable
 fun LoginScreen(
@@ -99,13 +110,29 @@ fun LoginScreen(
 ) {
     val smsMode = mode == LoginMode.SMS
     val canSend = countdownSec <= 0 && !sending && phone.length == 11
+    var agreed by remember { mutableStateOf(false) }
+    var agreeHint by remember { mutableStateOf<String?>(null) }
+    var legalDoc by remember { mutableStateOf<Pair<String, String>?>(null) }
+    fun requireAgreement(action: () -> Unit) {
+        if (agreed) {
+            agreeHint = null
+            action()
+        } else {
+            agreeHint = "请先阅读并同意《用户协议》和《隐私协议》"
+        }
+    }
+    val submit = { requireAgreement(onLogin) }
     Column(
         modifier
             .fillMaxSize()
             .stellarScreenBackground()
             .windowInsetsPadding(WindowInsets.statusBars)
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .imePadding()
+            .imePadding(),
+    ) {
+    Column(
+        Modifier
+            .weight(1f)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 28.sdp()),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -215,7 +242,7 @@ fun LoginScreen(
                     leading = Icons.Outlined.PersonAdd,
                     keyboardType = KeyboardType.Text,
                     imeAction = ImeAction.Done,
-                    onImeAction = onLogin,
+                    onImeAction = submit,
                 )
             } else if (smsMode) {
                 Row(
@@ -230,7 +257,7 @@ fun LoginScreen(
                         leading = Icons.Outlined.Sms,
                         keyboardType = KeyboardType.Number,
                         imeAction = ImeAction.Done,
-                        onImeAction = onLogin,
+                        onImeAction = submit,
                         modifier = Modifier.weight(1f),
                     )
                     Text(
@@ -245,7 +272,7 @@ fun LoginScreen(
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.sdp()))
                             .background(if (canSend) Stellar.Cyan else Stellar.SurfaceHigh)
-                            .clickable(enabled = canSend, onClick = onSendCode)
+                            .clickable(enabled = canSend, onClick = { requireAgreement(onSendCode) })
                             .padding(horizontal = 12.sdp(), vertical = 16.sdp()),
                     )
                 }
@@ -258,7 +285,7 @@ fun LoginScreen(
                     keyboardType = KeyboardType.Password,
                     password = true,
                     imeAction = ImeAction.Done,
-                    onImeAction = onLogin,
+                    onImeAction = submit,
                 )
             }
             if (!error.isNullOrBlank()) {
@@ -271,7 +298,7 @@ fun LoginScreen(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.sdp()))
                     .background(Stellar.CyanSoft)
-                    .clickable(enabled = !loggingIn, onClick = onLogin)
+                    .clickable(enabled = !loggingIn, onClick = submit)
                     .padding(vertical = 14.sdp()),
                 contentAlignment = Alignment.Center,
             ) {
@@ -309,14 +336,14 @@ fun LoginScreen(
                     contentDescription = if (wechatEnabled) "微信登录" else "微信登录尚未配置",
                     enabled = wechatEnabled && !loggingIn,
                     accent = Color(0xFF07C160),
-                    onClick = onWechatLogin,
+                    onClick = { requireAgreement(onWechatLogin) },
                 )
                 SocialLoginIcon(
                     iconRes = R.drawable.ic_alipay,
                     contentDescription = if (alipayEnabled) "支付宝登录" else "支付宝登录尚未配置",
                     enabled = alipayEnabled && !loggingIn,
                     accent = Color(0xFF1677FF),
-                    onClick = onAlipayLogin,
+                    onClick = { requireAgreement(onAlipayLogin) },
                 )
             }
             if (!wechatEnabled && !alipayEnabled) {
@@ -340,7 +367,30 @@ fun LoginScreen(
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(Modifier.height(28.sdp()))
+        Spacer(Modifier.height(12.sdp()))
+    }
+        LoginLegalFooter(
+            agreed = agreed,
+            error = agreeHint,
+            onAgreedChange = { checked ->
+                agreed = checked
+                if (checked) agreeHint = null
+            },
+            onOpenUserAgreement = {
+                legalDoc = "用户协议" to LegalDocuments.agreement
+            },
+            onOpenPrivacyAgreement = {
+                legalDoc = "隐私协议" to LegalDocuments.privacy
+            },
+            modifier = Modifier.padding(horizontal = 16.sdp(), vertical = 8.sdp()),
+        )
+    }
+    legalDoc?.let { (title, body) ->
+        LegalDocumentDialog(
+            title = title,
+            body = body,
+            onDismiss = { legalDoc = null },
+        )
     }
 }
 
@@ -546,6 +596,140 @@ internal fun LoginField(
                 modifier = Modifier
                     .size(20.sdp())
                     .clickable { visible = !visible },
+            )
+        }
+    }
+}
+
+@Composable
+internal fun LoginLegalFooter(
+    agreed: Boolean,
+    error: String?,
+    onAgreedChange: (Boolean) -> Unit,
+    onOpenUserAgreement: () -> Unit,
+    onOpenPrivacyAgreement: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val linkStyle = TextLinkStyles(
+        style = SpanStyle(
+            color = Stellar.CyanSoft,
+            fontWeight = FontWeight.Bold,
+            textDecoration = TextDecoration.Underline,
+        ),
+    )
+    Column(
+        modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Checkbox(
+                checked = agreed,
+                onCheckedChange = onAgreedChange,
+                colors = CheckboxDefaults.colors(
+                    checkedColor = Stellar.Cyan,
+                    uncheckedColor = Stellar.OnSurfaceVariant,
+                    checkmarkColor = Stellar.OnPrimary,
+                ),
+            )
+            Text(
+                text = buildAnnotatedString {
+                    append("我已阅读并同意")
+                    withLink(
+                        LinkAnnotation.Clickable(
+                            tag = "user-agreement",
+                            styles = linkStyle,
+                            linkInteractionListener = { _ -> onOpenUserAgreement() },
+                        ),
+                    ) {
+                        append("《用户协议》")
+                    }
+                    append("和")
+                    withLink(
+                        LinkAnnotation.Clickable(
+                            tag = "privacy-agreement",
+                            styles = linkStyle,
+                            linkInteractionListener = { _ -> onOpenPrivacyAgreement() },
+                        ),
+                    ) {
+                        append("《隐私协议》")
+                    }
+                },
+                color = Stellar.OnSurfaceVariant,
+                fontSize = 12.ssp(),
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (!error.isNullOrBlank()) {
+            Text(
+                text = error,
+                color = Stellar.Pink,
+                fontSize = 12.ssp(),
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.sdp()),
+            )
+        }
+    }
+}
+
+@Composable
+internal fun LegalDocumentDialog(
+    title: String,
+    body: String,
+    onDismiss: () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .stellarScreenBackground()
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .windowInsetsPadding(WindowInsets.navigationBars),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(52.sdp())
+                    .padding(horizontal = 8.sdp()),
+            ) {
+                Box(
+                    Modifier
+                        .align(Alignment.CenterStart)
+                        .size(40.sdp())
+                        .clip(CircleShape)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.ArrowBackIosNew,
+                        contentDescription = "返回",
+                        tint = Stellar.CyanSoft,
+                        modifier = Modifier.size(18.sdp()),
+                    )
+                }
+                Text(
+                    text = title,
+                    modifier = Modifier.align(Alignment.Center),
+                    color = Stellar.CyanSoft,
+                    fontSize = 18.ssp(),
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Text(
+                text = body,
+                color = Stellar.OnSurface,
+                fontSize = 14.ssp(),
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.sdp(), vertical = 8.sdp()),
             )
         }
     }

@@ -87,19 +87,18 @@ struct MeView: View {
                 model.banner = error.localizedDescription
             }
         }
-        // 上架前关闭「看广告补签」。恢复时取消下面这段注释，并把 CheckInDaySlot.build 里的 canMakeup 改回可补签。
-        // .alert("补签", isPresented: makeupPresented) {
-        //     Button("看广告补签") {
-        //         if let makeupDate {
-        //             let date = makeupDate
-        //             self.makeupDate = nil
-        //             Task { await model.makeupAfterAd(date: date) }
-        //         }
-        //     }
-        //     Button("取消", role: .cancel) { makeupDate = nil }
-        // } message: {
-        //     Text("看完激励视频后补签 \(makeupDate.map { ShanghaiDate.dayValue(of: $0) } ?? 0) 日。")
-        // }
+        .alert(makeupTitle, isPresented: makeupPresented) {
+            Button("观看广告") {
+                if let makeupDate {
+                    let date = makeupDate
+                    self.makeupDate = nil
+                    Task { await model.makeupAfterAd(date: date) }
+                }
+            }
+            Button("取消", role: .cancel) { makeupDate = nil }
+        } message: {
+            Text("观看完整激励视频后即可完成补签，并获得 \(max(0, model.checkIn.makeupReward)) 搭币。")
+        }
         .sheet(isPresented: $showHelp) {
             infoSheet(
                 title: "帮助与反馈",
@@ -134,6 +133,13 @@ struct MeView: View {
 
     private var makeupPresented: Binding<Bool> {
         Binding(get: { makeupDate != nil }, set: { if !$0 { makeupDate = nil } })
+    }
+
+    private var makeupTitle: String {
+        guard let makeupDate else { return "补签" }
+        let parts = makeupDate.split(separator: "-")
+        let month = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+        return "补签 \(month)月\(ShanghaiDate.dayValue(of: makeupDate))日"
     }
 
     private var loggedIn: Bool { model.session != nil }
@@ -229,7 +235,7 @@ struct MeView: View {
                         .foregroundStyle(Theme.onSurface)
                         .lineLimit(1)
                     if loggedIn {
-                        Text("Lv.\(model.session?.level ?? 0)")
+                        Text("Lv.\(model.session?.level ?? 1)")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Theme.cyan)
                             .padding(.horizontal, 10)
@@ -366,7 +372,7 @@ struct MeView: View {
         if model.checkIn.streakDays > 0 {
             return "已连签 \(model.checkIn.streakDays) 天 · 左右滑动查看本月 · 累计 \(model.checkIn.totalPoints) 搭币"
         }
-        return "左右滑动查看本月 · 累计 \(model.checkIn.totalPoints) 搭币"
+        return "左右滑动查看本月，漏签可看广告补签 · 累计 \(model.checkIn.totalPoints) 搭币"
     }
 
     private var checkInButtonTitle: String {
@@ -389,11 +395,9 @@ struct MeView: View {
                 model.openLogin()
             } else if slot.isClaimTarget {
                 Task { await model.checkInToday() }
+            } else if slot.canMakeup {
+                makeupDate = slot.date
             }
-            // 上架前不提供补签。恢复时取消下面三行注释。
-            // else if slot.canMakeup {
-            //     makeupDate = slot.date
-            // }
         } label: {
             VStack(spacing: 6) {
                 Text(slot.isToday ? "今天" : "\(slot.day)日")
@@ -429,28 +433,37 @@ struct MeView: View {
             }
         }
         .buttonStyle(.plain)
-        .disabled(slot.claimed || slot.isFuture)
+        .allowsHitTesting(slot.isClaimTarget || slot.canMakeup)
     }
 
-    // 上架前关闭「看视频领搭币」。恢复时取消注释。
-    // private var rewardVideoSubtitle: String {
-    //     guard loggedIn else { return "登录后每日可领" }
-    //     return "剩余 \(model.rewardVideo.remaining)/\(model.rewardVideo.dailyLimit) · +\(model.rewardVideo.pointsPerWatch)"
-    // }
+    private var rewardVideoSubtitle: String {
+        let offer = model.rewardVideo
+        guard loggedIn else { return "登录后每日 \(offer.dailyLimit) 次" }
+        if offer.remaining <= 0 {
+            return "今日已看完 \(offer.usedToday)/\(offer.dailyLimit)"
+        }
+        if model.rewardCooldownLeft > 0 {
+            return "需间隔 \(formatRewardCooldown(offer.cooldownSec)) · 还剩 \(formatRewardCooldown(model.rewardCooldownLeft))"
+        }
+        return "剩余 \(offer.remaining)/\(offer.dailyLimit) · +\(offer.pointsPerWatch)"
+    }
 
     private var rewardsMenu: some View {
         menuCard {
-            // 上架前关闭「充值搭币」。恢复时取消下面两行注释。
-            // menuRow("creditcard", Theme.pink, "充值搭币", "测试价 ¥0.10") {
-            //     guardRequireLogin { path.append(MeRoute.buyPoints) }
-            // }
-            // menuDivider()
-            // menuRow("play.circle", Theme.gold, "看视频领搭币", rewardVideoSubtitle) {
-            //     Task { await model.watchRewardVideo() }
-            // }
-            // menuDivider()
+            menuRow("sparkles", Theme.pink, "购买配图", loggedIn ? "剩余 \(model.checkIn.imageCredits) 张" : "10 张 ¥1") {
+                guardRequireLogin { path.append(MeRoute.buyPoints) }
+            }
+            menuDivider()
+            menuRow("play.circle", Theme.gold, "看视频领搭币", rewardVideoSubtitle) {
+                Task { await model.watchRewardVideo() }
+            }
+            menuDivider()
             menuRow("gift", Theme.gold, "搭币兑礼", "可用 \(model.checkIn.totalPoints) 搭币") {
                 path.append(MeRoute.mall)
+            }
+            menuDivider()
+            menuRow("banknote", Theme.pink, "提现", "可用 \(model.checkIn.totalPoints) 搭币") {
+                guardRequireLogin { path.append(MeRoute.withdraw) }
             }
             menuDivider()
             menuRow("list.bullet.rectangle", Theme.cyan, "搭币明细", "收入与支出") {
@@ -573,6 +586,7 @@ struct MeView: View {
                     .font(.subheadline)
                     .foregroundStyle(Theme.onSurfaceVariant.opacity(0.85))
                     .lineLimit(1)
+                    .layoutPriority(1)
             }
         }
         .padding(.horizontal, 16)
@@ -634,7 +648,7 @@ struct MeView: View {
     }
 }
 
-private enum MeRoute: Hashable {
+enum MeRoute: Hashable {
     case profile, settings, buyPoints, mall, invite, favorites, tools, deletion, switchAccount, withdraw, ledger
 }
 
@@ -724,8 +738,7 @@ private struct CheckInDaySlot: Identifiable {
             let isFuture = date > today
             let isClaimed = claimed.contains(date) || (isToday && state.checkedInToday)
             let isClaimTarget = isToday && !isClaimed && !state.checkedInToday
-            // 上架前关闭补签入口。恢复时改回 `!isClaimed && date < today`。
-            let canMakeup = false && !isClaimed && date < today
+            let canMakeup = !isClaimed && date < today
             let reward: Int
             if isClaimTarget {
                 reward = todayReward
@@ -750,8 +763,8 @@ private struct CheckInDaySlot: Identifiable {
         }
     }
 
-    private static func rewardForStreak(_ streakDay: Int) -> Int {
-        max(1, min(streakDay, 7)) * 10
+    private static func rewardForStreak(_: Int) -> Int {
+        100
     }
 
     private static func consecutiveDays(endingAt date: String, claimed: Set<String>) -> Int {

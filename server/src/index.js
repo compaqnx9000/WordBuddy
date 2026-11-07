@@ -5,9 +5,10 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import express from 'express'
 import { ensureSuperAdmin } from './auth.js'
-import { ensureSchema } from './db.js'
+import { ensureSchema, query } from './db.js'
 import { ensureGiftSeed } from './gifts.js'
 import { purgeDueDeletions } from './deletion.js'
+import { migrateUserLevelsToOneBased, syncMakeupPerDayToLevel } from './levels.js'
 import { adminRouter } from './admin.js'
 import { router } from './routes.js'
 import { renderWatchPage } from './watchPage.js'
@@ -114,6 +115,13 @@ app.use((err, _req, res, _next) => {
 
 const port = Number(process.env.PORT) || 8787
 ensureSchema()
+  .then(() => migrateUserLevelsToOneBased())
+  .then(() => syncMakeupPerDayToLevel())
+  .then(async () => {
+    await query(
+      `UPDATE users SET user_level = 1 WHERE user_level IS NULL OR user_level < 1 OR user_level > 8`,
+    )
+  })
   .then(() => ensureGiftSeed())
   .then(() => ensureSuperAdmin())
   .then(() => purgeDueDeletions())

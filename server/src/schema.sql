@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS users (
     wechat_account TEXT,
     wechat_openid TEXT,
     wechat_unionid TEXT,
+    apple_user_id TEXT,
     phone_changed_at TIMESTAMPTZ,
     deletion_requested_at TIMESTAMPTZ,
     deletion_due_at TIMESTAMPTZ,
@@ -40,6 +41,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_buddy_id_unique
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_wechat_openid_unique
     ON users (wechat_openid) WHERE wechat_openid IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_apple_user_id_unique
+    ON users (apple_user_id) WHERE apple_user_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS users_deletion_due
     ON users (deletion_due_at) WHERE deletion_due_at IS NOT NULL;
@@ -464,6 +468,10 @@ CREATE TABLE IF NOT EXISTS app_settings (
 
 INSERT INTO app_settings (key, value)
 VALUES ('reward_video_points', '1500')
+ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO app_settings (key, value)
+VALUES ('reward_video_cooldown_sec', '300')
 ON CONFLICT (key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS reward_video_grants (

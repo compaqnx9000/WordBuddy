@@ -153,6 +153,7 @@ struct AuthResult: Equatable {
     var session: UserSession?
     var isNewUser: Bool = false
     var needsPhoneBind: Bool = false
+    var needsPassword: Bool = false
 }
 
 struct UserSession: Equatable {
@@ -161,7 +162,7 @@ struct UserSession: Equatable {
     var phone: String
     var vocabNotebookId: Int64
     var avatarUrl: String?
-    var level: Int = 0
+    var level: Int = 1
     var nickname: String?
     var buddyId: String?
     var signature: String?
@@ -216,7 +217,7 @@ extension UserSession: Codable {
         phone = try container.decodeIfPresent(String.self, forKey: .phone) ?? ""
         vocabNotebookId = try container.decodeIfPresent(Int64.self, forKey: .vocabNotebookId) ?? 0
         avatarUrl = try container.decodeIfPresent(String.self, forKey: .avatarUrl)
-        level = try container.decodeIfPresent(Int.self, forKey: .level) ?? 0
+        level = try container.decodeIfPresent(Int.self, forKey: .level) ?? 1
         nickname = try container.decodeIfPresent(String.self, forKey: .nickname)
         buddyId = try container.decodeIfPresent(String.self, forKey: .buddyId)
         signature = try container.decodeIfPresent(String.self, forKey: .signature)
@@ -268,12 +269,21 @@ struct RewardVideoOffer: Equatable {
     var cooldownRemainingSec: Int = 0
 }
 
+func formatRewardCooldown(_ totalSec: Int) -> String {
+    let sec = max(0, totalSec)
+    let minutes = sec / 60
+    let seconds = sec % 60
+    if minutes > 0 && seconds == 0 { return "\(minutes)分钟" }
+    if minutes > 0 { return "\(minutes)分\(seconds)秒" }
+    return "\(seconds)秒"
+}
+
 struct CheckInState: Equatable {
     var totalPoints: Int = 0
     var streakDays: Int = 0
     var lastCheckInDate: String?
     var checkedInToday: Bool = false
-    var todayReward: Int = 1
+    var todayReward: Int = 100
     var recentDates: [String] = []
     var imageCredits: Int = 0
     /// Flat points for each makeup; from server (default 200).
@@ -470,9 +480,58 @@ struct PointPackage: Identifiable, Equatable {
     var subtitle: String
     var priceFen: Int
     var points: Int
+    var credits: Int
     var badge: String?
 
-    var amountYuan: String { String(format: "%.2f", Double(priceFen) / 100) }
+    var amountYuan: String {
+        if priceFen % 100 == 0 { return String(priceFen / 100) }
+        return String(format: "%.2f", Double(priceFen) / 100)
+    }
+}
+
+struct WechatPayOrderParams: Equatable {
+    var appId: String
+    var partnerId: String
+    var prepayId: String
+    var packageValue: String
+    var nonceStr: String
+    var timeStamp: String
+    var sign: String
+}
+
+struct PointPurchaseResult: Equatable {
+    var orderId: Int64
+    var channel: String
+    var orderInfo: String?
+    var wechatPay: WechatPayOrderParams?
+    var sandbox: Bool
+    var points: Int
+    var amountFen: Int
+}
+
+struct PointOrder: Identifiable, Equatable {
+    var id: Int64
+    var packageId: String
+    var points: Int
+    var amountFen: Int
+    var status: String
+    var statusLabel: String
+    var amountYuan: String
+    var payChannel: String? = nil
+    var createdAt: String? = nil
+    var paidAt: String? = nil
+    var expiresAt: String? = nil
+}
+
+struct PointOrderLookup: Equatable {
+    var order: PointOrder
+    var imageCredits: Int?
+}
+
+struct PointOrderPayResult: Equatable {
+    var order: PointOrder
+    var balance: Int?
+    var imageCredits: Int?
 }
 
 struct PointCatalog: Equatable {
@@ -490,12 +549,31 @@ struct WithdrawChannel: Identifiable, Equatable {
     var accountHint: String
 }
 
-struct WithdrawConfig: Equatable {
-    var sandbox: Bool
+struct WithdrawTier: Equatable, Identifiable {
+    var amountFen: Int
     var amountYuan: String
     var pointsCost: Int
+    var label: String
+
+    var id: Int { amountFen }
+}
+
+struct WithdrawConfig: Equatable {
+    var sandbox: Bool
+    var amountFen: Int
+    var amountYuan: String
+    var pointsCost: Int
+    var alipayReady: Bool
+    var wechatReady: Bool
     var note: String
     var channels: [WithdrawChannel]
+    var tiers: [WithdrawTier]
+}
+
+struct WeChatTransferConfirm: Equatable {
+    var mchId: String
+    var appId: String
+    var packageInfo: String
 }
 
 struct PointsLedgerEntry: Identifiable, Equatable {
@@ -518,12 +596,25 @@ struct PointsLedgerPage: Equatable {
 
 struct WithdrawalItem: Identifiable, Equatable {
     var id: Int64
+    var channel: String
     var channelLabel: String
     var account: String
+    var amountFen: Int
     var amountYuan: String
     var pointsSpent: Int
+    var status: String
     var statusLabel: String
     var createdAt: String?
+    var updatedAt: String?
+    var paidAt: String?
+    var wechatConfirm: WeChatTransferConfirm?
+}
+
+struct WithdrawResult: Equatable {
+    var message: String
+    var item: WithdrawalItem
+    var totalPoints: Int
+    var checkIn: CheckInState?
 }
 
 struct APIError: LocalizedError, Equatable {

@@ -146,6 +146,33 @@ actor WordBuddyAPI {
         return parseUserSession(token: token, root: root, user: user)
     }
 
+    func fetchAlipayBindAuthInfo(token: String) async throws -> String {
+        let root = try await request(
+            method: "POST",
+            path: "/me/alipay/auth-info",
+            auth: token,
+            body: [:]
+        )
+        let info = JSONValue.string(root, key: "authInfo") ?? ""
+        if info.isEmpty {
+            throw APIError(message: "无法发起支付宝授权")
+        }
+        return info
+    }
+
+    func bindAlipay(token: String, authCode: String) async throws -> UserSession {
+        let root = try await request(
+            method: "POST",
+            path: "/me/alipay/bind",
+            auth: token,
+            body: ["authCode": authCode]
+        )
+        guard let user = root["user"] as? [String: Any] else {
+            throw APIError(message: "绑定失败")
+        }
+        return parseUserSession(token: token, root: root, user: user)
+    }
+
     func fetchAlipayLoginAuthInfo() async throws -> String {
         let root = try await request(
             method: "POST",
@@ -158,6 +185,23 @@ actor WordBuddyAPI {
             throw APIError(message: "无法发起支付宝登录")
         }
         return info
+    }
+
+    func loginWithApple(identityToken: String, nonce: String, fullName: String) async throws -> AuthResult {
+        var body: [String: Any] = [
+            "identityToken": identityToken,
+            "nonce": nonce,
+        ]
+        let name = fullName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty {
+            body["fullName"] = name
+        }
+        return try parseAuth(await request(
+            method: "POST",
+            path: "/auth/apple",
+            auth: nil,
+            body: body
+        ))
     }
 
     func loginWithAlipay(authCode: String) async throws -> AuthResult {
@@ -527,20 +571,27 @@ actor WordBuddyAPI {
     private func parseAuth(_ root: [String: Any]) throws -> AuthResult {
         let isNewUser = JSONValue.bool(root, key: "isNewUser")
         let needsPhoneBind = JSONValue.bool(root, key: "needsPhoneBind")
+        let needsPassword = JSONValue.bool(root, key: "needsPassword")
         guard let token = JSONValue.string(root, key: "token"),
               let user = root["user"] as? [String: Any] else {
-            return AuthResult(session: nil, isNewUser: isNewUser, needsPhoneBind: needsPhoneBind)
+            return AuthResult(
+                session: nil,
+                isNewUser: isNewUser,
+                needsPhoneBind: needsPhoneBind,
+                needsPassword: needsPassword
+            )
         }
         let session = parseUserSession(token: token, root: root, user: user)
         return AuthResult(
             session: session,
             isNewUser: isNewUser,
-            needsPhoneBind: needsPhoneBind || session.phone.isEmpty
+            needsPhoneBind: needsPhoneBind || session.phone.isEmpty,
+            needsPassword: needsPassword
         )
     }
 
     private func parseUserSession(token: String, root: [String: Any], user: [String: Any]) -> UserSession {
-        let level = min(7, max(0, JSONValue.int(user, key: "level", default: JSONValue.int(root, key: "level"))))
+        let level = min(8, max(1, JSONValue.int(user, key: "level", default: JSONValue.int(root, key: "level", default: 1))))
         return UserSession(
             token: token,
             userId: JSONValue.int64(user, key: "id"),
@@ -865,7 +916,7 @@ actor WordBuddyAPI {
             streakDays: JSONValue.int(object, key: "streakDays"),
             lastCheckInDate: JSONValue.string(object, key: "lastCheckInDate"),
             checkedInToday: JSONValue.bool(object, key: "checkedInToday") || recent.contains(today),
-            todayReward: max(1, JSONValue.int(object, key: "todayReward", default: 1)),
+            todayReward: max(1, JSONValue.int(object, key: "todayReward", default: 100)),
             recentDates: recent,
             imageCredits: max(0, JSONValue.int(object, key: "imageCredits")),
             makeupReward: max(0, JSONValue.int(object, key: "makeupReward", default: 200))
@@ -1071,12 +1122,14 @@ actor WordBuddyAPI {
             guard let object = item as? [String: Any] else { return nil }
             let id = JSONValue.string(object, key: "id") ?? ""
             guard !id.isEmpty else { return nil }
+            let points = JSONValue.int(object, key: "points")
             return PointPackage(
                 id: id,
                 title: JSONValue.string(object, key: "title") ?? id,
                 subtitle: JSONValue.string(object, key: "subtitle") ?? "",
                 priceFen: JSONValue.int(object, key: "priceFen"),
-                points: JSONValue.int(object, key: "points"),
+                points: points,
+                credits: max(0, JSONValue.int(object, key: "credits", default: points)),
                 badge: JSONValue.string(object, key: "badge")
             )
         }
@@ -1115,6 +1168,132 @@ actor WordBuddyAPI {
         throw APIError(message: "支付结果确认中，请稍后查看搭币")
     }
 
+    func fetchImageCreditCatalog() async throws -> PointCatalog {
+        let root = try await request(method: "GET", path: "/image-credit-packages", auth: nil, body: nil)
+        return parsePointCatalog(root, defaultCost: 1)
+    }
+
+    func createPointOrder(token: String, packageId: String, channel: String) async throws -> PointPurchaseResult {
+        let root = try await request(
+            method: "POST",
+            path: "/me/point-orders",
+            auth: token,
+            body: ["packageId": packageId, "channel": channel]
+        )
+        return parsePointPurchase(root, fallbackChannel: channel)
+    }
+
+    func continuePointOrder(token: String, orderId: Int64) async throws -> PointPurchaseResult {
+        let root = try await request(
+            method: "POST",
+            path: "/me/point-orders/\(orderId)/continue",
+            auth: token,
+            body: nil
+        )
+        return parsePointPurchase(root, fallbackChannel: JSONValue.string(root, key: "channel") ?? "alipay")
+    }
+
+    func simulatePointOrderPay(token: String, orderId: Int64) async throws -> PointOrderPayResult {
+        let root = try await request(
+            method: "POST",
+            path: "/me/point-orders/\(orderId)/simulate-pay",
+            auth: token,
+            body: nil
+        )
+        return PointOrderPayResult(
+            order: parsePointOrder(root["order"] as? [String: Any] ?? [:]),
+            balance: JSONValue.optionalInt(root, key: "balance"),
+            imageCredits: JSONValue.optionalInt(root, key: "imageCredits")
+        )
+    }
+
+    func listImageCreditOrders(token: String) async throws -> [PointOrder] {
+        let root = try await request(
+            method: "GET",
+            path: "/me/point-orders?grantKind=images&page=1&pageSize=50",
+            auth: token,
+            body: nil
+        )
+        return JSONValue.array(root, key: "items").compactMap { item in
+            guard let object = item as? [String: Any] else { return nil }
+            return parsePointOrder(object)
+        }
+    }
+
+    func getPointOrder(token: String, orderId: Int64) async throws -> PointOrderLookup {
+        let root = try await request(method: "GET", path: "/me/point-orders/\(orderId)", auth: token, body: nil)
+        return PointOrderLookup(
+            order: parsePointOrder(root["order"] as? [String: Any] ?? [:]),
+            imageCredits: JSONValue.optionalInt(root, key: "imageCredits")
+        )
+    }
+
+    private func parsePointCatalog(_ root: [String: Any], defaultCost: Int) -> PointCatalog {
+        let items = JSONValue.array(root, key: "items").compactMap { item -> PointPackage? in
+            guard let object = item as? [String: Any] else { return nil }
+            let id = JSONValue.string(object, key: "id") ?? ""
+            guard !id.isEmpty else { return nil }
+            let points = JSONValue.int(object, key: "points")
+            return PointPackage(
+                id: id,
+                title: JSONValue.string(object, key: "title") ?? id,
+                subtitle: JSONValue.string(object, key: "subtitle") ?? "",
+                priceFen: JSONValue.int(object, key: "priceFen"),
+                points: points,
+                credits: max(0, JSONValue.int(object, key: "credits", default: points)),
+                badge: JSONValue.string(object, key: "badge")
+            )
+        }
+        return PointCatalog(
+            items: items,
+            aiImagePointsCost: JSONValue.int(root, key: "aiImagePointsCost", default: defaultCost),
+            sandbox: JSONValue.bool(root, key: "sandbox", default: true),
+            alipayReady: JSONValue.bool(root, key: "alipayReady", default: true),
+            wechatReady: JSONValue.bool(root, key: "wechatReady")
+        )
+    }
+
+    private func parsePointPurchase(_ root: [String: Any], fallbackChannel: String) -> PointPurchaseResult {
+        let order = root["order"] as? [String: Any] ?? [:]
+        let wx = root["wechatPay"] as? [String: Any]
+        let pay = wx.map { object in
+            WechatPayOrderParams(
+                appId: JSONValue.string(object, key: "appId") ?? "",
+                partnerId: JSONValue.string(object, key: "partnerId") ?? "",
+                prepayId: JSONValue.string(object, key: "prepayId") ?? "",
+                packageValue: JSONValue.string(object, key: "packageValue") ?? "Sign=WXPay",
+                nonceStr: JSONValue.string(object, key: "nonceStr") ?? "",
+                timeStamp: JSONValue.string(object, key: "timeStamp") ?? "",
+                sign: JSONValue.string(object, key: "sign") ?? ""
+            )
+        }
+        return PointPurchaseResult(
+            orderId: JSONValue.int64(order, key: "id"),
+            channel: JSONValue.string(root, key: "channel") ?? fallbackChannel,
+            orderInfo: JSONValue.string(root, key: "orderInfo"),
+            wechatPay: pay,
+            sandbox: JSONValue.bool(root, key: "sandbox", default: true),
+            points: JSONValue.int(order, key: "points"),
+            amountFen: JSONValue.int(order, key: "amountFen")
+        )
+    }
+
+    private func parsePointOrder(_ object: [String: Any]) -> PointOrder {
+        PointOrder(
+            id: JSONValue.int64(object, key: "id"),
+            packageId: JSONValue.string(object, key: "packageId") ?? "",
+            points: JSONValue.int(object, key: "points"),
+            amountFen: JSONValue.int(object, key: "amountFen"),
+            status: JSONValue.string(object, key: "status") ?? "",
+            statusLabel: JSONValue.string(object, key: "statusLabel") ?? "",
+            amountYuan: JSONValue.string(object, key: "amountYuan") ?? "",
+            payChannel: JSONValue.string(object, key: "payChannel"),
+            createdAt: JSONValue.string(object, key: "createdAt"),
+            paidAt: JSONValue.string(object, key: "paidAt"),
+            expiresAt: JSONValue.string(object, key: "expiresAt")
+        )
+    }
+
     func fetchWithdrawConfig(token: String) async throws -> WithdrawConfig {
         let root = try await request(method: "GET", path: "/me/withdrawals/config", auth: token, body: nil)
         guard let config = root["config"] as? [String: Any] else {
@@ -1131,12 +1310,28 @@ actor WordBuddyAPI {
                 accountHint: JSONValue.string(object, key: "accountHint") ?? ""
             )
         }
+        let tiers = JSONValue.array(config, key: "tiers").compactMap { item -> WithdrawTier? in
+            guard let object = item as? [String: Any] else { return nil }
+            let fen = JSONValue.int(object, key: "amountFen")
+            guard fen > 0 else { return nil }
+            let yuan = JSONValue.string(object, key: "amountYuan") ?? String(format: "%.2f", Double(fen) / 100)
+            return WithdrawTier(
+                amountFen: fen,
+                amountYuan: yuan,
+                pointsCost: max(1, JSONValue.int(object, key: "pointsCost", default: 1)),
+                label: JSONValue.string(object, key: "label") ?? "¥\(yuan)"
+            )
+        }
         return WithdrawConfig(
             sandbox: JSONValue.bool(config, key: "sandbox", default: true),
+            amountFen: JSONValue.int(config, key: "amountFen", default: 1),
             amountYuan: JSONValue.string(config, key: "amountYuan") ?? "0.01",
             pointsCost: JSONValue.int(config, key: "pointsCost", default: 1),
+            alipayReady: JSONValue.bool(config, key: "alipayReady", default: true),
+            wechatReady: JSONValue.bool(config, key: "wechatReady", default: true),
             note: JSONValue.string(config, key: "note") ?? "",
-            channels: channels
+            channels: channels,
+            tiers: tiers
         )
     }
 
@@ -1144,15 +1339,7 @@ actor WordBuddyAPI {
         let root = try await request(method: "GET", path: "/me/withdrawals?page=1&pageSize=50", auth: token, body: nil)
         return JSONValue.array(root, key: "items").compactMap { item in
             guard let object = item as? [String: Any] else { return nil }
-            return WithdrawalItem(
-                id: JSONValue.int64(object, key: "id"),
-                channelLabel: JSONValue.string(object, key: "channelLabel") ?? JSONValue.string(object, key: "channel") ?? "",
-                account: JSONValue.string(object, key: "account") ?? "",
-                amountYuan: JSONValue.string(object, key: "amountYuan") ?? "0.00",
-                pointsSpent: JSONValue.int(object, key: "pointsSpent"),
-                statusLabel: JSONValue.string(object, key: "statusLabel") ?? JSONValue.string(object, key: "status") ?? "",
-                createdAt: JSONValue.string(object, key: "createdAt")
-            )
+            return parseWithdrawal(object)
         }
     }
 
@@ -1160,15 +1347,49 @@ actor WordBuddyAPI {
         token: String,
         channel: String,
         account: String,
-        realName: String?
-    ) async throws -> (message: String, totalPoints: Int) {
-        var body: [String: Any] = ["channel": channel, "account": account]
+        realName: String?,
+        amountFen: Int
+    ) async throws -> WithdrawResult {
+        var body: [String: Any] = ["channel": channel, "account": account, "amountFen": amountFen]
         if let realName, !realName.isEmpty { body["realName"] = realName }
         let root = try await request(method: "POST", path: "/me/withdrawals", auth: token, body: body)
-        return (
-            JSONValue.string(root, key: "message") ?? "提现成功",
-            JSONValue.int(root, key: "totalPoints")
+        guard let item = root["item"] as? [String: Any] else {
+            throw APIError(message: "提现失败")
+        }
+        let checkIn = (root["checkIn"] as? [String: Any]).map(parseCheckIn)
+        return WithdrawResult(
+            message: JSONValue.string(root, key: "message") ?? "提现成功",
+            item: parseWithdrawal(item),
+            totalPoints: JSONValue.int(root, key: "totalPoints"),
+            checkIn: checkIn
         )
+    }
+
+    private func parseWithdrawal(_ object: [String: Any]) -> WithdrawalItem {
+        WithdrawalItem(
+            id: JSONValue.int64(object, key: "id"),
+            channel: JSONValue.string(object, key: "channel") ?? "",
+            channelLabel: JSONValue.string(object, key: "channelLabel") ?? JSONValue.string(object, key: "channel") ?? "",
+            account: JSONValue.string(object, key: "account") ?? "",
+            amountFen: JSONValue.int(object, key: "amountFen"),
+            amountYuan: JSONValue.string(object, key: "amountYuan") ?? "0.00",
+            pointsSpent: JSONValue.int(object, key: "pointsSpent"),
+            status: JSONValue.string(object, key: "status") ?? "",
+            statusLabel: JSONValue.string(object, key: "statusLabel") ?? JSONValue.string(object, key: "status") ?? "",
+            createdAt: JSONValue.string(object, key: "createdAt"),
+            updatedAt: JSONValue.string(object, key: "updatedAt"),
+            paidAt: JSONValue.string(object, key: "paidAt"),
+            wechatConfirm: parseWechatConfirm(object["wechatConfirm"] as? [String: Any])
+        )
+    }
+
+    private func parseWechatConfirm(_ object: [String: Any]?) -> WeChatTransferConfirm? {
+        guard let object else { return nil }
+        let mchId = JSONValue.string(object, key: "mchId") ?? ""
+        let appId = JSONValue.string(object, key: "appId") ?? ""
+        let packageInfo = JSONValue.string(object, key: "packageInfo") ?? ""
+        guard !mchId.isEmpty, !appId.isEmpty, !packageInfo.isEmpty else { return nil }
+        return WeChatTransferConfirm(mchId: mchId, appId: appId, packageInfo: packageInfo)
     }
 
     func fetchHomophones(token: String?, word: String) async throws -> [WordHomophone] {

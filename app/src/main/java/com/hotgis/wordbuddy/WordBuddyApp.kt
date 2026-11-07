@@ -8,7 +8,7 @@ import com.hotgis.wordbuddy.reminder.StudyReminder
 class WordBuddyApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        val level = SessionStore(this).load()?.level ?: 0
+        val level = SessionStore(this).load()?.level ?: 1
         LauncherIcons.apply(this, level)
         if (SettingsStore(this).loadSettings().dailyReminder) {
             StudyReminder.sync(this, enabled = true)
