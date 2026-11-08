@@ -14,6 +14,7 @@ import com.bytedance.sdk.openadsdk.TTAdSdk
 import com.bytedance.sdk.openadsdk.TTRewardVideoAd
 import com.bytedance.sdk.openadsdk.mediation.ad.MediationAdSlot
 import com.hotgis.wordbuddy.BuildConfig
+import com.hotgis.wordbuddy.data.SessionStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +46,7 @@ object RewardVideoController {
     private var lastFailAtMs = 0L
 
     private var cachedAd: TTRewardVideoAd? = null
+    private var cachedForUserId = ""
     private var pendingCallbacks: Callbacks? = null
     private var shownAd: TTRewardVideoAd? = null
     @Volatile
@@ -57,6 +59,20 @@ object RewardVideoController {
     private fun setStatus(activity: Activity, text: String) {
         _lastStatus.value = text
         AdDiagStore.report(activity, AdDiagStore.REWARD, text)
+    }
+
+    private fun currentUserId(activity: Activity): String {
+        val id = SessionStore(activity).load()?.userId ?: 0L
+        return if (id > 0L) id.toString() else ""
+    }
+
+    private fun dropCacheIfUserChanged(userId: String) {
+        if (cachedAd != null && cachedForUserId != userId) {
+            runCatching { cachedAd?.mediationManager?.destroy() }
+            cachedAd = null
+            cachedForUserId = ""
+            _ready.value = false
+        }
     }
 
     private fun scheduleRetry(activity: Activity) {
@@ -123,7 +139,9 @@ object RewardVideoController {
             return
         }
         val ad = cachedAd
-        if (ad == null) {
+        val userId = currentUserId(activity)
+        if (ad == null || userId.isEmpty() || cachedForUserId != userId) {
+            if (cachedForUserId != userId) dropCacheIfUserChanged(userId)
             Log.w(TAG, "show requested but no cached ad")
             preload(activity)
             callbacks.onFailed("not loaded")
@@ -155,6 +173,12 @@ object RewardVideoController {
 
     private fun load(activity: Activity) {
         if (loading || showing) return
+        val userId = currentUserId(activity)
+        if (userId.isEmpty()) {
+            setStatus(activity, "未登录")
+            return
+        }
+        dropCacheIfUserChanged(userId)
         if (cachedAd != null) return
         if (System.currentTimeMillis() - lastFailAtMs < FAIL_COOLDOWN_MS) return
         if (!CsjSdkHolder.ready) return
@@ -168,7 +192,7 @@ object RewardVideoController {
                 .setOrientation(TTAdConstant.ORIENTATION_VERTICAL)
                 .setImageAcceptedSize(metrics.widthPixels, metrics.heightPixels)
                 .setAdCount(1)
-                .setUserID("wordbuddy")
+                .setUserID(userId)
                 .setRewardName("continue")
                 .setRewardAmount(1)
                 .setAdLoadType(TTAdLoadType.LOAD)
@@ -200,6 +224,7 @@ object RewardVideoController {
                         Log.i(TAG, "reward loaded isReady=${runCatching { ad?.mediationManager?.isReady }.getOrNull()}")
                         if (ad != null) {
                             cachedAd = ad
+                            cachedForUserId = userId
                             // Some GroMore versions only fire load, not cached.
                             if (!_ready.value) {
                                 _ready.value = true

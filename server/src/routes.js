@@ -18,6 +18,9 @@ import {
   recordLoginEvent,
   recordPasswordEvent,
   rotateSessionVersion,
+  rotateSlotSession,
+  claimDeskSession,
+  sessionSlotFromRequest,
   signToken,
   verifyPassword,
   clientIp,
@@ -26,7 +29,7 @@ import { newLoginCode, sendCode, skipVerify } from './sms.js'
 import * as rateLimit from './rateLimit.js'
 import { getUserCheckIn, performUserCheckIn, performMakeupCheckIn } from './checkin.js'
 import { recordActiveMs, syncUserLevel, discountedPoints, getUserPerks } from './levels.js'
-import { claimRewardVideo, rewardVideoStatus } from './rewardVideo.js'
+import { claimRewardVideo, rewardVideoStatus, verifyGromoreReward } from './rewardVideo.js'
 import { resolveIpLocation, extractDeviceInfo } from './device.js'
 import {
   getGift,
@@ -72,6 +75,7 @@ import {
 import { parseWechatAuthNotify } from './wechat.js'
 import { exchangeWechatCode, fetchWechatUserProfile, wechatLoginConfig } from './wechatLogin.js'
 import { verifyAppleIdentityToken } from './appleLogin.js'
+import { browserLoginPage, completeQrTicket, createQrTicket, getQrTicket, scanDonePage, takeQrResult } from './qrLogin.js'
 import {
   bindInviteCode,
   findUserByBuddyId,
@@ -88,6 +92,7 @@ import {
   getDeletionStatus,
   requestAccountDeletion,
 } from './deletion.js'
+import { lookupDict } from './dictLookup.js'
 
 export const router = Router()
 
@@ -511,10 +516,12 @@ async function applyOauthProfile(userId, profile, source = 'oauth') {
   )
 }
 
-async function finishLogin(req, res, user, method, invite = null, options = {}) {
+async function issueLogin(req, user, method, invite = null, options = {}) {
   const vocabNotebookId = await createDefaultNotebookIfEmpty(user.id)
-  // Single-device policy: each successful login invalidates older JWTs.
-  const sessionVersion = await rotateSessionVersion(user.id)
+  const slot = options.slot === 'mobile' || options.slot === 'desk'
+    ? options.slot
+    : sessionSlotFromRequest(req)
+  const session = await rotateSlotSession(user.id, slot)
   await recordLoginEvent(req, {
     userId: user.id,
     phone: user.phone,
@@ -527,7 +534,7 @@ async function finishLogin(req, res, user, method, invite = null, options = {}) 
   const payload = {
     isNewUser: false,
     needsPhoneBind: options.needsPhoneBind ?? !phone,
-    token: signToken({ id: user.id, phone: phone || null }, sessionVersion),
+    token: signToken({ id: user.id, phone: phone || null }, session.version, session.slot),
     user: profile,
     vocabNotebookId: Number(vocabNotebookId),
     avatarUrl: profile.avatarUrl,
@@ -541,7 +548,11 @@ async function finishLogin(req, res, user, method, invite = null, options = {}) 
       inviterBuddyId: invite.inviterBuddyId,
     }
   }
-  res.json(payload)
+  return payload
+}
+
+async function finishLogin(req, res, user, method, invite = null, options = {}) {
+  res.json(await issueLogin(req, user, method, invite, options))
 }
 
 router.post('/auth/login', async (req, res) => {
@@ -688,18 +699,11 @@ router.post('/auth/register', async (req, res) => {
   await finishLogin(req, res, user, 'register', invite?.ok ? invite : null)
 })
 
-router.post('/auth/wechat', async (req, res) => {
+async function userFromWechatCode(code) {
   const cfg = wechatLoginConfig()
-  if (!cfg.loginReady) {
-    res.status(503).json({ error: '微信登录尚未配置，请先用手机号登录' })
-    return
-  }
-  const exchanged = await exchangeWechatCode(req.body?.code)
-  if (!exchanged.ok) {
-    await recordLoginEvent(req, { method: 'wechat', success: false })
-    res.status(400).json({ error: exchanged.error })
-    return
-  }
+  if (!cfg.loginReady) return { ok: false, status: 503, error: '微信登录尚未配置，请先用手机号登录' }
+  const exchanged = await exchangeWechatCode(code)
+  if (!exchanged.ok) return { ok: false, status: 400, error: exchanged.error }
   const openid = exchanged.openid
   const wxProfile = await fetchWechatUserProfile(exchanged.accessToken, openid)
   const existing = (
@@ -733,10 +737,59 @@ router.post('/auth/wechat', async (req, res) => {
       console.error('[signup] bonus failed', err)
     }
   }
-  if (wxProfile.ok) {
-    await applyWechatProfile(user.id, wxProfile)
+  if (wxProfile.ok) await applyWechatProfile(user.id, wxProfile)
+  return { ok: true, user }
+}
+
+async function userFromAlipayCode(code) {
+  const exchanged = await exchangeAlipayAuthCode(code)
+  if (!exchanged.ok) return { ok: false, status: 400, error: exchanged.error || '支付宝授权失败' }
+  const identity = exchanged.identity
+  const existing = (
+    await query(
+      'SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE alipay_account = $1',
+      [identity],
+    )
+  ).rows[0]
+  let user = existing
+  if (!existing) {
+    user = (
+      await query(
+        `INSERT INTO users (phone, alipay_account, alipay_name)
+         VALUES (NULL, $1, NULL)
+         RETURNING id, phone, password_hash, avatar_url, user_level`,
+        [identity],
+      )
+    ).rows[0]
+    try {
+      await grantSignupBonus(user.id)
+      await grantSignupImageCredit(user.id)
+    } catch (err) {
+      console.error('[signup] bonus failed', err)
+    }
   }
-  await finishLogin(req, res, user, 'wechat')
+  if (exchanged.accessToken) {
+    const aliProfile = await fetchAlipayUserProfile(exchanged.accessToken)
+    if (aliProfile.ok) await applyOauthProfile(user.id, aliProfile, 'alipay')
+  }
+  return { ok: true, user }
+}
+
+const OAUTH_ORIGIN = 'https://wordbuddy.cc'
+
+async function qrSvg(text) {
+  const qr = await import('qrcode')
+  return qr.default.toString(text, { type: 'svg', margin: 1, width: 168, errorCorrectionLevel: 'M' })
+}
+
+router.post('/auth/wechat', async (req, res) => {
+  const found = await userFromWechatCode(req.body?.code)
+  if (!found.ok) {
+    if (found.status !== 503) await recordLoginEvent(req, { method: 'wechat', success: false })
+    res.status(found.status || 400).json({ error: found.error })
+    return
+  }
+  await finishLogin(req, res, found.user, 'wechat')
 })
 
 /** Public authInfo for Alipay AuthTask (login before session exists). */
@@ -756,43 +809,13 @@ router.post('/auth/alipay/auth-info', async (_req, res) => {
 
 router.post('/auth/alipay', async (req, res) => {
   try {
-    const exchanged = await exchangeAlipayAuthCode(req.body?.authCode || req.body?.code)
-    if (!exchanged.ok) {
+    const found = await userFromAlipayCode(req.body?.authCode || req.body?.code)
+    if (!found.ok) {
       await recordLoginEvent(req, { method: 'alipay', success: false })
-      res.status(400).json({ error: exchanged.error || '支付宝授权失败' })
+      res.status(found.status || 400).json({ error: found.error || '支付宝授权失败' })
       return
     }
-    const identity = exchanged.identity
-    const existing = (
-      await query(
-        'SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE alipay_account = $1',
-        [identity],
-      )
-    ).rows[0]
-    let user = existing
-    if (!existing) {
-      user = (
-        await query(
-          `INSERT INTO users (phone, alipay_account, alipay_name)
-           VALUES (NULL, $1, NULL)
-           RETURNING id, phone, password_hash, avatar_url, user_level`,
-          [identity],
-        )
-      ).rows[0]
-      try {
-        await grantSignupBonus(user.id)
-        await grantSignupImageCredit(user.id)
-      } catch (err) {
-        console.error('[signup] bonus failed', err)
-      }
-    }
-    if (exchanged.accessToken) {
-      const aliProfile = await fetchAlipayUserProfile(exchanged.accessToken)
-      if (aliProfile.ok) {
-        await applyOauthProfile(user.id, aliProfile, 'alipay')
-      }
-    }
-    await finishLogin(req, res, user, 'alipay')
+    await finishLogin(req, res, found.user, 'alipay')
   } catch (error) {
     console.error('[alipay] login', error)
     await recordLoginEvent(req, { method: 'alipay', success: false })
@@ -808,6 +831,49 @@ function appleDisplayName(value) {
   return name
 }
 
+async function userFromAppleIdentity(verified, fullName) {
+  const existing = (
+    await query(
+      'SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE apple_user_id = $1',
+      [verified.sub],
+    )
+  ).rows[0]
+  let user = existing
+  if (!existing) {
+    user = (
+      await query(
+        `INSERT INTO users (phone, apple_user_id)
+         VALUES (NULL, $1)
+         RETURNING id, phone, password_hash, avatar_url, user_level`,
+        [verified.sub],
+      )
+    ).rows[0]
+    try {
+      await grantSignupBonus(user.id)
+      await grantSignupImageCredit(user.id)
+    } catch (err) {
+      console.error('[signup] bonus failed', err)
+    }
+  }
+  const nickname = appleDisplayName(fullName)
+  await query(
+    `UPDATE users SET
+       email = CASE
+         WHEN $2::text IS NULL OR btrim($2::text) = '' THEN email
+         WHEN email IS NULL OR btrim(email) = '' THEN $2
+         ELSE email
+       END,
+       nickname = CASE
+         WHEN $3::text IS NULL OR btrim($3::text) = '' THEN nickname
+         WHEN nickname IS NULL OR btrim(nickname) = '' THEN $3
+         ELSE nickname
+       END
+     WHERE id = $1`,
+    [user.id, verified.email || null, nickname || null],
+  )
+  return user
+}
+
 router.post('/auth/apple', async (req, res) => {
   try {
     const verified = await verifyAppleIdentityToken(req.body?.identityToken, req.body?.nonce)
@@ -816,50 +882,139 @@ router.post('/auth/apple', async (req, res) => {
       res.status(400).json({ error: verified.error || 'Apple 登录失败' })
       return
     }
-    const existing = (
-      await query(
-        'SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE apple_user_id = $1',
-        [verified.sub],
-      )
-    ).rows[0]
-    let user = existing
-    if (!existing) {
-      user = (
-        await query(
-          `INSERT INTO users (phone, apple_user_id)
-           VALUES (NULL, $1)
-           RETURNING id, phone, password_hash, avatar_url, user_level`,
-          [verified.sub],
-        )
-      ).rows[0]
-      try {
-        await grantSignupBonus(user.id)
-        await grantSignupImageCredit(user.id)
-      } catch (err) {
-        console.error('[signup] bonus failed', err)
-      }
-    }
-    const nickname = appleDisplayName(req.body?.fullName)
-    await query(
-      `UPDATE users SET
-         email = CASE
-           WHEN $2::text IS NULL OR btrim($2::text) = '' THEN email
-           WHEN email IS NULL OR btrim(email) = '' THEN $2
-           ELSE email
-         END,
-         nickname = CASE
-           WHEN $3::text IS NULL OR btrim($3::text) = '' THEN nickname
-           WHEN nickname IS NULL OR btrim(nickname) = '' THEN $3
-           ELSE nickname
-         END
-       WHERE id = $1`,
-      [user.id, verified.email || null, nickname || null],
-    )
+    const user = await userFromAppleIdentity(verified, req.body?.fullName)
     await finishLogin(req, res, user, 'apple', null, { needsPhoneBind: false })
   } catch (error) {
     console.error('[apple] login', error)
     await recordLoginEvent(req, { method: 'apple', success: false })
     sendAppError(res, error)
+  }
+})
+
+router.post('/auth/apple/web', (req, res) => {
+  const clientId = String(process.env.APPLE_WEB_CLIENT_ID || '').trim()
+  if (!clientId) {
+    res.status(503).json({ error: 'Apple 网页登录尚未配置，请先用手机号登录，或在手机 App 里使用 Apple 登录' })
+    return
+  }
+  const nonce = crypto.randomBytes(16).toString('hex')
+  const ticket = createQrTicket('apple', { nonce })
+  const redirect = `${OAUTH_ORIGIN}/auth/apple/callback`
+  const url = new URL('https://appleid.apple.com/auth/authorize')
+  url.searchParams.set('client_id', clientId)
+  url.searchParams.set('redirect_uri', redirect)
+  url.searchParams.set('response_type', 'code id_token')
+  url.searchParams.set('response_mode', 'form_post')
+  url.searchParams.set('scope', 'name email')
+  url.searchParams.set('state', ticket)
+  url.searchParams.set('nonce', nonce)
+  res.json({ url: url.toString() })
+})
+
+router.post('/auth/apple/callback', async (req, res) => {
+  const ticket = getQrTicket(req.body?.state)
+  const nonce = ticket?.nonce || ''
+  try {
+    const verified = await verifyAppleIdentityToken(req.body?.id_token, nonce)
+    if (!verified.ok || !ticket) {
+      res.status(400).type('html').send(scanDonePage(verified.error || 'Apple 登录已失效，请回到电脑重试'))
+      return
+    }
+    let fullName = ''
+    try {
+      const parsed = JSON.parse(String(req.body?.user || '{}'))
+      fullName = [parsed?.name?.lastName, parsed?.name?.firstName].filter(Boolean).join('')
+    } catch { /* Apple only sends the name the first time */ }
+    const user = await userFromAppleIdentity(verified, fullName)
+    const payload = await issueLogin(req, user, 'apple', null, { needsPhoneBind: false, slot: 'desk' })
+    res.set('Cache-Control', 'no-store').type('html').send(browserLoginPage(payload.token))
+  } catch (error) {
+    console.error('[apple] web callback', error)
+    await recordLoginEvent(req, { method: 'apple', success: false })
+    res.status(400).type('html').send(scanDonePage('Apple 登录失败，请回到电脑重试'))
+  }
+})
+
+router.post('/auth/qr/start', async (req, res) => {
+  const channel = req.body?.channel === 'alipay' ? 'alipay' : 'wechat'
+  if (rateLimit.limited(res, `qr:${clientIp(req)}`, {
+    limit: 20,
+    windowMs: 10 * MINUTE_MS,
+    message: '刷新太频繁，请稍后再试',
+  })) return
+  try {
+    let url = ''
+    if (channel === 'wechat') {
+      const cfg = wechatLoginConfig()
+      if (!cfg.loginReady) {
+        res.json({ ready: false, error: '微信扫码登录尚未配置' })
+        return
+      }
+      const ticket = createQrTicket(channel)
+      const redirect = `${OAUTH_ORIGIN}/auth/wechat/callback`
+      url = `https://open.weixin.qq.com/connect/qrconnect?appid=${encodeURIComponent(cfg.appId)}&redirect_uri=${encodeURIComponent(redirect)}&response_type=code&scope=snsapi_login&state=${ticket}#wechat_redirect`
+      const svg = await qrSvg(url)
+      res.json({ ready: true, ticket, svg })
+      return
+    }
+    const cfg = alipayConfig()
+    if (!cfg.appId) {
+      res.json({ ready: false, error: '支付宝扫码登录尚未配置' })
+      return
+    }
+    const ticket = createQrTicket(channel)
+    const redirect = `${OAUTH_ORIGIN}/auth/alipay/callback`
+    url = `https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?app_id=${encodeURIComponent(cfg.appId)}&scope=auth_user&redirect_uri=${encodeURIComponent(redirect)}&state=${ticket}`
+    const svg = await qrSvg(url)
+    res.json({ ready: true, ticket, svg })
+  } catch (error) {
+    console.error('[qr] start', error)
+    res.status(503).json({ ready: false, error: '二维码暂时生成不了，请稍后再试' })
+  }
+})
+
+router.get('/auth/qr/status', (req, res) => {
+  const result = takeQrResult(req.query.ticket)
+  if (result.status !== 'done') {
+    res.json({ status: result.status })
+    return
+  }
+  res.json({ status: 'done', token: result.token })
+})
+
+router.get('/auth/wechat/callback', async (req, res) => {
+  const found = await userFromWechatCode(req.query.code)
+  if (!found.ok) {
+    if (found.status !== 503) await recordLoginEvent(req, { method: 'wechat', success: false })
+    res.status(found.status || 400).type('html').send(scanDonePage(found.error || '微信登录失败'))
+    return
+  }
+  const payload = await issueLogin(req, found.user, 'wechat', null, { slot: 'desk' })
+  if (!completeQrTicket(req.query.state, payload.token)) {
+    res.type('html').send(scanDonePage('二维码已过期，请回到电脑刷新后再扫'))
+    return
+  }
+  res.set('Cache-Control', 'no-store').type('html').send(scanDonePage('已登录，请回到电脑上的词搭子'))
+})
+
+router.get('/auth/alipay/callback', async (req, res) => {
+  try {
+    const found = await userFromAlipayCode(req.query.auth_code || req.query.authCode || req.query.code)
+    if (!found.ok) {
+      await recordLoginEvent(req, { method: 'alipay', success: false })
+      res.status(found.status || 400).type('html').send(scanDonePage(found.error || '支付宝登录失败'))
+      return
+    }
+    const payload = await issueLogin(req, found.user, 'alipay', null, { slot: 'desk' })
+    if (!completeQrTicket(req.query.state, payload.token)) {
+      res.type('html').send(scanDonePage('二维码已过期，请回到电脑刷新后再扫'))
+      return
+    }
+    res.set('Cache-Control', 'no-store').type('html').send(scanDonePage('已登录，请回到电脑上的词搭子'))
+  } catch (error) {
+    console.error('[alipay] callback', error)
+    await recordLoginEvent(req, { method: 'alipay', success: false })
+    res.status(400).type('html').send(scanDonePage('支付宝登录失败，请回到电脑重试'))
   }
 })
 
@@ -1016,13 +1171,15 @@ router.post('/auth/bind-phone', authRequired, async (req, res) => {
     throw error
   }
   if (checked.smsId) await consumeSms(checked.smsId)
-  const sessionVersion = await rotateSessionVersion(me.id)
+  const versions = await rotateSessionVersion(me.id)
+  const slot = sessionSlotFromRequest(req)
+  const sessionVersion = slot === 'mobile' ? versions.mobile : versions.desktop
   const profileRow = await loadUserProfileRow(me.id)
   const profile = mapUserProfile(profileRow, { id: me.id, phone })
   res.json({
     ok: true,
     needsPhoneBind: false,
-    token: signToken({ id: me.id, phone }, sessionVersion),
+    token: signToken({ id: me.id, phone }, sessionVersion, slot),
     user: profile,
     vocabNotebookId: Number(await ensureUserNotebook(me.id)),
     avatarUrl: profile.avatarUrl,
@@ -1208,6 +1365,11 @@ router.get('/me', authRequired, async (req, res) => {
     }
     throw error
   }
+  let token
+  if (req.user.sessionSlot === 'legacy' && sessionSlotFromRequest(req) === 'desk') {
+    const version = await claimDeskSession(req.user.id)
+    token = signToken({ id: req.user.id, phone: req.user.phone }, version, 'desk')
+  }
   res.json({
     user: profile,
     vocabNotebookId: Number(vocabNotebookId),
@@ -1215,6 +1377,7 @@ router.get('/me', authRequired, async (req, res) => {
     level,
     checkIn,
     deletion,
+    ...(token ? { token } : {}),
   })
 })
 
@@ -1533,6 +1696,16 @@ router.get('/me/checkin', authRequired, async (req, res) => {
       dailyAiImagesLimit: availability.dailyLimit,
     },
   })
+})
+
+router.get('/gromore/reward', async (req, res) => {
+  try {
+    const body = await verifyGromoreReward(req.query || {})
+    res.set('Cache-Control', 'no-store').json(body)
+  } catch (error) {
+    console.error('[gromore/reward]', error)
+    res.json({ is_verify: false, reason: 50002 })
+  }
 })
 
 router.get('/me/reward-video', authRequired, async (req, res) => {
@@ -1882,8 +2055,10 @@ router.post('/auth/change-password', authRequired, async (req, res) => {
   ])
   await recordPasswordEvent(req, user.id, 'change')
   // Any token stolen before the change must stop working; hand this device a fresh one.
-  const sessionVersion = await rotateSessionVersion(user.id)
-  res.json({ ok: true, token: signToken(user, sessionVersion) })
+  const versions = await rotateSessionVersion(user.id)
+  const slot = sessionSlotFromRequest(req)
+  const sessionVersion = slot === 'mobile' ? versions.mobile : versions.desktop
+  res.json({ ok: true, token: signToken(user, sessionVersion, slot) })
 })
 
 /** Re-check login password without rotating the session (used before change-phone). */
@@ -1965,12 +2140,14 @@ router.post('/auth/change-phone', authRequired, async (req, res) => {
     throw error
   }
   await consumeSms(checked.smsId)
-  const sessionVersion = await rotateSessionVersion(user.id)
+  const versions = await rotateSessionVersion(user.id)
+  const slot = sessionSlotFromRequest(req)
+  const sessionVersion = slot === 'mobile' ? versions.mobile : versions.desktop
   const profileRow = await loadUserProfileRow(user.id)
   const profile = mapUserProfile(profileRow, { id: user.id, phone: newPhone })
   res.json({
     ok: true,
-    token: signToken({ id: user.id, phone: newPhone }, sessionVersion),
+    token: signToken({ id: user.id, phone: newPhone }, sessionVersion, slot),
     user: profile,
     vocabNotebookId: Number(await ensureUserNotebook(user.id)),
     avatarUrl: profile.avatarUrl,
@@ -1978,7 +2155,49 @@ router.post('/auth/change-phone', authRequired, async (req, res) => {
   })
 })
 
+/** Same Youdao clip the Android app plays, with Baidu when Youdao has no sentence audio. */
+router.get('/voice', async (req, res) => {
+  const text = String(req.query.text || '').trim().slice(0, 400)
+  if (!text) {
+    res.status(400).end()
+    return
+  }
+  const uk = String(req.query.accent || '') === 'uk'
+  const encoded = encodeURIComponent(text)
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/122.0.0.0 Mobile Safari/537.36',
+    Accept: '*/*',
+  }
+  const sources = [
+    `https://dict.youdao.com/dictvoice?audio=${encoded}&type=${uk ? 1 : 2}`,
+    `https://fanyi.baidu.com/gettts?lan=${uk ? 'uk' : 'en'}&text=${encoded}&spd=3&source=web`,
+  ]
+  try {
+    for (const url of sources) {
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(8000) })
+      const contentType = response.headers.get('content-type') || ''
+      const bytes = Buffer.from(await response.arrayBuffer())
+      if (!response.ok || contentType.includes('text/html') || bytes.length < 256) continue
+      res.set('Content-Type', contentType.startsWith('audio/') ? contentType : 'audio/mpeg')
+      res.set('Cache-Control', 'public, max-age=86400')
+      res.send(bytes)
+      return
+    }
+    res.status(502).end()
+  } catch {
+    res.status(502).end()
+  }
+})
+
 /** Public catalog list (中考 / 高考 / CET-4 / CET-6) — no login required. */
+router.get('/dict', async (req, res) => {
+  try {
+    res.json(await lookupDict(req.query.q))
+  } catch (error) {
+    res.status(Number(error.status) || 502).json({ error: error.message || '查词失败' })
+  }
+})
+
 router.get('/catalogs', async (_req, res) => {
   const result = await query(
     `
@@ -2342,6 +2561,13 @@ router.get('/notebooks/:id/position', optionalAuth, async (req, res) => {
   })
 })
 
+function wordLookupSql(q, params) {
+  const escaped = String(q || '').replace(/[\\%_]/g, (ch) => `\\${ch}`)
+  params.push(`${escaped}%`, `% ${escaped}%`, `%-${escaped}%`)
+  const n = params.length
+  return `(word ILIKE $${n - 2} ESCAPE '\\' OR word ILIKE $${n - 1} ESCAPE '\\' OR word ILIKE $${n} ESCAPE '\\')`
+}
+
 router.get('/notebooks/:id/words', optionalAuth, async (req, res) => {
   const notebookId = Number(req.params.id)
   const notebook = await loadNotebook(notebookId)
@@ -2353,29 +2579,40 @@ router.get('/notebooks/:id/words', optionalAuth, async (req, res) => {
   }
   const limit = Math.min(PAGE_SIZE_MAX, Math.max(1, Number(req.query.limit) || 50))
   const cursor = parseCursor(req.query.cursor)
+  const q = String(req.query.q || '').trim().slice(0, 80)
   const fromIndexRaw = Number(req.query.fromIndex)
   const fromIndex =
     !cursor && Number.isFinite(fromIndexRaw) && fromIndexRaw > 0
       ? Math.floor(fromIndexRaw)
       : 0
+  const totalParams = [notebookId]
+  const totalWhere = q ? ` AND ${wordLookupSql(q, totalParams)}` : ''
   const total = cursor
     ? 0
     : (
-        await query('SELECT count(*)::int AS n FROM words WHERE notebook_id = $1', [notebookId])
+        await query(
+          `SELECT count(*)::int AS n FROM words WHERE notebook_id = $1${totalWhere}`,
+          totalParams,
+        )
       ).rows[0].n
 
   let result
   if (fromIndex > 0) {
+    const params = [notebookId]
+    let where = 'notebook_id = $1'
+    if (q) where += ` AND ${wordLookupSql(q, params)}`
+    params.push(fromIndex, limit + 1)
     result = await query(
       `SELECT * FROM words
-       WHERE notebook_id = $1
+       WHERE ${where}
        ORDER BY sort_order ASC, id ASC
-       OFFSET $2 LIMIT $3`,
-      [notebookId, fromIndex, limit + 1],
+       OFFSET $${params.length - 1} LIMIT $${params.length}`,
+      params,
     )
   } else {
     const params = [notebookId]
     let where = 'notebook_id = $1'
+    if (q) where += ` AND ${wordLookupSql(q, params)}`
     if (cursor) {
       params.push(cursor.sortOrder, cursor.wordId)
       where += ` AND (sort_order, id) > ($${params.length - 1}, $${params.length})`

@@ -106,6 +106,18 @@ app.get('/i/:code', (req, res) => {
 app.get('/invite/page/:code', (req, res) => {
   res.sendFile(path.resolve(root, '../public/invite/index.html'))
 })
+const deskDir = path.resolve(root, '../public/desk')
+app.use('/desk', express.static(deskDir, {
+  index: 'index.html',
+  etag: true,
+  maxAge: 0,
+  setHeaders(res) {
+    res.setHeader('Cache-Control', 'no-cache')
+  },
+}))
+app.get('/desk', (_req, res) => {
+  res.sendFile(path.join(deskDir, 'index.html'))
+})
 app.use(router)
 
 app.use((err, _req, res, _next) => {

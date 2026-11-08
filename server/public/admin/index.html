@@ -234,6 +234,7 @@
       <button class="nav" data-page="sms" onclick="go('sms')">短信记录</button>
       <button class="nav" data-page="notebooks" onclick="go('notebooks')">词书 / 生词本</button>
       <button class="nav" data-page="checkins" onclick="go('checkins')">签到搭币</button>
+      <button class="nav" data-page="adwatches" onclick="go('adwatches')">广告观看</button>
       <button class="nav" data-page="gifts" onclick="go('gifts')">搭币兑礼</button>
       <button class="nav" data-page="giftOrders" onclick="go('giftOrders')">兑换订单</button>
       <button class="nav" data-page="withdrawals" onclick="go('withdrawals')">提现记录</button>
@@ -264,6 +265,7 @@ const titles = {
   sms: ['短信记录', '验证码发送与是否已核销（不展示明文验证码）'],
   notebooks: ['词书 / 生词本', '系统词书可下架与改词；用户生词本可查看删除'],
   checkins: ['签到搭币', '用户累计搭币、连续签到、每日签到明细，以及奖励视频 / 注册邀请搭币'],
+  adwatches: ['广告观看', '穿山甲激励视频回调：每天每个用户看了多少条'],
   gifts: ['搭币兑礼', '栏目显示、礼品归属分类、库存与搭币价格'],
   giftOrders: ['兑换订单', '用户兑换记录与发货状态'],
   withdrawals: ['提现记录', '全部客户提现总额、每个用户提了多少，以及每一笔明细'],
@@ -272,11 +274,33 @@ const titles = {
   audit: ['操作日志', '超级管理员在后台做过的事'],
 };
 
-const state = { page: 'cockpit', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users', withdrawStatus: '', purchaseStatus: '', cockpitGrain: 'day', cockpitAt: '' };
+const state = { page: 'cockpit', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users', withdrawStatus: '', purchaseStatus: '', cockpitGrain: 'day', cockpitAt: '', adDate: '' };
 
 function token() { return localStorage.getItem('hw_admin_token') || ''; }
 function authHeaders() {
   return { Authorization: 'Bearer ' + token(), 'Content-Type': 'application/json' };
+}
+async function saveGromoreKey() {
+  const securityKey = document.getElementById('gromoreKey')?.value || '';
+  try {
+    const data = await api('/gromore-reward', {
+      method: 'PUT',
+      body: JSON.stringify({ securityKey }),
+    });
+    const input = document.getElementById('gromoreKey');
+    if (input) input.value = '';
+    alert(data.configured ? '安全密钥已保存' : '已清除安全密钥');
+    render();
+  } catch (e) {
+    alert(e.message || '保存失败');
+  }
+}
+function shiftAdDate(days) {
+  const base = state.adDate || shanghaiTodayClient();
+  const [y, m, d] = base.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  go('adwatches', { adDate: dt.toISOString().slice(0, 10), page: 1 });
 }
 async function saveRewardVideoPoints() {
   const raw = document.getElementById('rvPoints')?.value;
@@ -442,7 +466,7 @@ function go(page, extra = {}) {
   }
   if (extra.checkInView != null) state.checkInView = extra.checkInView;
   if (extra.withdrawStatus != null) state.withdrawStatus = extra.withdrawStatus;
-  if (extra.purchaseStatus != null) state.purchaseStatus = extra.purchaseStatus;
+  if (extra.adDate != null) state.adDate = extra.adDate;
   document.querySelectorAll('.nav').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
   document.getElementById('title').textContent = titles[page][0];
   document.getElementById('hint').textContent = titles[page][1];
@@ -919,6 +943,39 @@ async function render() {
           <button class="btn" onclick="go('users',{q:document.querySelector('main input').value,page:1})">搜索</button>
         </div>
         ${userTable(d.items, true)}
+        ${pager(d.total)}`;
+    } else if (state.page === 'adwatches') {
+      const day = state.adDate || shanghaiTodayClient();
+      const [cfg, d] = await Promise.all([
+        api('/gromore-reward'),
+        api(`/ad-watches?date=${encodeURIComponent(day)}&page=${state.pageNo}&q=${encodeURIComponent(state.q)}`),
+      ]);
+      el.innerHTML = `
+        <div class="card" style="margin-bottom:16px">
+          <div class="sub">在穿山甲这个激励视频广告位勾选「服务端激励回调」，回调 URL 填下面这一条。安全密钥在广告位编辑页，只保存、不回显。</div>
+          <div style="margin:10px 0;font-family:ui-monospace,monospace">${esc(cfg.callbackUrl)}</div>
+          <div class="toolbar">
+            <input id="gromoreKey" type="password" autocomplete="new-password" placeholder="${cfg.configured ? '已配置。留空清除；多把密钥用英文逗号隔开' : '粘贴广告位安全密钥，多把用英文逗号隔开'}" style="max-width:420px" />
+            <button class="btn" onclick="saveGromoreKey()">保存密钥</button>
+            <span class="tag ${cfg.configured ? '' : 'bad'}">${cfg.configured ? '密钥已配置' : '未配置'}</span>
+          </div>
+        </div>
+        <div class="toolbar">
+          <button class="btn ghost" onclick="shiftAdDate(-1)">前一天</button>
+          <input type="date" value="${esc(d.date)}" onchange="go('adwatches',{adDate:this.value,page:1})" />
+          <button class="btn ghost" onclick="shiftAdDate(1)">后一天</button>
+          <input id="adWatchQ" style="max-width:220px" placeholder="手机号 / 昵称 / 用户 ID" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('adwatches',{q:this.value,page:1})" />
+          <button class="btn" onclick="go('adwatches',{q:document.getElementById('adWatchQ').value,page:1})">搜索</button>
+          <span class="sub">${esc(d.date)} · ${d.users} 人 · ${d.watches} 条</span>
+        </div>
+        <table><thead><tr><th>用户</th><th>手机号</th><th>观看条数</th><th>已发奖</th><th>最后一条</th></tr></thead>
+        <tbody>${d.items.length ? d.items.map(r => `<tr>
+          <td>${esc(r.nickname || '—')}<div class="sub">#${r.userId}</div></td>
+          <td>${esc(r.phone || '—')}</td>
+          <td>${r.watches}</td>
+          <td>${r.rewarded}</td>
+          <td>${fmt(r.lastAt)}</td>
+        </tr>`).join('') : '<tr><td colspan="5">这一天还没有回调记录</td></tr>'}</tbody></table>
         ${pager(d.total)}`;
     } else if (state.page === 'logins') {
       const d = await api(`/logins?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);

@@ -1,4 +1,5 @@
 import { pool, query } from './db.js'
+import crypto from 'node:crypto'
 import { todayShanghai } from './checkin.js'
 import { adjustPoints, getPointsBalance } from './points.js'
 import { getUserPerks } from './levels.js'
@@ -11,6 +12,7 @@ const REWARD_VIDEO_POINTS_MAX = 100000
 const REWARD_VIDEO_POINTS_DEFAULT = 1500
 const SETTING_KEY = 'reward_video_points'
 const COOLDOWN_KEY = 'reward_video_cooldown_sec'
+const GROMORE_KEY = 'gromore_reward_security_key'
 
 function clampPoints(value) {
   const n = Math.trunc(Number(value))
@@ -165,6 +167,40 @@ export async function claimRewardVideo(userId) {
         status,
       }
     }
+    const keyRow = (
+      await client.query('SELECT value FROM app_settings WHERE key = $1', [GROMORE_KEY])
+    ).rows[0]
+    if (String(keyRow?.value || '').trim()) {
+      const seen = (
+        await client.query(
+          'SELECT 1 FROM reward_video_callbacks WHERE user_id = $1 LIMIT 1',
+          [userId],
+        )
+      ).rows[0]
+      if (seen) {
+        const consumed = (
+          await client.query(
+            `UPDATE reward_video_callbacks
+             SET consumed_at = now()
+             WHERE id = (
+               SELECT id FROM reward_video_callbacks
+               WHERE user_id = $1 AND reward_allowed AND consumed_at IS NULL
+                 AND created_at > now() - interval '30 minutes'
+               ORDER BY id
+               LIMIT 1
+               FOR UPDATE SKIP LOCKED
+             )
+             RETURNING id`,
+            [userId],
+          )
+        ).rows[0]
+        if (!consumed) {
+          await client.query('ROLLBACK')
+          const status = await rewardVideoStatus(userId)
+          return { ok: false, error: '还没有收到这次视频的奖励确认', status }
+        }
+      }
+    }
     const pointsRow = (
       await client.query('SELECT value FROM app_settings WHERE key = $1', [SETTING_KEY])
     ).rows[0]
@@ -194,5 +230,147 @@ export async function claimRewardVideo(userId) {
     throw error
   } finally {
     client.release()
+  }
+}
+
+function clip(value, max) {
+  const text = String(value ?? '').trim()
+  return text ? text.slice(0, max) : null
+}
+
+function safeEqual(left, right) {
+  const a = Buffer.from(String(left || ''), 'utf8')
+  const b = Buffer.from(String(right || ''), 'utf8')
+  if (a.length !== b.length || a.length === 0) return false
+  return crypto.timingSafeEqual(a, b)
+}
+
+export async function getGromoreSecurityKey() {
+  const row = (await query('SELECT value FROM app_settings WHERE key = $1', [GROMORE_KEY])).rows[0]
+  return String(row?.value || '').trim()
+}
+
+function splitSecurityKeys(value) {
+  return String(value ?? '')
+    .split(/[\s,]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+export async function setGromoreSecurityKey(value) {
+  const keys = splitSecurityKeys(value)
+  if (keys.some((key) => key.length < 8 || key.length > 128)) {
+    return { ok: false, error: '安全密钥格式不对' }
+  }
+  await query(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [GROMORE_KEY, keys.join(',')],
+  )
+  return { ok: true, configured: keys.length > 0, keyCount: keys.length }
+}
+
+/** GroMore placement callback. sign = sha256("m-key:trans_id"), reply within 1s. */
+export async function verifyGromoreReward(params) {
+  const transId = clip(params.trans_id, 128)
+  const sign = String(params.sign || '').trim().toLowerCase()
+  if (!transId || !/^[0-9a-f]{64}$/.test(sign)) {
+    return { is_verify: false, reason: 40001 }
+  }
+  const keys = splitSecurityKeys(await getGromoreSecurityKey())
+  if (!keys.length) return { is_verify: false, reason: 40002 }
+  const matched = keys.some((key) =>
+    safeEqual(crypto.createHash('sha256').update(`${key}:${transId}`).digest('hex'), sign),
+  )
+  if (!matched) return { is_verify: false, reason: 40001 }
+
+  const existing = (
+    await query(
+      'SELECT reward_allowed FROM reward_video_callbacks WHERE trans_id = $1',
+      [transId],
+    )
+  ).rows[0]
+  if (existing) {
+    return { is_verify: Boolean(existing.reward_allowed), reason: 0 }
+  }
+
+  const userRaw = String(params.user_id || '').trim()
+  const userId = /^[1-9]\d{0,15}$/.test(userRaw) ? Number(userRaw) : 0
+  const user = userId
+    ? (await query('SELECT id FROM users WHERE id = $1', [userId])).rows[0]
+    : null
+  // 旧版客户端把 user_id 固定成 wordbuddy。签名有效就放行，但不记到某个用户名下。
+  if (!user) return { is_verify: true, reason: 0 }
+
+  const amount = Number(params.reward_amount)
+  const status = await rewardVideoStatus(userId)
+  const allow = status.remaining > 0 && status.cooldownRemainingSec <= 0
+  await query(
+    `INSERT INTO reward_video_callbacks
+       (trans_id, user_id, reward_name, reward_amount, prime_rit, mediation_rit,
+        adn_name, ecpm, extra, reward_allowed, watch_date)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::date)
+     ON CONFLICT (trans_id) DO NOTHING`,
+    [
+      transId,
+      userId,
+      clip(params.reward_name, 64),
+      Number.isFinite(amount) ? Math.round(amount) : null,
+      clip(params.prime_rit, 64),
+      clip(params.mediation_rit, 64),
+      clip(params.adn_name, 64),
+      clip(params.ecpm, 32),
+      clip(params.extra, 500),
+      allow,
+      todayShanghai(),
+    ],
+  )
+  return { is_verify: allow, reason: 0 }
+}
+
+export async function listAdWatches({ date, q = '', page = 1, pageSize = 20 }) {
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? String(date) : todayShanghai()
+  const keyword = String(q || '').trim()
+  const params = [day]
+  let filter = ''
+  if (keyword) {
+    params.push(`%${keyword}%`)
+    filter = `AND (u.phone ILIKE $2 OR u.nickname ILIKE $2 OR CAST(u.id AS TEXT) = $3)`
+    params.push(keyword)
+  }
+  const where = `c.watch_date = $1::date AND c.user_id IS NOT NULL ${filter}`
+  const totalRow = (
+    await query(
+      `SELECT COUNT(*)::int AS watches, COUNT(DISTINCT c.user_id)::int AS users
+       FROM reward_video_callbacks c
+       JOIN users u ON u.id = c.user_id
+       WHERE ${where}`,
+      params,
+    )
+  ).rows[0]
+  const offset = (Math.max(1, page) - 1) * pageSize
+  const listParams = [...params, pageSize, offset]
+  const limitAt = params.length + 1
+  const rows = (
+    await query(
+      `SELECT u.id AS "userId", u.phone, u.nickname, u.avatar_url AS "avatarUrl",
+              COUNT(*)::int AS watches,
+              COUNT(*) FILTER (WHERE c.reward_allowed)::int AS rewarded,
+              MAX(c.created_at) AS "lastAt"
+       FROM reward_video_callbacks c
+       JOIN users u ON u.id = c.user_id
+       WHERE ${where}
+       GROUP BY u.id
+       ORDER BY watches DESC, MAX(c.created_at) DESC
+       LIMIT $${limitAt} OFFSET $${limitAt + 1}`,
+      listParams,
+    )
+  ).rows
+  return {
+    date: day,
+    watches: totalRow?.watches || 0,
+    users: totalRow?.users || 0,
+    total: totalRow?.users || 0,
+    items: rows,
   }
 }

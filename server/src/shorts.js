@@ -64,6 +64,9 @@ export function mapShortVideo(row, { absoluteBase } = {}) {
     if (videoUrl.startsWith('/')) videoUrl = `${base}${videoUrl}`
     if (coverUrl.startsWith('/')) coverUrl = `${base}${coverUrl}`
   }
+  // The site is HTTPS. An http://IP address is mixed content and the browser refuses to play it.
+  videoUrl = toPublicHttps(videoUrl)
+  coverUrl = toPublicHttps(coverUrl)
   const category = normalizeCategory(row.category)
   const categoryMeta = SHORT_CATEGORIES.find((c) => c.id === category)
   return {
@@ -84,6 +87,13 @@ export function mapShortVideo(row, { absoluteBase } = {}) {
     favoritedAt: row.favorited_at ? new Date(row.favorited_at).toISOString() : null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
   }
+}
+
+function toPublicHttps(url) {
+  return String(url || '')
+    .trim()
+    .replace(/^http:\/\/47\.95\.111\.238(?::\d+)?/i, 'https://wordbuddy.cc')
+    .replace(/^http:\/\/(?:www\.)?wordbuddy\.cc/i, 'https://wordbuddy.cc')
 }
 
 export function publicBaseFromReq(req) {

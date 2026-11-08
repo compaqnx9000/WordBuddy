@@ -1,8 +1,8 @@
 {
-  "versionCode": 210,
-  "versionName": "2.19",
+  "versionCode": 211,
+  "versionName": "2.20",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "看视频领搭币的间隔提示会显示后台设置的时间。",
-  "releasedAt": "2026-11-04T12:33:00.000Z"
+  "notes": "激励视频会把当前账号带给穿山甲，方便按用户统计观看次数。",
+  "releasedAt": "2026-11-08T02:20:00.000Z"
 }

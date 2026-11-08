@@ -22,6 +22,9 @@ import {
   getRewardVideoPoints,
   getRewardVideoCooldownSec,
   setRewardVideoConfig,
+  getGromoreSecurityKey,
+  setGromoreSecurityKey,
+  listAdWatches,
   REWARD_VIDEO_DAILY_LIMIT,
 } from './rewardVideo.js'
 import { getSignupBonusPoints, setSignupBonusPoints } from './points.js'
@@ -1289,6 +1292,39 @@ adminRouter.put('/reward-video', adminRequired, async (req, res) => {
     return
   }
   res.json(saved)
+})
+
+adminRouter.get('/gromore-reward', adminRequired, async (_req, res) => {
+  const key = await getGromoreSecurityKey()
+  res.json({
+    configured: Boolean(key),
+    callbackUrl: 'https://wordbuddy.cc/gromore/reward',
+  })
+})
+
+adminRouter.put('/gromore-reward', adminRequired, async (req, res) => {
+  const saved = await setGromoreSecurityKey(req.body?.securityKey)
+  if (!saved.ok) {
+    res.status(400).json({ error: saved.error })
+    return
+  }
+  res.json({ configured: saved.configured, callbackUrl: 'https://wordbuddy.cc/gromore/reward' })
+})
+
+adminRouter.get('/ad-watches', adminRequired, async (req, res) => {
+  const { page, pageSize } = pageParams(req)
+  const data = await listAdWatches({
+    date: req.query.date,
+    q: req.query.q,
+    page,
+    pageSize,
+  })
+  res.json({
+    ...data,
+    page,
+    pageSize,
+    items: data.items.map((row) => ({ ...row, lastAt: iso(row.lastAt) })),
+  })
 })
 
 adminRouter.get('/signup-invite-rewards', adminRequired, async (_req, res) => {

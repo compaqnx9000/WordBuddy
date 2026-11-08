@@ -49,6 +49,8 @@ async function main() {
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ip_location TEXT')
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS user_level INTEGER NOT NULL DEFAULT 1')
   await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0')
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS session_desktop INTEGER NOT NULL DEFAULT 0')
+  await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS session_mobile INTEGER NOT NULL DEFAULT 0')
   console.log('Schema applied')
   await client.end()
 }

@@ -36,6 +36,8 @@ export async function ensureSchema() {
   // Level 0–7 → 1–8 migration runs in index.js via migrateUserLevelsToOneBased().
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0`)
   await query(`UPDATE users SET session_version = 0 WHERE session_version IS NULL`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_desktop INTEGER NOT NULL DEFAULT 0`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_mobile INTEGER NOT NULL DEFAULT 0`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname TEXT`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS shipping_name TEXT`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS shipping_phone TEXT`)
@@ -558,6 +560,27 @@ export async function ensureSchema() {
   `)
   await query(
     'CREATE INDEX IF NOT EXISTS reward_video_grants_user_date ON reward_video_grants (user_id, grant_date)',
+  )
+  await query(`
+    CREATE TABLE IF NOT EXISTS reward_video_callbacks (
+      id BIGSERIAL PRIMARY KEY,
+      trans_id TEXT NOT NULL UNIQUE,
+      user_id BIGINT REFERENCES users (id) ON DELETE SET NULL,
+      reward_name TEXT,
+      reward_amount INTEGER,
+      prime_rit TEXT,
+      mediation_rit TEXT,
+      adn_name TEXT,
+      ecpm TEXT,
+      extra TEXT,
+      reward_allowed BOOLEAN NOT NULL DEFAULT false,
+      consumed_at TIMESTAMPTZ,
+      watch_date DATE NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query(
+    'CREATE INDEX IF NOT EXISTS reward_video_callbacks_user_date ON reward_video_callbacks (user_id, watch_date)',
   )
   await query(`
     CREATE TABLE IF NOT EXISTS user_notebook_orders (

@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS users (
     last_ip_location TEXT,
     user_level INTEGER NOT NULL DEFAULT 0,
     session_version INTEGER NOT NULL DEFAULT 0,
+    session_desktop INTEGER NOT NULL DEFAULT 0,
+    session_mobile INTEGER NOT NULL DEFAULT 0,
     nickname TEXT,
     shipping_name TEXT,
     shipping_phone TEXT,

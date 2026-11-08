@@ -5,6 +5,11 @@ const APPLE_ISSUER = 'https://appleid.apple.com'
 const APPLE_KEYS_URL = 'https://appleid.apple.com/auth/keys'
 const APPLE_AUDIENCE = 'com.hotgis.wordbuddy.ios'
 
+function appleAudiences() {
+  const web = String(process.env.APPLE_WEB_CLIENT_ID || '').trim()
+  return web ? [APPLE_AUDIENCE, web] : [APPLE_AUDIENCE]
+}
+
 let keyCache = { at: 0, keys: [] }
 
 async function fetchKeys(force = false) {
@@ -47,7 +52,7 @@ export async function verifyAppleIdentityToken(identityToken, rawNonce) {
     payload = jwt.verify(token, key, {
       algorithms: ['RS256'],
       issuer: APPLE_ISSUER,
-      audience: APPLE_AUDIENCE,
+      audience: appleAudiences(),
     })
   } catch {
     return { ok: false, error: 'Apple 登录已失效，请重试' }

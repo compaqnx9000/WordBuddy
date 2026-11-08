@@ -13,24 +13,92 @@ export const SESSION_REPLACED_CODE = 'SESSION_REPLACED'
 export const SESSION_REPLACED_MESSAGE = '账号已在其他设备登录'
 export { ACCOUNT_DELETED_CODE, ACCOUNT_DELETED_MESSAGE }
 
-export function signToken(user, sessionVersion = 0) {
+/** Android and iOS share one session. Desktop/web keeps its own. */
+export function sessionSlotFromPlatform(platform) {
+  const value = String(platform || '').trim().toLowerCase()
+  if (value === 'android' || value === 'ios') return 'mobile'
+  return 'desk'
+}
+
+export function sessionSlotFromRequest(req) {
+  return sessionSlotFromPlatform(extractDeviceInfo(req).platform)
+}
+
+export function signToken(user, sessionVersion = 0, slot = 'desk') {
+  const family = slot === 'mobile' ? 'mobile' : 'desk'
   return jwt.sign(
-    { sub: String(user.id), phone: user.phone, sv: Number(sessionVersion) || 0 },
+    {
+      sub: String(user.id),
+      phone: user.phone,
+      sv: Number(sessionVersion) || 0,
+      slot: family,
+    },
     process.env.JWT_SECRET,
     { expiresIn: TOKEN_TTL },
   )
 }
 
-/** Bump session so any previously issued JWT becomes invalid. */
+/**
+ * Drop every session (password change, phone change, admin reset).
+ * Returns the new per-slot versions so the current client can be signed back in.
+ */
 export async function rotateSessionVersion(userId) {
   const result = await query(
     `UPDATE users
-     SET session_version = COALESCE(session_version, 0) + 1
+     SET session_version = COALESCE(session_version, 0) + 1,
+         session_desktop = COALESCE(session_desktop, 0) + 1,
+         session_mobile = COALESCE(session_mobile, 0) + 1
      WHERE id = $1
-     RETURNING session_version`,
+     RETURNING session_version, session_desktop, session_mobile`,
     [userId],
   )
-  return Number(result.rows[0]?.session_version || 1)
+  const row = result.rows[0] || {}
+  return {
+    version: Number(row.session_version || 1),
+    desktop: Number(row.session_desktop || 1),
+    mobile: Number(row.session_mobile || 1),
+  }
+}
+
+/** Give a pre-split desktop token its own slot without logging the phone out. */
+export async function claimDeskSession(userId) {
+  const result = await query(
+    `UPDATE users
+     SET session_desktop = CASE
+           WHEN COALESCE(session_desktop, 0) = 0 THEN 1
+           ELSE session_desktop
+         END
+     WHERE id = $1
+     RETURNING session_desktop`,
+    [userId],
+  )
+  return Number(result.rows[0]?.session_desktop || 1)
+}
+
+/** Replace only the desktop session, or only the shared phone session. */
+export async function rotateSlotSession(userId, slot) {
+  const family = slot === 'mobile' ? 'mobile' : 'desk'
+  const result = await query(
+    `UPDATE users
+     SET session_desktop = CASE
+           WHEN $2 = 'desk' THEN COALESCE(session_desktop, 0) + 1
+           ELSE COALESCE(session_desktop, 0)
+         END,
+         session_mobile = CASE
+           WHEN $2 = 'mobile' THEN COALESCE(session_mobile, 0) + 1
+           ELSE COALESCE(session_mobile, 0)
+         END,
+         session_version = CASE
+           WHEN $2 = 'mobile' THEN COALESCE(session_version, 0) + 1
+           ELSE COALESCE(session_version, 0)
+         END
+     WHERE id = $1
+     RETURNING session_desktop, session_mobile`,
+    [userId, family],
+  )
+  const row = result.rows[0] || {}
+  const version = family === 'mobile' ? row.session_mobile : row.session_desktop
+  return { slot: family, version: Number(version || 1) }
 }
 
 async function assertActiveSession(payload) {
@@ -41,7 +109,10 @@ async function assertActiveSession(payload) {
     throw err
   }
   const row = (
-    await query('SELECT session_version, deletion_due_at FROM users WHERE id = $1', [userId])
+    await query(
+      'SELECT session_version, session_desktop, session_mobile, deletion_due_at FROM users WHERE id = $1',
+      [userId],
+    )
   ).rows[0]
   if (!row) {
     const err = new Error(ACCOUNT_DELETED_MESSAGE)
@@ -55,13 +126,18 @@ async function assertActiveSession(payload) {
     throw err
   }
   const tokenSv = Number(payload.sv ?? 0)
-  const dbSv = Number(row.session_version ?? 0)
+  const slot = payload.slot === 'mobile' ? 'mobile' : payload.slot === 'desk' ? 'desk' : ''
+  const dbSv = slot === 'mobile'
+    ? Number(row.session_mobile ?? 0)
+    : slot === 'desk'
+      ? Number(row.session_desktop ?? 0)
+      : Number(row.session_version ?? 0)
   if (tokenSv !== dbSv) {
     const err = new Error(SESSION_REPLACED_MESSAGE)
     err.code = SESSION_REPLACED_CODE
     throw err
   }
-  return { id: userId, phone: payload.phone }
+  return { id: userId, phone: payload.phone, sessionSlot: slot || 'legacy' }
 }
 
 export async function authRequired(req, res, next) {
