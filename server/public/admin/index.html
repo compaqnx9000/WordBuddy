@@ -192,7 +192,7 @@
     }
     .map-scale { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }
     .map-scale i { width: 120px; height: 8px; border-radius: 99px; background: linear-gradient(90deg, #163d2c, #6ee7b7); }
-    .map-rank { max-height: 540px; overflow: auto; padding-right: 4px; }
+    .map-rank { padding-right: 4px; }
     .map-rank-row { display: grid; grid-template-columns: 64px 1fr 52px; gap: 8px; align-items: center; padding: 5px 6px; border-radius: 8px; font-size: 13px; }
     .map-rank-row.hot { background: #123528; }
     .map-rank-row b { text-align: right; color: var(--cyan-soft); }
@@ -274,7 +274,7 @@ const titles = {
   audit: ['操作日志', '超级管理员在后台做过的事'],
 };
 
-const state = { page: 'cockpit', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users', withdrawStatus: '', purchaseStatus: '', cockpitGrain: 'day', cockpitAt: '', adDate: '' };
+const state = { page: 'cockpit', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users', withdrawStatus: '', purchaseStatus: '', cockpitGrain: 'day', cockpitAt: '', adDate: '', adTail: '', withdrawDate: '' };
 
 function token() { return localStorage.getItem('hw_admin_token') || ''; }
 function authHeaders() {
@@ -301,6 +301,13 @@ function shiftAdDate(days) {
   const dt = new Date(Date.UTC(y, m - 1, d));
   dt.setUTCDate(dt.getUTCDate() + days);
   go('adwatches', { adDate: dt.toISOString().slice(0, 10), page: 1 });
+}
+function shiftWithdrawDate(days) {
+  const base = state.withdrawDate || shanghaiTodayClient();
+  const [y, m, d] = base.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  go('withdrawals', { withdrawDate: dt.toISOString().slice(0, 10), page: 1 });
 }
 async function saveRewardVideoPoints() {
   const raw = document.getElementById('rvPoints')?.value;
@@ -467,6 +474,8 @@ function go(page, extra = {}) {
   if (extra.checkInView != null) state.checkInView = extra.checkInView;
   if (extra.withdrawStatus != null) state.withdrawStatus = extra.withdrawStatus;
   if (extra.adDate != null) state.adDate = extra.adDate;
+  if (extra.adTail != null) state.adTail = String(extra.adTail).replace(/\D/g, '').slice(0, 4);
+  if (extra.withdrawDate != null) state.withdrawDate = extra.withdrawDate;
   document.querySelectorAll('.nav').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
   document.getElementById('title').textContent = titles[page][0];
   document.getElementById('hint').textContent = titles[page][1];
@@ -712,6 +721,7 @@ function renderProvinceMap(stats, geo) {
     try { svg = chinaMapSvg(geo, byName, max) } catch (err) { svg = '' }
   }
   const ranked = provinces.filter((item) => item.count > 0).sort((a, b) => b.count - a.count || a.short.localeCompare(b.short, 'zh'))
+  const emptyProvinces = provinces.filter((item) => !item.count).sort((a, b) => a.short.localeCompare(b.short, 'zh'))
   const extras = [
     ['海外', stats.overseas],
     ['本地/内网', stats.local],
@@ -723,14 +733,19 @@ function renderProvinceMap(stats, geo) {
       <div class="mini"><i style="width:${((item.count / max) * 100).toFixed(1)}%"></i></div>
       <b>${fmtCount(item.count)}</b>
     </div>`).join('')
+  const zeroRows = emptyProvinces.map((item) => `
+    <div class="map-rank-row" data-name="${esc(item.name)}">
+      <span>${esc(item.short)}</span>
+      <div class="mini"></div>
+      <b>0</b>
+    </div>`).join('')
   const extraRows = extras.map(([label, n]) => `
     <div class="map-rank-row">
       <span>${esc(label)}</span>
       <div class="mini"></div>
       <b>${fmtCount(n)}</b>
     </div>`).join('')
-  const empty = ranked.length ? '' : '<p class="note">还没有能归到省份的注册用户。</p>'
-  const zero = provinces.length - ranked.length
+  const empty = ranked.length || emptyProvinces.length ? '' : '<p class="note">还没有能归到省份的注册用户。</p>'
   return `
     <div class="chart-card" style="margin-bottom:14px">
       <h3>注册用户分布</h3>
@@ -745,7 +760,7 @@ function renderProvinceMap(stats, geo) {
         </div>
         <div class="map-rank">
           ${rows || empty}
-          ${zero > 0 ? `<p class="note">其余 ${zero} 个省份暂无注册用户。</p>` : ''}
+          ${emptyProvinces.length ? `<p class="note">暂无注册用户：${emptyProvinces.map((item) => esc(item.short)).join('、')}</p>${zeroRows}` : ''}
           ${extraRows}
         </div>
       </div>
@@ -845,6 +860,9 @@ function renderCockpit(d, mapStats, geo) {
   const platMax = Math.max(1, ...platforms.map((p) => Number(p.users) || 0));
   const cards = [
     ['累计注册', fmtCount(summary.users)],
+    ['Android 注册', fmtCount(summary.usersAndroid)],
+    ['iOS 注册', fmtCount(summary.usersIos)],
+    ['PC 注册', fmtCount(summary.usersPc)],
     [`${periodWord}新增`, fmtCount(signups)],
     [`${periodWord}注销`, fmtCount(deletions)],
     ['净增', fmtCount(signups - deletions)],
@@ -896,12 +914,12 @@ function renderCockpit(d, mapStats, geo) {
       </div>
       <div class="chart-card">
         <h3>登录终端</h3>
-        <p class="note">所选时段内成功登录的去重用户，按设备平台。</p>
+        <p class="note">所选时段内成功登录的去重用户，按设备平台。上面的 Android / iOS / PC 注册数是按首次成功登录终端累计的。</p>
         ${platforms.map((p) => `<div class="plat-row"><span>${esc(platName[p.platform] || p.platform)}</span><div class="plat-bar"><i style="width:${((Number(p.users) || 0) / platMax * 100).toFixed(1)}%"></i></div><b>${fmtCount(p.users)}</b></div>`).join('') || '<p class="note">所选时段还没有成功登录。</p>'}
       </div>
       <div class="chart-card">
         <h3>怎么读这些数</h3>
-        <p class="note">先选按天 / 按月 / 按年，再选具体日期、月份或年份。图表分别按小时、按天、按月展开。待处理提现 ${fmtCount((Number(summary.withdrawalsPendingFen) || 0) / 100)} 元还在审核。</p>
+        <p class="note">先选按天 / 按月 / 按年，再选具体日期、月份或年份。图表分别按小时、按天、按月展开。PC 含网页版与 Windows / macOS。待处理提现 ${fmtCount((Number(summary.withdrawalsPendingFen) || 0) / 100)} 元还在审核。</p>
       </div>
     </div>`;
 }
@@ -925,6 +943,9 @@ async function render() {
       el.innerHTML = `
         <div class="stats">
           <div class="stat"><b>${d.stats.userCount}</b><span>注册用户</span></div>
+          <div class="stat"><b>${d.stats.usersAndroid ?? 0}</b><span>Android 注册</span></div>
+          <div class="stat"><b>${d.stats.usersIos ?? 0}</b><span>iOS 注册</span></div>
+          <div class="stat"><b>${d.stats.usersPc ?? 0}</b><span>PC 注册</span></div>
           <div class="stat"><b>${d.stats.login7d}</b><span>近 7 天登录</span></div>
           <div class="stat"><b>${d.stats.wordCount}</b><span>词条总数</span></div>
           <div class="stat"><b>${d.stats.catalogCount}</b><span>系统词书</span></div>
@@ -948,7 +969,7 @@ async function render() {
       const day = state.adDate || shanghaiTodayClient();
       const [cfg, d] = await Promise.all([
         api('/gromore-reward'),
-        api(`/ad-watches?date=${encodeURIComponent(day)}&page=${state.pageNo}&q=${encodeURIComponent(state.q)}`),
+        api(`/ad-watches?date=${encodeURIComponent(day)}&page=${state.pageNo}&q=${encodeURIComponent(state.q)}&tail=${encodeURIComponent(state.adTail || '')}`),
       ]);
       el.innerHTML = `
         <div class="card" style="margin-bottom:16px">
@@ -964,9 +985,16 @@ async function render() {
           <button class="btn ghost" onclick="shiftAdDate(-1)">前一天</button>
           <input type="date" value="${esc(d.date)}" onchange="go('adwatches',{adDate:this.value,page:1})" />
           <button class="btn ghost" onclick="shiftAdDate(1)">后一天</button>
-          <input id="adWatchQ" style="max-width:220px" placeholder="手机号 / 昵称 / 用户 ID" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('adwatches',{q:this.value,page:1})" />
-          <button class="btn" onclick="go('adwatches',{q:document.getElementById('adWatchQ').value,page:1})">搜索</button>
-          <span class="sub">${esc(d.date)} · ${d.users} 人 · ${d.watches} 条</span>
+          <input id="adWatchTail" inputmode="numeric" maxlength="4" style="max-width:110px" placeholder="手机后四位" value="${esc(state.adTail || '')}" onkeydown="if(event.key==='Enter')go('adwatches',{adTail:this.value,q:'',page:1})" />
+          <button class="btn" onclick="go('adwatches',{adTail:document.getElementById('adWatchTail').value,q:'',page:1})">按后四位搜</button>
+          <input id="adWatchQ" style="max-width:200px" placeholder="手机号 / 昵称 / 用户 ID" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('adwatches',{q:this.value,adTail:'',page:1})" />
+          <button class="btn ghost" onclick="go('adwatches',{q:document.getElementById('adWatchQ').value,adTail:'',page:1})">搜索</button>
+          <span class="sub">${esc(d.date)} · ${d.users} 人 · ${d.watches} 条 · 看 ≥20 条 ${d.usersWatched20Plus ?? 0} 人</span>
+        </div>
+        <div class="stats" style="margin:0 0 14px">
+          <div class="stat"><b>${d.users}</b><span>观看用户</span></div>
+          <div class="stat"><b>${d.watches}</b><span>观看条数</span></div>
+          <div class="stat"><b>${d.usersWatched20Plus ?? 0}</b><span>看 ≥20 条</span></div>
         </div>
         <table><thead><tr><th>用户</th><th>手机号</th><th>观看条数</th><th>已发奖</th><th>最后一条</th></tr></thead>
         <tbody>${d.items.length ? d.items.map(r => `<tr>
@@ -1216,18 +1244,30 @@ async function render() {
         ${pager(d.total)}`;
     } else if (state.page === 'withdrawals') {
       const status = state.withdrawStatus || '';
-      const d = await api(`/withdrawals?page=${state.pageNo}&q=${encodeURIComponent(state.q)}&status=${encodeURIComponent(status)}`);
+      const day = state.withdrawDate || shanghaiTodayClient();
+      const d = await api(`/withdrawals?page=${state.pageNo}&q=${encodeURIComponent(state.q)}&status=${encodeURIComponent(status)}&date=${encodeURIComponent(day)}`);
       const sum = d.summary || {};
       const overall = d.overall || {};
+      const dayStats = d.day || d.today || {};
+      if (dayStats.date) state.withdrawDate = dayStats.date;
       const successYuan = ((Number(sum.successFen) || 0) / 100).toFixed(2);
       const users = d.byUser || [];
       el.innerHTML = `
+        <div class="toolbar">
+          <button class="btn ghost" onclick="shiftWithdrawDate(-1)">前一天</button>
+          <input type="date" value="${esc(dayStats.date || day)}" onchange="go('withdrawals',{withdrawDate:this.value,page:1})" />
+          <button class="btn ghost" onclick="shiftWithdrawDate(1)">后一天</button>
+          <span class="sub">按发起提现日期统计</span>
+        </div>
         <div class="stats">
+          <div class="stat"><b>¥${esc(dayStats.amountYuan || '0.00')}</b><span>当日已到账</span></div>
+          <div class="stat"><b>${fmtCount(dayStats.userCount)}</b><span>当日提现用户</span></div>
           <div class="stat"><b>¥${esc(overall.successYuan || '0.00')}</b><span>全部客户已提现</span></div>
           <div class="stat"><b>${fmtCount(overall.successCount)}</b><span>已到账笔数</span></div>
           <div class="stat"><b>${fmtCount(overall.userCount)}</b><span>有提现记录的用户</span></div>
           <div class="stat"><b>¥${esc(overall.pendingYuan || '0.00')}</b><span>处理中</span></div>
         </div>
+        <p class="note">${esc(dayStats.date || day)}：已到账 ${fmtCount(dayStats.successCount)} 笔 / ¥${esc(dayStats.amountYuan || '0.00')}，${fmtCount(dayStats.userCount)} 人发起提现${Number(dayStats.pendingFen) > 0 ? `，另有处理中 ¥${esc(dayStats.pendingYuan)}` : ''}。</p>
         ${Number(overall.sandboxFen) > 0 ? `<p class="note">另有沙箱模拟到账 ¥${esc(overall.sandboxYuan)}，不计入上面的已提现总额。</p>` : ''}
         <h3 style="margin:16px 0 8px;font-size:15px;color:var(--cyan-soft)">各用户提现</h3>
         <table><thead><tr>

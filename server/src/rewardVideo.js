@@ -328,16 +328,25 @@ export async function verifyGromoreReward(params) {
   return { is_verify: allow, reason: 0 }
 }
 
-export async function listAdWatches({ date, q = '', page = 1, pageSize = 20 }) {
+export async function listAdWatches({ date, q = '', tail = '', page = 1, pageSize = 20 }) {
   const day = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? String(date) : todayShanghai()
   const keyword = String(q || '').trim()
+  const phoneTail = String(tail || '').trim().replace(/\D/g, '').slice(-4)
   const params = [day]
-  let filter = ''
-  if (keyword) {
-    params.push(`%${keyword}%`)
-    filter = `AND (u.phone ILIKE $2 OR u.nickname ILIKE $2 OR CAST(u.id AS TEXT) = $3)`
+  const filters = []
+  if (/^\d{4}$/.test(phoneTail)) {
+    params.push(phoneTail)
+    filters.push(`RIGHT(regexp_replace(COALESCE(u.phone, ''), '\\D', '', 'g'), 4) = $${params.length}`)
+  } else if (/^\d{4}$/.test(keyword)) {
     params.push(keyword)
+    filters.push(`RIGHT(regexp_replace(COALESCE(u.phone, ''), '\\D', '', 'g'), 4) = $${params.length}`)
+  } else if (keyword) {
+    params.push(`%${keyword}%`)
+    const likeAt = params.length
+    params.push(keyword)
+    filters.push(`(u.phone ILIKE $${likeAt} OR u.nickname ILIKE $${likeAt} OR CAST(u.id AS TEXT) = $${params.length})`)
   }
+  const filter = filters.length ? `AND ${filters.join(' AND ')}` : ''
   const where = `c.watch_date = $1::date AND c.user_id IS NOT NULL ${filter}`
   const totalRow = (
     await query(
@@ -345,6 +354,20 @@ export async function listAdWatches({ date, q = '', page = 1, pageSize = 20 }) {
        FROM reward_video_callbacks c
        JOIN users u ON u.id = c.user_id
        WHERE ${where}`,
+      params,
+    )
+  ).rows[0]
+  const heavyRow = (
+    await query(
+      `SELECT COUNT(*)::int AS n
+       FROM (
+         SELECT c.user_id
+         FROM reward_video_callbacks c
+         JOIN users u ON u.id = c.user_id
+         WHERE ${where}
+         GROUP BY c.user_id
+         HAVING COUNT(*) >= 20
+       ) heavy`,
       params,
     )
   ).rows[0]
@@ -370,6 +393,7 @@ export async function listAdWatches({ date, q = '', page = 1, pageSize = 20 }) {
     date: day,
     watches: totalRow?.watches || 0,
     users: totalRow?.users || 0,
+    usersWatched20Plus: heavyRow?.n || 0,
     total: totalRow?.users || 0,
     items: rows,
   }

@@ -255,18 +255,64 @@ adminRouter.get('/me', adminRequired, async (req, res) => {
   })
 })
 
+/** Count current users by the platform of their first successful login. */
+async function countUsersByRegisterPlatform() {
+  const result = await query(
+    `
+    WITH first_login AS (
+      SELECT DISTINCT ON (user_id)
+             user_id,
+             lower(trim(COALESCE(device_platform, ''))) AS platform
+      FROM login_events
+      WHERE success = TRUE AND user_id IS NOT NULL
+      ORDER BY user_id, created_at ASC, id ASC
+    ),
+    classified AS (
+      SELECT
+        CASE
+          WHEN lower(COALESCE(NULLIF(f.platform, ''), NULLIF(u.last_device_platform, ''), '')) = 'android'
+            THEN 'android'
+          WHEN lower(COALESCE(NULLIF(f.platform, ''), NULLIF(u.last_device_platform, ''), '')) = 'ios'
+            THEN 'ios'
+          WHEN lower(COALESCE(NULLIF(f.platform, ''), NULLIF(u.last_device_platform, ''), ''))
+               IN ('web', 'windows', 'macos', 'mac os', 'linux')
+            THEN 'pc'
+          ELSE 'unknown'
+        END AS bucket
+      FROM users u
+      LEFT JOIN first_login f ON f.user_id = u.id
+    )
+    SELECT
+      count(*) FILTER (WHERE bucket = 'android')::int AS android,
+      count(*) FILTER (WHERE bucket = 'ios')::int AS ios,
+      count(*) FILTER (WHERE bucket = 'pc')::int AS pc,
+      count(*) FILTER (WHERE bucket = 'unknown')::int AS unknown
+    FROM classified
+    `,
+  )
+  const row = result.rows[0] || {}
+  return {
+    android: Number(row.android || 0),
+    ios: Number(row.ios || 0),
+    pc: Number(row.pc || 0),
+    unknown: Number(row.unknown || 0),
+  }
+}
+
 adminRouter.get('/overview', adminRequired, async (_req, res) => {
   const today = todayShanghai()
-  const [users, logins, words, catalogs, userBooks, sms, checkInToday, checkInUsers] = await Promise.all([
-    query('SELECT count(*)::int AS n FROM users'),
-    query(`SELECT count(*)::int AS n FROM login_events WHERE created_at > now() - interval '7 days' AND success = TRUE`),
-    query('SELECT count(*)::int AS n FROM words'),
-    query(`SELECT count(*)::int AS n FROM notebooks WHERE kind = 'catalog'`),
-    query(`SELECT count(*)::int AS n FROM notebooks WHERE kind = 'user'`),
-    query(`SELECT count(*)::int AS n FROM sms_codes WHERE created_at > now() - interval '24 hours'`),
-    query(`SELECT count(*)::int AS n FROM user_checkin_logs WHERE checkin_date = $1::date`, [today]),
-    query(`SELECT count(*)::int AS n FROM user_checkins WHERE total_points > 0`),
-  ])
+  const [users, logins, words, catalogs, userBooks, sms, checkInToday, checkInUsers, byPlatform] =
+    await Promise.all([
+      query('SELECT count(*)::int AS n FROM users'),
+      query(`SELECT count(*)::int AS n FROM login_events WHERE created_at > now() - interval '7 days' AND success = TRUE`),
+      query('SELECT count(*)::int AS n FROM words'),
+      query(`SELECT count(*)::int AS n FROM notebooks WHERE kind = 'catalog'`),
+      query(`SELECT count(*)::int AS n FROM notebooks WHERE kind = 'user'`),
+      query(`SELECT count(*)::int AS n FROM sms_codes WHERE created_at > now() - interval '24 hours'`),
+      query(`SELECT count(*)::int AS n FROM user_checkin_logs WHERE checkin_date = $1::date`, [today]),
+      query(`SELECT count(*)::int AS n FROM user_checkins WHERE total_points > 0`),
+      countUsersByRegisterPlatform(),
+    ])
   const recentUsers = await query(
     `SELECT id, phone, avatar_url, created_at, last_login_at, login_count,
             last_device_label, last_device_platform, last_ip, last_ip_location, user_level,
@@ -284,6 +330,10 @@ adminRouter.get('/overview', adminRequired, async (_req, res) => {
   res.json({
     stats: {
       userCount: users.rows[0].n,
+      usersAndroid: byPlatform.android,
+      usersIos: byPlatform.ios,
+      usersPc: byPlatform.pc,
+      usersUnknownPlatform: byPlatform.unknown,
       login7d: logins.rows[0].n,
       wordCount: words.rows[0].n,
       catalogCount: catalogs.rows[0].n,
@@ -442,7 +492,7 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
     `,
     bounds,
   )
-  const [summary, platforms] = await Promise.all([
+  const [summary, platforms, byPlatform] = await Promise.all([
     query(
       `
       SELECT
@@ -485,6 +535,7 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
       `,
       bounds,
     ),
+    countUsersByRegisterPlatform(),
   ])
   const row = summary.rows[0] || {}
   res.json({
@@ -507,6 +558,10 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
     })),
     summary: {
       users: Number(row.users || 0),
+      usersAndroid: byPlatform.android,
+      usersIos: byPlatform.ios,
+      usersPc: byPlatform.pc,
+      usersUnknownPlatform: byPlatform.unknown,
       pendingDeletions: Number(row.pending_deletions || 0),
       deletedTotal: Number(row.deleted_total || 0),
       dau: Number(row.dau || 0),
@@ -1316,6 +1371,7 @@ adminRouter.get('/ad-watches', adminRequired, async (req, res) => {
   const data = await listAdWatches({
     date: req.query.date,
     q: req.query.q,
+    tail: req.query.tail,
     page,
     pageSize,
   })
@@ -1864,6 +1920,23 @@ adminRouter.get('/withdrawals', adminRequired, async (req, res) => {
   const allSuccessFen = byUser.reduce((sum, row) => sum + row.successFen, 0)
   const allPendingFen = byUser.reduce((sum, row) => sum + row.pendingFen, 0)
   const allSandboxFen = byUser.reduce((sum, row) => sum + row.sandboxFen, 0)
+  const dayRaw = String(req.query.date || '').trim()
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(dayRaw) ? dayRaw : todayShanghai()
+  const dayRow = (
+    await query(
+      `SELECT
+         COALESCE(SUM(amount_fen) FILTER (WHERE status = 'success' AND sandbox = FALSE), 0)::bigint AS success_fen,
+         COUNT(*) FILTER (WHERE status = 'success' AND sandbox = FALSE)::int AS success_n,
+         COUNT(DISTINCT user_id) FILTER (WHERE sandbox = FALSE)::int AS users,
+         COUNT(*) FILTER (WHERE sandbox = FALSE)::int AS n,
+         COALESCE(SUM(amount_fen) FILTER (WHERE status = 'pending' AND sandbox = FALSE), 0)::bigint AS pending_fen
+       FROM withdrawals
+       WHERE (created_at AT TIME ZONE 'Asia/Shanghai')::date = $1::date`,
+      [day],
+    )
+  ).rows[0]
+  const daySuccessFen = Number(dayRow?.success_fen || 0)
+  const dayPendingFen = Number(dayRow?.pending_fen || 0)
   res.json({
     items: result.rows.map(mapAdminWithdrawal),
     total,
@@ -1887,6 +1960,27 @@ adminRouter.get('/withdrawals', adminRequired, async (req, res) => {
       pendingCount: byUser.reduce((sum, row) => sum + row.pendingCount, 0),
       sandboxFen: allSandboxFen,
       sandboxYuan: (allSandboxFen / 100).toFixed(2),
+    },
+    day: {
+      date: day,
+      amountFen: daySuccessFen,
+      amountYuan: (daySuccessFen / 100).toFixed(2),
+      successCount: Number(dayRow?.success_n || 0),
+      userCount: Number(dayRow?.users || 0),
+      count: Number(dayRow?.n || 0),
+      pendingFen: dayPendingFen,
+      pendingYuan: (dayPendingFen / 100).toFixed(2),
+    },
+    // Keep old key for a bit so cached admin pages still work.
+    today: {
+      date: day,
+      amountFen: daySuccessFen,
+      amountYuan: (daySuccessFen / 100).toFixed(2),
+      successCount: Number(dayRow?.success_n || 0),
+      userCount: Number(dayRow?.users || 0),
+      count: Number(dayRow?.n || 0),
+      pendingFen: dayPendingFen,
+      pendingYuan: (dayPendingFen / 100).toFixed(2),
     },
     byUser,
   })
