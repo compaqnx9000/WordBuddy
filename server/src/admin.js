@@ -492,7 +492,7 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
     `,
     bounds,
   )
-  const [summary, platforms, byPlatform] = await Promise.all([
+  const [summary, platforms, byPlatform, presence, presenceUsers] = await Promise.all([
     query(
       `
       SELECT
@@ -536,8 +536,39 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
       bounds,
     ),
     countUsersByRegisterPlatform(),
+    query(
+      `
+      SELECT
+        count(DISTINCT user_id) FILTER (WHERE platform = 'ios')::int AS ios_users,
+        COALESCE(SUM(active_ms) FILTER (WHERE platform = 'ios'), 0)::bigint AS ios_ms,
+        count(DISTINCT user_id) FILTER (WHERE platform = 'android')::int AS android_users,
+        COALESCE(SUM(active_ms) FILTER (WHERE platform = 'android'), 0)::bigint AS android_ms
+      FROM app_presence_days
+      WHERE activity_date >= $1::timestamp::date
+        AND activity_date < $2::timestamp::date
+      `,
+      bounds,
+    ),
+    query(
+      `
+      SELECT u.id AS "userId", u.phone, u.nickname, p.platform,
+             SUM(p.active_ms)::bigint AS "activeMs",
+             COUNT(*)::int AS days,
+             to_char(MAX(p.updated_at) AT TIME ZONE 'Asia/Shanghai', 'MM-DD HH24:MI') AS "lastAt"
+      FROM app_presence_days p
+      JOIN users u ON u.id = p.user_id
+      WHERE p.platform IN ('ios', 'android')
+        AND p.activity_date >= $1::timestamp::date
+        AND p.activity_date < $2::timestamp::date
+      GROUP BY u.id, p.platform
+      ORDER BY MAX(p.updated_at) DESC
+      LIMIT 400
+      `,
+      bounds,
+    ),
   ])
   const row = summary.rows[0] || {}
+  const presenceRow = presence.rows[0] || {}
   res.json({
     grain: period.grain,
     at: period.at,
@@ -574,13 +605,32 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
       withdrawalsPendingFen: Number(row.withdrawals_pending_fen || 0),
       watchUsersWindow: Number(row.watch_users_window || 0),
       watchMsWindow: Number(row.watch_ms_window || 0),
+      iosDau: Number(presenceRow.ios_users || 0),
+      iosActiveMs: Number(presenceRow.ios_ms || 0),
+      androidDau: Number(presenceRow.android_users || 0),
+      androidActiveMs: Number(presenceRow.android_ms || 0),
     },
     platforms: platforms.rows.map((item) => ({
       platform: item.platform,
       users: Number(item.users || 0),
     })),
+    iosUsers: mapPresenceUsers(presenceUsers.rows, 'ios'),
+    androidUsers: mapPresenceUsers(presenceUsers.rows, 'android'),
   })
 })
+
+function mapPresenceUsers(rows, platform) {
+  return rows
+    .filter((item) => item.platform === platform)
+    .map((item) => ({
+      userId: Number(item.userId),
+      phone: item.phone || '',
+      nickname: item.nickname || '',
+      activeMs: Number(item.activeMs || 0),
+      days: Number(item.days || 0),
+      lastAt: item.lastAt || '',
+    }))
+}
 
 const CHINA_PROVINCE_DEFS = [
   ['北京市', '北京'],

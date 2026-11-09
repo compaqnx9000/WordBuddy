@@ -28,7 +28,7 @@ import {
 import { newLoginCode, sendCode, skipVerify } from './sms.js'
 import * as rateLimit from './rateLimit.js'
 import { getUserCheckIn, performUserCheckIn, performMakeupCheckIn } from './checkin.js'
-import { recordActiveMs, syncUserLevel, discountedPoints, getUserPerks } from './levels.js'
+import { recordActiveMs, recordAppPresence, syncUserLevel, discountedPoints, getUserPerks } from './levels.js'
 import { claimRewardVideo, rewardVideoStatus, verifyGromoreReward } from './rewardVideo.js'
 import { resolveIpLocation, extractDeviceInfo } from './device.js'
 import {
@@ -1277,6 +1277,7 @@ router.post('/me/activity', authRequired, async (req, res) => {
       res.status(400).json({ error: progress.error || '记录失败' })
       return
     }
+    await recordAppPresence(req.user.id, extractDeviceInfo(req).platform, progress.creditedMs)
     res.json(progress)
   } catch (error) {
     console.error('[me/activity]', error)

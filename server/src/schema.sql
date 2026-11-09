@@ -278,6 +278,18 @@ CREATE TABLE IF NOT EXISTS user_activity_days (
 CREATE INDEX IF NOT EXISTS user_activity_days_counted
     ON user_activity_days (user_id) WHERE counted;
 
+CREATE TABLE IF NOT EXISTS app_presence_days (
+    user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    activity_date DATE NOT NULL,
+    platform TEXT NOT NULL,
+    active_ms INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, activity_date, platform)
+);
+
+CREATE INDEX IF NOT EXISTS app_presence_days_date
+    ON app_presence_days (activity_date, platform);
+
 CREATE INDEX IF NOT EXISTS user_checkins_points
     ON user_checkins (total_points DESC);
 

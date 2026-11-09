@@ -809,6 +809,20 @@ function bindProvinceMap(root) {
   })
 }
 
+function iosUserRows(users, grain, emptyText) {
+  if (!users.length) return `<p class="note">${emptyText}</p>`;
+  const showDays = grain !== 'day';
+  const head = `<tr><th>用户</th><th>手机号</th><th>前台时长</th>${showDays ? '<th>天数</th>' : ''}<th>最后活跃</th></tr>`;
+  const body = users.map((u) => `<tr>
+    <td>${esc(u.nickname || ('用户 ' + u.userId))}</td>
+    <td>${esc(u.phone || '—')}</td>
+    <td>${fmtDuration(u.activeMs)}</td>
+    ${showDays ? `<td>${fmtCount(u.days)}</td>` : ''}
+    <td>${esc(u.lastAt || '—')}</td>
+  </tr>`).join('');
+  return `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
 function renderCockpit(d, mapStats, geo) {
   const points = d.points || [];
   const summary = d.summary || {};
@@ -867,6 +881,12 @@ function renderCockpit(d, mapStats, geo) {
     [`${periodWord}注销`, fmtCount(deletions)],
     ['净增', fmtCount(signups - deletions)],
     [`${periodWord}活跃`, fmtCount(summary.periodActive)],
+    ['iOS 日活', fmtCount(summary.iosDau)],
+    ['iOS 日活时长', fmtDuration(summary.iosActiveMs)],
+    ['iOS 人均时长', fmtDuration(Number(summary.iosDau) ? Math.round(Number(summary.iosActiveMs) / Number(summary.iosDau)) : 0)],
+    ['Android 日活', fmtCount(summary.androidDau)],
+    ['Android 日活时长', fmtDuration(summary.androidActiveMs)],
+    ['Android 人均时长', fmtDuration(Number(summary.androidDau) ? Math.round(Number(summary.androidActiveMs) / Number(summary.androidDau)) : 0)],
     ['冷静期中', fmtCount(summary.pendingDeletions)],
     ['历史注销', fmtCount(summary.deletedTotal)],
     ['累计观看', fmtDuration(watchMs)],
@@ -917,9 +937,19 @@ function renderCockpit(d, mapStats, geo) {
         <p class="note">所选时段内成功登录的去重用户，按设备平台。上面的 Android / iOS / PC 注册数是按首次成功登录终端累计的。</p>
         ${platforms.map((p) => `<div class="plat-row"><span>${esc(platName[p.platform] || p.platform)}</span><div class="plat-bar"><i style="width:${((Number(p.users) || 0) / platMax * 100).toFixed(1)}%"></i></div><b>${fmtCount(p.users)}</b></div>`).join('') || '<p class="note">所选时段还没有成功登录。</p>'}
       </div>
+      <div class="chart-card" style="grid-column: 1 / -1">
+        <h3>iOS 日活用户</h3>
+        <p class="note">所选时段里打开过已登录 iOS App 的用户。时长是前台停留时间，最后活跃按北京时间。</p>
+        ${iosUserRows(d.iosUsers || [], state.cockpitGrain, '这个时段还没有 iOS 日活。用户打开已登录的 App 并在前台停留后会出现在这里。')}
+      </div>
+      <div class="chart-card" style="grid-column: 1 / -1">
+        <h3>Android 日活用户</h3>
+        <p class="note">所选时段里打开过已登录 Android App 的用户。时长是前台停留时间，最后活跃按北京时间。</p>
+        ${iosUserRows(d.androidUsers || [], state.cockpitGrain, '这个时段还没有 Android 日活。用户打开已登录的 App 并在前台停留后会出现在这里。')}
+      </div>
       <div class="chart-card">
         <h3>怎么读这些数</h3>
-        <p class="note">先选按天 / 按月 / 按年，再选具体日期、月份或年份。图表分别按小时、按天、按月展开。PC 含网页版与 Windows / macOS。待处理提现 ${fmtCount((Number(summary.withdrawalsPendingFen) || 0) / 100)} 元还在审核。</p>
+        <p class="note">先选按天 / 按月 / 按年，再选具体日期、月份或年份。图表分别按小时、按天、按月展开。iOS 和 Android 日活都是当天至少打开一次已登录 App 的用户，日活时长是这些用户的前台停留时间。上面的「活跃」仍是成功登录人数。PC 含网页版与 Windows / macOS。待处理提现 ${fmtCount((Number(summary.withdrawalsPendingFen) || 0) / 100)} 元还在审核。</p>
       </div>
     </div>`;
 }

@@ -67,6 +67,7 @@ final class AppModel: ObservableObject {
     @Published var biometricLogin = false
     @Published var biometricUnlocked = false
     private var activityTask: Task<Void, Never>?
+    private var activitySliceStartedAt: Date?
     @Published var defaultNotebookId: Int64 = 0
     @Published var mnemonicRevision = 0
     @Published var avatarImage: UIImage?
@@ -344,11 +345,15 @@ final class AppModel: ObservableObject {
 
     func startActivityTracking() {
         guard activityTask == nil else { return }
+        activitySliceStartedAt = Date()
+        Task { [weak self] in
+            await self?.reportActiveUse(activeMs: 0)
+        }
         activityTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
                 if Task.isCancelled { return }
-                await self?.reportActiveUse(activeMs: 30_000)
+                await self?.reportActiveSlice(fallbackMs: 30_000)
             }
         }
     }
@@ -356,6 +361,22 @@ final class AppModel: ObservableObject {
     func stopActivityTracking() {
         activityTask?.cancel()
         activityTask = nil
+        let started = activitySliceStartedAt
+        activitySliceStartedAt = nil
+        guard let started else { return }
+        let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+        guard elapsed > 0 else { return }
+        Task { [weak self] in
+            await self?.reportActiveUse(activeMs: min(elapsed, 90_000))
+        }
+    }
+
+    private func reportActiveSlice(fallbackMs: Int) async {
+        let started = activitySliceStartedAt ?? Date()
+        activitySliceStartedAt = Date()
+        let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+        let ms = min(max(elapsed, 0), 90_000)
+        await reportActiveUse(activeMs: ms > 0 ? ms : fallbackMs)
     }
 
     func reportActiveUse(activeMs: Int) async {
@@ -837,16 +858,25 @@ final class AppModel: ObservableObject {
 
     private func claimRewardVideo() async {
         guard let session else { return }
-        do {
-            let claim = try await api.claimRewardVideo(token: session.token)
-            rewardVideo = claim.offer
-            if claim.offer.totalPoints > 0 {
-                checkIn.totalPoints = claim.offer.totalPoints
-            }
-            banner = "获得 \(claim.points) 搭币，今日剩余 \(claim.offer.remaining)/\(claim.offer.dailyLimit)"
-        } catch {
-            if !noteSessionError(error) {
-                banner = error.localizedDescription
+        for attempt in 0..<8 {
+            do {
+                let claim = try await api.claimRewardVideo(token: session.token)
+                rewardVideo = claim.offer
+                if claim.offer.totalPoints > 0 {
+                    checkIn.totalPoints = claim.offer.totalPoints
+                }
+                banner = "获得 \(claim.points) 搭币，今日剩余 \(claim.offer.remaining)/\(claim.offer.dailyLimit)"
+                return
+            } catch {
+                let message = (error as? APIError)?.message ?? error.localizedDescription
+                if message.contains("还没有收到这次视频的奖励确认"), attempt < 7 {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    continue
+                }
+                if !noteSessionError(error) {
+                    banner = message
+                }
+                return
             }
         }
     }

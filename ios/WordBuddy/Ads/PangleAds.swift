@@ -247,6 +247,11 @@ final class RewardPresenter: NSObject, BUNativeExpressRewardedVideoAdDelegate {
             completion(.failed("广告暂未填充"))
             return
         }
+        let accountId = userId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let numericId = Int(accountId), numericId > 0 else {
+            completion(.failed("请先登录"))
+            return
+        }
         guard let host = UIApplication.shared.topViewController else {
             completion(.failed("广告暂未填充"))
             return
@@ -258,9 +263,9 @@ final class RewardPresenter: NSObject, BUNativeExpressRewardedVideoAdDelegate {
         shown = false
         presented = false
         let model = BURewardedVideoModel()
-        model.userId = userId ?? "0"
+        model.userId = String(numericId)
         model.rewardName = "搭币"
-        model.rewardAmount = 1
+        model.rewardAmount = 200
         let ad = BUNativeExpressRewardedVideoAd(slotID: PangleSlot.reward, rewardedVideoModel: model)
         ad.delegate = self
         self.ad = ad

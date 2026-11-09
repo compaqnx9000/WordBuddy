@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -464,9 +465,19 @@ fun HotWordsRoot(
         val userId = session?.userId ?: return@LaunchedEffect
         if (userId <= 0L || needsBiometricUnlock) return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            while (true) {
-                delay(30_000)
-                viewModel.reportActiveUse(30_000)
+            var sliceStarted = SystemClock.elapsedRealtime()
+            viewModel.reportActiveUse(0)
+            try {
+                while (true) {
+                    delay(30_000)
+                    val now = SystemClock.elapsedRealtime()
+                    val elapsed = (now - sliceStarted).toInt().coerceIn(1, 90_000)
+                    sliceStarted = now
+                    viewModel.reportActiveUse(elapsed)
+                }
+            } finally {
+                val elapsed = (SystemClock.elapsedRealtime() - sliceStarted).toInt()
+                if (elapsed > 0) viewModel.reportActiveUse(elapsed.coerceAtMost(90_000))
             }
         }
     }

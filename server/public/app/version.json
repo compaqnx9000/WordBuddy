@@ -1,8 +1,8 @@
 {
-  "versionCode": 211,
-  "versionName": "2.20",
+  "versionCode": 212,
+  "versionName": "2.21",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "激励视频会把当前账号带给穿山甲，方便按用户统计观看次数。",
-  "releasedAt": "2026-11-08T02:20:00.000Z"
+  "notes": "打开 App 会记入日活，前台停留时间会统计到后台。",
+  "releasedAt": "2026-11-09T14:46:00.000Z"
 }

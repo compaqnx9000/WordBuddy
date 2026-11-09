@@ -171,34 +171,26 @@ export async function claimRewardVideo(userId) {
       await client.query('SELECT value FROM app_settings WHERE key = $1', [GROMORE_KEY])
     ).rows[0]
     if (String(keyRow?.value || '').trim()) {
-      const seen = (
+      const consumed = (
         await client.query(
-          'SELECT 1 FROM reward_video_callbacks WHERE user_id = $1 LIMIT 1',
+          `UPDATE reward_video_callbacks
+           SET consumed_at = now()
+           WHERE id = (
+             SELECT id FROM reward_video_callbacks
+             WHERE user_id = $1 AND reward_allowed AND consumed_at IS NULL
+               AND created_at > now() - interval '30 minutes'
+             ORDER BY id
+             LIMIT 1
+             FOR UPDATE SKIP LOCKED
+           )
+           RETURNING id`,
           [userId],
         )
       ).rows[0]
-      if (seen) {
-        const consumed = (
-          await client.query(
-            `UPDATE reward_video_callbacks
-             SET consumed_at = now()
-             WHERE id = (
-               SELECT id FROM reward_video_callbacks
-               WHERE user_id = $1 AND reward_allowed AND consumed_at IS NULL
-                 AND created_at > now() - interval '30 minutes'
-               ORDER BY id
-               LIMIT 1
-               FOR UPDATE SKIP LOCKED
-             )
-             RETURNING id`,
-            [userId],
-          )
-        ).rows[0]
-        if (!consumed) {
-          await client.query('ROLLBACK')
-          const status = await rewardVideoStatus(userId)
-          return { ok: false, error: '还没有收到这次视频的奖励确认', status }
-        }
+      if (!consumed) {
+        await client.query('ROLLBACK')
+        const status = await rewardVideoStatus(userId)
+        return { ok: false, error: '还没有收到这次视频的奖励确认', status }
       }
     }
     const pointsRow = (
@@ -301,6 +293,19 @@ export async function verifyGromoreReward(params) {
     : null
   // 旧版客户端把 user_id 固定成 wordbuddy。签名有效就放行，但不记到某个用户名下。
   if (!user) return { is_verify: true, reason: 0 }
+
+  // 同一次 iOS 观看会先由 GroMore 广告位回调，几十秒内代码位再回调一次，trans_id 不同。
+  // 间隔 30 秒，下一次真正的观看不会落在这 40 秒里。
+  const recent = (
+    await query(
+      `SELECT reward_allowed FROM reward_video_callbacks
+       WHERE user_id = $1 AND created_at > now() - interval '40 seconds'
+       ORDER BY id DESC
+       LIMIT 1`,
+      [userId],
+    )
+  ).rows[0]
+  if (recent) return { is_verify: Boolean(recent.reward_allowed), reason: 0 }
 
   const amount = Number(params.reward_amount)
   const status = await rewardVideoStatus(userId)

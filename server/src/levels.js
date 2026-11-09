@@ -256,6 +256,7 @@ export async function recordActiveMs(userId, activeMs) {
   const client = await pool.connect()
   let activeMsToday = 0
   let countedToday = false
+  let creditedMs = 0
   try {
     await client.query('BEGIN')
     const row = (
@@ -272,6 +273,7 @@ export async function recordActiveMs(userId, activeMs) {
       const elapsed = Math.max(0, Date.now() - new Date(row.updated_at).getTime())
       credit = Math.min(credit, elapsed)
     }
+    creditedMs = credit
     activeMsToday = Math.min(24 * 60 * 60 * 1000, Number(row?.active_ms || 0) + credit)
     countedToday = Boolean(row?.counted) || activeMsToday >= threshold
     await client.query(
@@ -300,5 +302,29 @@ export async function recordActiveMs(userId, activeMs) {
     ...perk,
     activeMsToday,
     countedToday,
+    creditedMs,
   }
+}
+
+function presencePlatform(value) {
+  const platform = String(value || '').trim().toLowerCase()
+  if (platform === 'ios' || platform === 'android') return platform
+  if (['web', 'windows', 'macos', 'mac os', 'linux', 'pc'].includes(platform)) return 'pc'
+  return 'unknown'
+}
+
+/** One row per user, day, and platform. A row means they opened the app that day. */
+export async function recordAppPresence(userId, platform, activeMs) {
+  const uid = Number(userId)
+  if (!Number.isFinite(uid) || uid <= 0) return
+  const bucket = presencePlatform(platform)
+  const credit = Math.min(24 * 60 * 60 * 1000, Math.max(0, Math.trunc(Number(activeMs) || 0)))
+  await query(
+    `INSERT INTO app_presence_days (user_id, activity_date, platform, active_ms, updated_at)
+     VALUES ($1, $2::date, $3, $4, now())
+     ON CONFLICT (user_id, activity_date, platform) DO UPDATE SET
+       active_ms = LEAST(86400000, app_presence_days.active_ms + EXCLUDED.active_ms),
+       updated_at = now()`,
+    [uid, todayShanghai(), bucket, credit],
+  )
 }
