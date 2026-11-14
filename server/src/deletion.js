@@ -1,7 +1,4 @@
 import { createHash } from 'node:crypto'
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { query } from './db.js'
 
 export const DELETION_COOLDOWN_DAYS = 7
@@ -11,7 +8,6 @@ export const ACCOUNT_DELETED_MESSAGE = '账号已注销'
 const SECURITY_DAYS = 30
 const PENDING_ORDER_STATUSES = ['pending_ship', 'pending_cash']
 const PENDING_WITHDRAW_STATUSES = ['pending']
-const uploadsRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../uploads')
 
 function fail(status, message, code = null) {
   const error = new Error(message)
@@ -30,8 +26,83 @@ export function maskPhone(phone) {
   return `${digits.slice(0, 3)}****${digits.slice(-4)}`
 }
 
-function hashPhone(phone) {
+export function phoneHash(phone) {
   return createHash('sha256').update(String(phone || '')).digest('hex')
+}
+
+function hashPhone(phone) {
+  return phoneHash(phone)
+}
+
+/** True when this phone already finished 注销, including accounts removed before soft-close. */
+export async function phoneHasClosedAccount(phone, exceptUserId = null) {
+  const normalized = String(phone || '').trim()
+  if (!normalized) return false
+  const except = Number(exceptUserId)
+  const exceptId = Number.isFinite(except) && except > 0 ? except : null
+  const marked = await query(
+    `SELECT 1 FROM users
+     WHERE phone = $1 AND deleted_at IS NOT NULL
+       AND ($2::bigint IS NULL OR id <> $2)
+     LIMIT 1`,
+    [normalized, exceptId],
+  )
+  if (marked.rowCount > 0) return true
+  const logged = await query(
+    `SELECT 1 FROM account_deletion_logs
+     WHERE phone_hash = $1
+       AND ($2::bigint IS NULL OR user_id IS DISTINCT FROM $2)
+     LIMIT 1`,
+    [hashPhone(normalized), exceptId],
+  )
+  return logged.rowCount > 0
+}
+
+/** Same person coming back by phone, WeChat, Apple, or Alipay is not a new user. */
+export async function shouldSkipNewUserRewards({
+  phone,
+  wechatOpenid,
+  appleUserId,
+  alipayAccount,
+} = {}) {
+  if (await phoneHasClosedAccount(phone)) return true
+  const identities = [
+    ['wechat_openid', wechatOpenid],
+    ['apple_user_id', appleUserId],
+    ['alipay_account', alipayAccount],
+  ]
+  for (const [column, value] of identities) {
+    const identity = String(value || '').trim()
+    if (!identity) continue
+    const hit = await query(
+      `SELECT 1 FROM users WHERE ${column} = $1 AND deleted_at IS NOT NULL LIMIT 1`,
+      [identity],
+    )
+    if (hit.rowCount > 0) return true
+  }
+  return false
+}
+
+function bucketPlatform(raw) {
+  const value = String(raw || '').trim().toLowerCase()
+  if (value === 'android') return 'android'
+  if (value === 'ios') return 'ios'
+  if (['web', 'windows', 'macos', 'mac os', 'linux', 'pc'].includes(value)) return 'pc'
+  return 'unknown'
+}
+
+async function registerPlatformForUser(userId, fallback) {
+  const row = (
+    await query(
+      `SELECT lower(trim(COALESCE(device_platform, ''))) AS platform
+       FROM login_events
+       WHERE success = TRUE AND user_id = $1
+       ORDER BY created_at ASC, id ASC
+       LIMIT 1`,
+      [userId],
+    )
+  ).rows[0]
+  return bucketPlatform(row?.platform || fallback)
 }
 
 export function formatShanghai(value) {
@@ -56,7 +127,7 @@ function isDue(dueAt) {
 export async function getDeletionRow(userId) {
   return (
     await query(
-      `SELECT id, phone, deletion_requested_at, deletion_due_at, deletion_reason, phone_changed_at
+      `SELECT id, phone, deletion_requested_at, deletion_due_at, deletion_reason, phone_changed_at, deleted_at
        FROM users WHERE id = $1`,
       [userId],
     )
@@ -160,7 +231,7 @@ export async function evaluateDeletionConditions(userId) {
 export async function getDeletionStatus(userId) {
   const row = await getDeletionRow(userId)
   if (!row) throw fail(404, '用户不存在')
-  if (isDue(row.deletion_due_at)) {
+  if (row.deleted_at || isDue(row.deletion_due_at)) {
     await finalizeDueAccountById(userId)
     throw fail(401, ACCOUNT_DELETED_MESSAGE, ACCOUNT_DELETED_CODE)
   }
@@ -180,7 +251,7 @@ export async function getDeletionStatus(userId) {
 export async function assertNotDeleting(userId) {
   const row = await getDeletionRow(userId)
   if (!row) throw fail(404, '用户不存在')
-  if (isDue(row.deletion_due_at)) {
+  if (row.deleted_at || isDue(row.deletion_due_at)) {
     await finalizeDueAccountById(userId)
     throw fail(401, ACCOUNT_DELETED_MESSAGE, ACCOUNT_DELETED_CODE)
   }
@@ -250,7 +321,7 @@ export async function requestAccountDeletion(userId, { reason, force = false } =
 export async function cancelAccountDeletion(userId) {
   const row = await getDeletionRow(userId)
   if (!row) throw fail(404, '用户不存在')
-  if (isDue(row.deletion_due_at)) {
+  if (row.deleted_at || isDue(row.deletion_due_at)) {
     await finalizeDueAccountById(userId)
     throw fail(401, ACCOUNT_DELETED_MESSAGE, ACCOUNT_DELETED_CODE)
   }
@@ -265,10 +336,11 @@ export async function cancelAccountDeletion(userId) {
 }
 
 async function writeDeletionLog(row, completedReason) {
+  const platform = await registerPlatformForUser(row.id, row.last_device_platform)
   await query(
     `INSERT INTO account_deletion_logs
-       (user_id, phone_masked, phone_hash, reason, requested_at, due_at, completed_at, completed_reason)
-     VALUES ($1, $2, $3, $4, $5, $6, now(), $7)`,
+       (user_id, phone_masked, phone_hash, reason, requested_at, due_at, completed_at, completed_reason, platform)
+     VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8)`,
     [
       row.id,
       maskPhone(row.phone),
@@ -277,44 +349,64 @@ async function writeDeletionLog(row, completedReason) {
       row.deletion_requested_at,
       row.deletion_due_at,
       completedReason,
+      platform,
     ],
   )
 }
 
-async function removeAvatarFile(userId) {
-  const file = path.join(uploadsRoot, 'avatars', `${userId}.jpg`)
-  try {
-    fs.unlinkSync(file)
-  } catch {
-    // already gone
-  }
+export async function recordAccountDeletion(userId, completedReason) {
+  const row = (
+    await query(
+      `SELECT id, phone, deletion_requested_at, deletion_due_at, deletion_reason, last_device_platform
+       FROM users WHERE id = $1`,
+      [userId],
+    )
+  ).rows[0]
+  if (!row) return
+  await writeDeletionLog(row, completedReason)
+}
+
+async function markUserClosed(userId, reason = null) {
+  await query(
+    `UPDATE users
+     SET deleted_at = COALESCE(deleted_at, now()),
+         deletion_requested_at = COALESCE(deletion_requested_at, now()),
+         deletion_due_at = COALESCE(deletion_due_at, now()),
+         deletion_reason = COALESCE($2, deletion_reason),
+         session_version = COALESCE(session_version, 0) + 1,
+         session_desktop = COALESCE(session_desktop, 0) + 1,
+         session_mobile = COALESCE(session_mobile, 0) + 1
+     WHERE id = $1 AND deleted_at IS NULL`,
+    [userId, reason],
+  )
 }
 
 export async function finalizeDueAccountById(userId) {
   const row = (
     await query(
-      `SELECT id, phone, deletion_requested_at, deletion_due_at, deletion_reason
+      `SELECT id, phone, deletion_requested_at, deletion_due_at, deletion_reason, last_device_platform, deleted_at
        FROM users WHERE id = $1`,
       [userId],
     )
   ).rows[0]
   if (!row) return { deleted: false }
+  if (row.deleted_at) return { deleted: true, already: true }
   if (!isDue(row.deletion_due_at)) return { deleted: false }
   await writeDeletionLog(row, 'cooldown_elapsed')
-  await removeAvatarFile(row.id)
-  await query('DELETE FROM users WHERE id = $1', [row.id])
-  return { deleted: true }
+  await markUserClosed(row.id, row.deletion_reason)
+  return { deleted: true, kept: true }
 }
 
 export async function finalizeForceAccountById(userId, reason = null) {
   const row = (
     await query(
-      `SELECT id, phone, deletion_requested_at, deletion_due_at, deletion_reason
+      `SELECT id, phone, deletion_requested_at, deletion_due_at, deletion_reason, last_device_platform, deleted_at
        FROM users WHERE id = $1`,
       [userId],
     )
   ).rows[0]
   if (!row) throw fail(404, '用户不存在')
+  if (row.deleted_at) return { deleted: true, already: true, immediate: true }
   const stamped = {
     ...row,
     deletion_requested_at: row.deletion_requested_at || new Date(),
@@ -322,16 +414,16 @@ export async function finalizeForceAccountById(userId, reason = null) {
     deletion_reason: reason || row.deletion_reason || '强行注销',
   }
   await writeDeletionLog(stamped, 'force_immediate')
-  await removeAvatarFile(row.id)
-  await query('DELETE FROM users WHERE id = $1', [row.id])
-  return { deleted: true, immediate: true }
+  await markUserClosed(row.id, stamped.deletion_reason)
+  return { deleted: true, kept: true, immediate: true }
 }
 
 export async function finalizeDueAccountByPhone(phone) {
   const row = (
     await query(
       `SELECT id FROM users
-       WHERE phone = $1 AND deletion_due_at IS NOT NULL AND deletion_due_at <= now()
+       WHERE phone = $1 AND deleted_at IS NULL
+         AND deletion_due_at IS NOT NULL AND deletion_due_at <= now()
        LIMIT 1`,
       [phone],
     )
@@ -343,7 +435,8 @@ export async function finalizeDueAccountByPhone(phone) {
 export async function purgeDueDeletions(limit = 50) {
   const due = await query(
     `SELECT id FROM users
-     WHERE deletion_due_at IS NOT NULL AND deletion_due_at <= now()
+     WHERE deleted_at IS NULL
+       AND deletion_due_at IS NOT NULL AND deletion_due_at <= now()
      ORDER BY deletion_due_at ASC
      LIMIT $1`,
     [limit],

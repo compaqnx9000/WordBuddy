@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
-    phone TEXT UNIQUE,
+    phone TEXT,
     password_hash TEXT,
     last_login_at TIMESTAMPTZ,
     last_login_method TEXT,
@@ -34,21 +34,28 @@ CREATE TABLE IF NOT EXISTS users (
     deletion_requested_at TIMESTAMPTZ,
     deletion_due_at TIMESTAMPTZ,
     deletion_reason TEXT,
+    deleted_at TIMESTAMPTZ,
     image_credits INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_phone_active
+    ON users (phone) WHERE phone IS NOT NULL AND deleted_at IS NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_buddy_id_unique
     ON users (buddy_id) WHERE buddy_id IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_wechat_openid_unique
-    ON users (wechat_openid) WHERE wechat_openid IS NOT NULL;
+    ON users (wechat_openid) WHERE wechat_openid IS NOT NULL AND deleted_at IS NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_apple_user_id_unique
-    ON users (apple_user_id) WHERE apple_user_id IS NOT NULL;
+    ON users (apple_user_id) WHERE apple_user_id IS NOT NULL AND deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS users_deletion_due
-    ON users (deletion_due_at) WHERE deletion_due_at IS NOT NULL;
+    ON users (deletion_due_at) WHERE deletion_due_at IS NOT NULL AND deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS users_deleted_at
+    ON users (deleted_at DESC) WHERE deleted_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS account_deletion_logs (
     id BIGSERIAL PRIMARY KEY,
@@ -59,7 +66,8 @@ CREATE TABLE IF NOT EXISTS account_deletion_logs (
     requested_at TIMESTAMPTZ,
     due_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    completed_reason TEXT
+    completed_reason TEXT,
+    platform TEXT
 );
 
 CREATE INDEX IF NOT EXISTS account_deletion_logs_completed
@@ -86,6 +94,7 @@ CREATE TABLE IF NOT EXISTS notebooks (
     sort_order INTEGER NOT NULL DEFAULT 0,
     published BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT notebooks_kind_shape CHECK (
         (kind = 'catalog' AND slug IS NOT NULL AND owner_user_id IS NULL)
         OR

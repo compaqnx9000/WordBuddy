@@ -39,8 +39,8 @@ android {
         applicationId = "com.hotgis.wordbuddy"
         minSdk = 26
         targetSdk = 34
-        versionCode = 212
-        versionName = "2.21"
+        versionCode = 217
+        versionName = "2.26"
         ndk {
             // Pangle AAR only ships armeabi-v7a / arm64-v8a (no x86_64).
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")
@@ -140,6 +140,15 @@ dependencies {
     implementation(libs.pangle.mediation.sigmob.adapter)
     implementation(libs.sigmob.wind.sdk)
     implementation(libs.sigmob.wind.common)
+    // GroMore 第三方 ADN：百度。adapter 不传递 SDK，需要单独引入。
+    implementation(libs.pangle.mediation.baidu.adapter)
+    implementation(libs.baidu.mobads)
+    // GroMore 第三方 ADN：快手。adapter 不传递 SDK，SDK 用平台包 kssdk-ad-5.7.20.1.aar。
+    implementation(libs.pangle.mediation.ks.adapter)
+    implementation(files("libs/kssdk-ad-5.7.20.1.aar"))
+    // GroMore 第三方 ADN：优量汇。adapter 不传递 SDK，需要单独引入 union。
+    implementation(libs.pangle.mediation.gdt.adapter)
+    implementation(libs.gdt.union)
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.zxing:core:3.5.3")

@@ -46,6 +46,8 @@
 		<string>weixinURLParamsAPI</string>
 		<string>alipay</string>
 		<string>alipays</string>
+		<string>kwai</string>
+		<string>ksnebula</string>
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
@@ -76,6 +78,13 @@
 		<key>UIColorName</key>
 		<string>LaunchBackground</string>
 	</dict>
+	<key>SKAdNetworkItems</key>
+	<array>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>f7s53z58qe.skadnetwork</string>
+		</dict>
+	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

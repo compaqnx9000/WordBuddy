@@ -312,7 +312,7 @@ export async function performUserCheckIn(userId, today = todayShanghai()) {
  * Makeup a missed past day after watching a rewarded video.
  * @returns {{ ok: true, pointsEarned, state } | { ok: false, error, state? }}
  */
-export async function performMakeupCheckIn(userId, dateYmd, today = todayShanghai()) {
+export async function performMakeupCheckIn(userId, dateYmd, today = todayShanghai(), options = {}) {
   const date = dateString(dateYmd)
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return { ok: false, error: '补签日期无效' }
@@ -353,24 +353,55 @@ export async function performMakeupCheckIn(userId, dateYmd, today = todayShangha
       return { ok: false, already: true, error: '该日已签到', state }
     }
 
-    const perks = await getUserPerks(userId)
-    const madeToday = (
-      await client.query(
-        `SELECT count(*)::int AS n
-         FROM user_checkin_logs
-         WHERE user_id = $1
-           AND checkin_date < $2::date
-           AND (created_at AT TIME ZONE 'Asia/Shanghai')::date = $2::date`,
-        [userId, today],
-      )
-    ).rows[0]
-    if (Number(madeToday?.n || 0) >= perks.makeupPerDay) {
-      await client.query('ROLLBACK')
-      const state = await getUserCheckIn(userId, today)
-      return {
-        ok: false,
-        error: `今天最多补签 ${perks.makeupPerDay} 次`,
-        state,
+    // 当月补签看广告：不占「看视频」每日次数，也不受每天补签次数限制。
+    // 签名通过的回调即可发搭币并写入这一天的补签记录。
+    if (options.awaitCallback) {
+      const keyRow = (
+        await client.query('SELECT value FROM app_settings WHERE key = $1', ['gromore_reward_security_key'])
+      ).rows[0]
+      if (String(keyRow?.value || '').trim()) {
+        const consumed = (
+          await client.query(
+            `UPDATE reward_video_callbacks
+             SET consumed_at = now()
+             WHERE id = (
+               SELECT id FROM reward_video_callbacks
+               WHERE user_id = $1
+                 AND consumed_at IS NULL
+                 AND created_at > now() - interval '3 minutes'
+               ORDER BY id DESC
+               LIMIT 1
+               FOR UPDATE SKIP LOCKED
+             )
+             RETURNING id`,
+            [userId],
+          )
+        ).rows[0]
+        if (!consumed) {
+          await client.query('ROLLBACK')
+          return { ok: false, pending: true }
+        }
+      }
+    } else {
+      const perks = await getUserPerks(userId)
+      const madeToday = (
+        await client.query(
+          `SELECT count(*)::int AS n
+           FROM user_checkin_logs
+           WHERE user_id = $1
+             AND checkin_date < $2::date
+             AND (created_at AT TIME ZONE 'Asia/Shanghai')::date = $2::date`,
+          [userId, today],
+        )
+      ).rows[0]
+      if (Number(madeToday?.n || 0) >= perks.makeupPerDay) {
+        await client.query('ROLLBACK')
+        const state = await getUserCheckIn(userId, today)
+        return {
+          ok: false,
+          error: `今天最多补签 ${perks.makeupPerDay} 次`,
+          state,
+        }
       }
     }
 

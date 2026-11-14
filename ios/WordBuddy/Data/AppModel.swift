@@ -791,14 +791,35 @@ final class AppModel: ObservableObject {
         rewardBusy = true
         let result = await PangleAds.shared.showReward(userId: session.map { String($0.userId) })
         switch result {
-        case .rewarded:
-            await makeupCheckIn(date: date)
-        case .skipped:
-            banner = "需看完广告才能补签"
         case .failed(let message):
             banner = message
+        case .rewarded, .skipped:
+            await confirmMakeup(date: date)
         }
         rewardBusy = false
+    }
+
+    /// 补签以服务器广告回调为准。本地 SDK 报跳过时仍等回调，到了就发搭币并记成已补签。
+    private func confirmMakeup(date: String) async {
+        guard session != nil else {
+            openLogin()
+            return
+        }
+        for attempt in 0..<10 {
+            do {
+                try await makeupCheckIn(date: date)
+                return
+            } catch is MakeupCallbackPending {
+                if attempt < 9 {
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    continue
+                }
+                banner = "需看完广告才能补签"
+                return
+            } catch {
+                return
+            }
+        }
     }
 
     func watchRewardVideo() async {
@@ -811,7 +832,7 @@ final class AppModel: ObservableObject {
             return
         }
         if rewardCooldownLeft > 0 {
-            banner = "看视频领搭币需间隔 \(formatRewardCooldown(rewardVideo.cooldownSec))，请再等 \(formatRewardCooldown(rewardCooldownLeft))"
+            banner = "看广告领搭币需间隔 \(formatRewardCooldown(rewardVideo.cooldownSec))，请再等 \(formatRewardCooldown(rewardCooldownLeft))"
             return
         }
         guard !rewardBusy else { return }
@@ -881,7 +902,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func makeupCheckIn(date: String) async {
+    func makeupCheckIn(date: String) async throws {
         guard let session else {
             openLogin()
             return
@@ -890,6 +911,8 @@ final class AppModel: ObservableObject {
             let outcome = try await api.makeupCheckIn(token: session.token, date: date)
             checkIn = outcome.state
             banner = outcome.already ? "该日已经签到过了" : "已补签 \(date)，+\(outcome.pointsEarned) 搭币"
+        } catch is MakeupCallbackPending {
+            throw MakeupCallbackPending()
         } catch {
             if !noteSessionError(error) {
                 banner = error.localizedDescription

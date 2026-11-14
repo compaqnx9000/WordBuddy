@@ -1,4 +1,5 @@
 import { pool, query } from './db.js'
+import { phoneHasClosedAccount } from './deletion.js'
 
 /** Defaults when app_settings has no override. */
 export const INVITE_REWARD_DEFAULT = 3000
@@ -70,7 +71,7 @@ export async function findUserByBuddyId(buddyId) {
     await query(
       `SELECT id, phone, buddy_id, nickname, avatar_url
        FROM users
-       WHERE lower(btrim(buddy_id)) = $1
+       WHERE deleted_at IS NULL AND lower(btrim(buddy_id)) = $1
        LIMIT 1`,
       [code],
     )
@@ -85,6 +86,13 @@ export async function findUserByBuddyId(buddyId) {
 export async function bindInviteCode(userId, inviteCodeRaw) {
   const code = normalizeInviteCode(inviteCodeRaw)
   if (!code) return { ok: false, error: '请输入邀请码' }
+  const owner = (
+    await query(`SELECT id, phone, deleted_at FROM users WHERE id = $1`, [userId])
+  ).rows[0]
+  if (!owner || owner.deleted_at) return { ok: false, error: '账号已注销' }
+  if (owner.phone && (await phoneHasClosedAccount(owner.phone, owner.id))) {
+    return { ok: false, error: '该手机号注销过，不能领取新用户奖励' }
+  }
 
   const client = await pool.connect()
   try {
@@ -106,7 +114,9 @@ export async function bindInviteCode(userId, inviteCodeRaw) {
 
     const inviter = (
       await client.query(
-        `SELECT id, buddy_id FROM users WHERE lower(btrim(buddy_id)) = $1 FOR UPDATE`,
+        `SELECT id, buddy_id FROM users
+         WHERE deleted_at IS NULL AND lower(btrim(buddy_id)) = $1
+         FOR UPDATE`,
         [code],
       )
     ).rows[0]

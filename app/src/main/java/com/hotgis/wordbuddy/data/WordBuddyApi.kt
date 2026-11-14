@@ -633,9 +633,10 @@ class WordBuddyApi {
             "POST",
             "/me/checkin/makeup",
             auth = token,
-            body = JSONObject().put("date", date),
+            body = JSONObject().put("date", date).put("awaitCallback", true),
         )
         if (!root.optBoolean("ok", false)) {
+            if (root.optBoolean("pending", false)) return@withContext CheckInResult.Pending
             if (root.optBoolean("already", false)) return@withContext CheckInResult.AlreadyCheckedIn
             throw IllegalStateException(root.optString("error").ifBlank { "补签失败" })
         }

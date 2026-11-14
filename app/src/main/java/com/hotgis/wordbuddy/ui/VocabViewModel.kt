@@ -9,7 +9,6 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.hotgis.wordbuddy.LauncherIcons
 import com.hotgis.wordbuddy.audio.TtsPlayer
 import com.hotgis.wordbuddy.data.BuiltInWordbookSeeder
 import com.hotgis.wordbuddy.data.DictionaryClient
@@ -282,7 +281,6 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         if (session != null) {
             accountStore.upsert(session)
             refreshRememberedAccounts()
-            LauncherIcons.apply(getApplication(), session.level)
             loadAvatarBitmap()
             if (session.phone.isBlank()) {
                 _login.value = LoginUi(
@@ -293,7 +291,6 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             }
             viewModelScope.launch { bootstrapSession() }
         } else {
-            LauncherIcons.applyDefault(getApplication())
             viewModelScope.launch { bootstrapGuestCatalogs() }
         }
         viewModelScope.launch {
@@ -334,7 +331,6 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     if (merged != current) {
                         sessionStore.save(merged)
                         _session.value = merged
-                        LauncherIcons.apply(getApplication(), merged.level)
                     }
                 }
         }
@@ -352,7 +348,6 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                     val merged = current.copy(level = level)
                     sessionStore.save(merged)
                     _session.value = merged
-                    LauncherIcons.apply(getApplication(), merged.level)
                 }
         }
     }
@@ -2897,22 +2892,32 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            runCatching { api.makeupCheckIn(token, date) }
-                .onSuccess { result ->
-                    runCatching { api.fetchCheckIn(token) }
-                        .onSuccess { remote ->
-                            checkInStore.applyRemoteRaw(
-                                totalPoints = remote.totalPoints,
-                                streakDays = remote.streakDays,
-                                lastCheckInDate = remote.lastCheckInDate,
-                            )
-                            _checkIn.value = remote
-                        }
-                    onResult(result)
+            var result: CheckInResult = CheckInResult.Pending
+            var errorMessage = "补签失败，请稍后重试"
+            for (attempt in 0 until 10) {
+                val outcome = runCatching { api.makeupCheckIn(token, date) }
+                result = outcome.getOrElse {
+                    errorMessage = it.message ?: errorMessage
+                    CheckInResult.Failed(errorMessage)
                 }
-                .onFailure { error ->
-                    onResult(CheckInResult.Failed(error.message ?: "补签失败，请稍后重试"))
-                }
+                if (result !is CheckInResult.Pending) break
+                if (attempt < 9) kotlinx.coroutines.delay(800)
+            }
+            if (result is CheckInResult.Pending) {
+                result = CheckInResult.Failed("需看完广告才能补签")
+            }
+            if (result is CheckInResult.Success || result is CheckInResult.AlreadyCheckedIn) {
+                runCatching { api.fetchCheckIn(token) }
+                    .onSuccess { remote ->
+                        checkInStore.applyRemoteRaw(
+                            totalPoints = remote.totalPoints,
+                            streakDays = remote.streakDays,
+                            lastCheckInDate = remote.lastCheckInDate,
+                        )
+                        _checkIn.value = remote
+                    }
+            }
+            onResult(result)
         }
     }
 
@@ -3426,7 +3431,6 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         _session.value = session
         accountStore.upsert(session)
         refreshRememberedAccounts()
-        LauncherIcons.apply(getApplication(), session.level)
         val sceneOwner = settingsStore.loadStudySceneUserId()
         val scene = settingsStore.loadStudyScene()
             ?.takeIf { sceneOwner == session.userId || sceneOwner == 0L }
@@ -3540,7 +3544,6 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         _rewardVideo.value = RewardVideoOffer()
         _avatarBitmap.value = null
         _avatarBusy.value = false
-        LauncherIcons.applyDefault(getApplication())
         repo.wipeCache()
         headsReady.clear()
         headsCache.clear()
@@ -3628,7 +3631,6 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
                 updateSettings { it.copy(displayName = name) }
             }
         }
-        LauncherIcons.apply(getApplication(), merged.level)
         loadAvatarBitmap()
         refreshCheckIn()
     }
@@ -3872,7 +3874,6 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         remote.nickname?.trim()?.takeIf { it.isNotEmpty() }?.let { name ->
             updateSettings { it.copy(displayName = name) }
         }
-        LauncherIcons.apply(getApplication(), merged.level)
     }
 
     private fun loadAvatarBitmap() {

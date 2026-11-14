@@ -110,7 +110,7 @@ async function assertActiveSession(payload) {
   }
   const row = (
     await query(
-      'SELECT session_version, session_desktop, session_mobile, deletion_due_at FROM users WHERE id = $1',
+      'SELECT session_version, session_desktop, session_mobile, deletion_due_at, deleted_at FROM users WHERE id = $1',
       [userId],
     )
   ).rows[0]
@@ -119,7 +119,7 @@ async function assertActiveSession(payload) {
     err.code = ACCOUNT_DELETED_CODE
     throw err
   }
-  if (row.deletion_due_at && new Date(row.deletion_due_at).getTime() <= Date.now()) {
+  if (row.deleted_at || (row.deletion_due_at && new Date(row.deletion_due_at).getTime() <= Date.now())) {
     await finalizeDueAccountById(userId)
     const err = new Error(ACCOUNT_DELETED_MESSAGE)
     err.code = ACCOUNT_DELETED_CODE

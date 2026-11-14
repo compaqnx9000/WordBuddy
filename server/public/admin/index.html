@@ -89,16 +89,33 @@
     aside {
       background: #081810; border-right: 1px solid var(--line); padding: 20px 14px;
       display: flex; flex-direction: column; gap: 8px;
+      position: sticky; top: 0; height: 100vh; overflow: hidden;
+    }
+    .nav-scroll {
+      flex: 1; min-height: 0; overflow: auto;
+      display: flex; flex-direction: column; gap: 8px;
     }
     aside .brand { color: var(--cyan-soft); font-weight: 800; font-size: 18px; margin: 4px 8px 16px; }
     .nav { background: transparent; color: var(--muted); text-align: left; border: 0; border-radius: 10px; padding: 10px 12px; cursor: pointer; }
     .nav.active, .nav:hover { background: var(--panel-2); color: var(--cyan-soft); }
-    main { padding: 22px 26px 40px; }
+    main { padding: 22px 26px 40px; min-width: 0; }
+    .menu-btn {
+      display: none; width: 40px; height: 40px; padding: 0; border: 1px solid var(--line);
+      background: var(--panel); border-radius: 10px; cursor: pointer; flex: 0 0 auto;
+      flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+    }
+    .menu-btn span { display: block; width: 18px; height: 2px; border-radius: 2px; background: var(--cyan-soft); }
+    .pull-refresh { display: none; }
+    .nav-backdrop { display: none; }
     .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; }
     .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
     .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
     .stat b { display: block; font-size: 26px; color: var(--cyan); }
+    .stat b small { font-size: 14px; font-weight: 600; margin-left: 2px; }
     .stat span { color: var(--muted); font-size: 13px; }
+    .stat-split { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .stat-split b { display: inline; color: var(--cyan); font-size: 16px; font-weight: 700; }
     .toolbar {
       display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
       margin-bottom: 12px;
@@ -110,6 +127,7 @@
       flex: 0 0 auto;
     }
     .toolbar > input { min-width: 160px; max-width: 240px; }
+    .toolbar > input.search-wide { width: 520px; min-width: 520px; max-width: none; }
     .field-inline {
       display: inline-flex; align-items: center; gap: 8px;
       margin: 0; color: var(--muted); font-size: 13px; white-space: nowrap;
@@ -119,18 +137,47 @@
       width: auto; min-width: 96px;
     }
     table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 12px; overflow: hidden; }
+    table.user-list { width: max-content; min-width: 100%; }
+    table.user-list th, table.user-list td { white-space: nowrap; }
+    table.user-list .sub { margin: 0 0 0 6px; }
     th, td {
       padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left;
       font-size: 13px; vertical-align: middle; line-height: 1.4;
     }
     th { color: var(--muted); font-weight: 600; background: #0a1c14; white-space: nowrap; }
     td.wrap { white-space: normal; word-break: break-word; }
+    td.nowrap { white-space: nowrap; }
+    td.nowrap .sub { margin: 0 0 0 6px; }
     tr:hover td { background: rgba(110, 231, 183, 0.04); }
+    tr.system-book td { background: #163044; }
+    tr.system-book:hover td { background: #1c3a50; }
     .avatar {
       width: 64px; height: 64px; border-radius: 12px; object-fit: contain;
       border: 1px solid var(--line); background: #081810; display: block;
       cursor: pointer;
     }
+    .device-cell { width: 40px; text-align: center; }
+    .device-mark { width: 22px; height: 22px; display: inline-block; vertical-align: middle; }
+    .device-mark.android { color: #3ddc84; }
+    .device-mark.ios { color: #f4f4f5; }
+    .device-mark.pc { color: var(--cyan-soft); }
+    .login-kind { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .login-kind svg { width: 22px; height: 22px; display: block; }
+    .login-kind.child { color: #7dd3fc; }
+    .login-kind.elder { color: #fbbf24; }
+    .user-with-device { display: flex; align-items: center; gap: 8px; }
+    .user-with-device .sub { margin: 0; }
+    .medal { width: 22px; height: 22px; display: inline-block; vertical-align: middle; }
+    .field-clear { position: relative; display: inline-flex; align-items: center; max-width: 110px; }
+    .field-clear.wide { max-width: 240px; }
+    .field-clear input { width: 100%; padding-right: 28px; }
+    .field-x {
+      position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+      width: 18px; height: 18px; border: 0; border-radius: 999px; padding: 0;
+      background: rgba(255, 255, 255, .14); color: var(--text); cursor: pointer;
+      line-height: 16px; font-size: 14px;
+    }
+    .field-x[hidden] { display: none; }
     .avatar.empty {
       display: grid; place-items: center; color: var(--muted); font-size: 11px; cursor: default;
     }
@@ -169,11 +216,11 @@
     .modal td, .modal th { white-space: nowrap; }
     .modal td.wrap { white-space: normal; word-break: break-word; }
     pre { white-space: pre-wrap; word-break: break-all; color: var(--cyan-soft); font-size: 12px; }
-    .cockpit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-    .chart-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 14px 8px; }
+    .cockpit-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; min-width: 0; }
+    .chart-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 14px 8px; min-width: 0; max-width: 100%; }
     .chart-card h3 { margin: 0 0 4px; font-size: 15px; color: var(--cyan-soft); }
     .chart-card .note { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
-    .chart-card svg { width: 100%; height: auto; display: block; }
+    .chart-card svg, .map-svg { width: 100%; max-width: 100%; height: auto; display: block; overflow: hidden; }
     .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin: 4px 0 8px; }
     .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
     .plat-row { display: grid; grid-template-columns: 88px 1fr 48px; gap: 8px; align-items: center; margin: 8px 0; font-size: 13px; }
@@ -193,7 +240,8 @@
     .map-scale { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }
     .map-scale i { width: 120px; height: 8px; border-radius: 99px; background: linear-gradient(90deg, #163d2c, #6ee7b7); }
     .map-rank { padding-right: 4px; }
-    .map-rank-row { display: grid; grid-template-columns: 64px 1fr 52px; gap: 8px; align-items: center; padding: 5px 6px; border-radius: 8px; font-size: 13px; }
+    .map-rank-row { display: grid; grid-template-columns: max-content minmax(0, 1fr) 52px; gap: 8px; align-items: center; padding: 5px 6px; border-radius: 8px; font-size: 13px; }
+    .map-rank-row > span:first-child { white-space: nowrap; }
     .map-rank-row.hot { background: #123528; }
     .map-rank-row b { text-align: right; color: var(--cyan-soft); }
     .map-rank .mini { height: 6px; border-radius: 99px; background: #081810; overflow: hidden; }
@@ -202,11 +250,92 @@
       .map-layout { grid-template-columns: 1fr; }
     }
     @media (max-width: 1100px) {
-      .cockpit-grid { grid-template-columns: 1fr; }
+      .cockpit-grid { grid-template-columns: minmax(0, 1fr); }
     }
+    .cards-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 12px 0 18px; }
     @media (max-width: 800px) {
-      #app { grid-template-columns: 1fr; }
-      aside { flex-direction: row; flex-wrap: wrap; }
+      #login { padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); }
+      .card { padding: 22px 16px; }
+      #app { display: block; min-height: 100vh; }
+      .menu-btn { display: inline-flex; }
+      .nav-backdrop {
+        position: fixed; inset: 0; z-index: 25; background: rgba(0, 0, 0, .55);
+      }
+      body.nav-open { overflow: hidden; }
+      body.nav-open .nav-backdrop { display: block; }
+      aside {
+        position: fixed; z-index: 30; top: 0; bottom: 0; left: 0;
+        width: min(280px, 86vw); height: 100%; overflow: hidden;
+        transform: translateX(-105%); transition: transform .2s ease;
+        flex-direction: column; flex-wrap: nowrap;
+        padding-top: max(16px, env(safe-area-inset-top));
+        padding-bottom: max(16px, env(safe-area-inset-bottom));
+      }
+      body.nav-open aside { transform: none; }
+      aside .nav { width: 100%; padding: 12px 14px; font-size: 15px; }
+      aside .btn { width: 100%; }
+      html, body { overscroll-behavior-y: none; }
+      main {
+        min-height: 100vh;
+        padding: 12px 14px calc(28px + env(safe-area-inset-bottom));
+      }
+      .pull-refresh {
+        display: flex;
+        position: fixed;
+        z-index: 40;
+        top: 0; left: 0; right: 0;
+        height: 0;
+        overflow: hidden;
+        align-items: center;
+        justify-content: center;
+        color: var(--cyan-soft);
+        pointer-events: none;
+      }
+      .pull-arrow { width: 22px; height: 22px; display: block; transform-origin: center; }
+      .pull-refresh.refreshing .pull-arrow { animation: pull-spin .7s linear infinite; }
+      @keyframes pull-spin { to { transform: rotate(360deg); } }
+      .top {
+        position: sticky; top: 0; z-index: 6; flex-wrap: wrap; align-items: center;
+        margin: 0 -14px 14px; padding: max(8px, env(safe-area-inset-top)) 14px 10px;
+        background: var(--bg);
+      }
+      .top h1 { flex: 1; margin: 0; font-size: 20px; }
+      .top .sub { flex: 1 0 100%; margin: 6px 0 0; font-size: 13px; }
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .stat { padding: 12px; }
+      .stat b { font-size: 20px; overflow-wrap: anywhere; }
+      .toolbar > .btn { flex: 0 0 auto; }
+      .toolbar input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="date"]):not([type="month"]):not([type="number"]),
+      .toolbar select {
+        flex: 1 1 100%; width: auto; min-width: 0; max-width: none !important;
+      }
+      .toolbar input[type="date"],
+      .toolbar input[type="month"],
+      .toolbar input[type="number"] {
+        flex: 1 1 120px; width: auto; min-width: 0; max-width: none !important;
+      }
+      .toolbar .field-clear { flex: 1 1 100%; max-width: none; width: 100%; }
+      .toolbar .field-clear input { max-width: none !important; width: 100%; }
+      .field-inline { display: flex; width: 100%; height: auto; white-space: normal; }
+      .field-inline input, .field-inline select { width: auto; flex: 1; min-width: 0; max-width: none; }
+      input, select, textarea { font-size: 16px; }
+      input[type="file"] { height: auto; line-height: 1.4; padding: 8px; }
+      .table-scroll table { min-width: 560px; }
+      .table-scroll th, .table-scroll td { white-space: nowrap; }
+      .table-scroll td.wrap, .table-scroll pre { white-space: pre-wrap; }
+      .pager { flex-wrap: wrap; }
+      .cards-3 { grid-template-columns: 1fr; }
+      .user-head { flex-direction: column; }
+      .avatar.lg { width: 120px; height: 120px; }
+      .plat-row { grid-template-columns: 72px 1fr 42px; }
+      .map-rank { max-height: none; overflow: visible; }
+      #content, .cockpit-grid, .chart-card, .map-layout, .map-stage, .stats { min-width: 0; max-width: 100%; }
+      .modal-bg { padding: 0; place-items: end center; }
+      .modal {
+        width: 100%; max-height: 92vh; border-radius: 16px 16px 0 0;
+        padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+      }
+      .modal img.preview { max-height: 62vh; }
     }
   </style>
 </head>
@@ -224,29 +353,41 @@
     </div>
   </div>
 
+  <div class="nav-backdrop" onclick="closeNav()"></div>
   <div id="app" class="hidden">
     <aside>
       <div class="brand">词搭子 Admin</div>
+      <div class="nav-scroll">
       <button class="nav active" data-page="cockpit" onclick="go('cockpit')">驾驶舱</button>
       <button class="nav" data-page="overview" onclick="go('overview')">总览</button>
       <button class="nav" data-page="users" onclick="go('users')">用户</button>
+      <button class="nav" data-page="retention" onclick="go('retention')">留存活跃</button>
+      <button class="nav" data-page="closedUsers" onclick="go('closedUsers')">注销用户</button>
       <button class="nav" data-page="logins" onclick="go('logins')">登录记录</button>
       <button class="nav" data-page="sms" onclick="go('sms')">短信记录</button>
       <button class="nav" data-page="notebooks" onclick="go('notebooks')">词书 / 生词本</button>
       <button class="nav" data-page="checkins" onclick="go('checkins')">签到搭币</button>
       <button class="nav" data-page="adwatches" onclick="go('adwatches')">广告观看</button>
+      <button class="nav" data-page="adRevenue" onclick="go('adRevenue')">广告收益</button>
+      <button class="nav" data-page="inviteAds" onclick="go('inviteAds')">邀请观看</button>
       <button class="nav" data-page="gifts" onclick="go('gifts')">搭币兑礼</button>
       <button class="nav" data-page="giftOrders" onclick="go('giftOrders')">兑换订单</button>
       <button class="nav" data-page="withdrawals" onclick="go('withdrawals')">提现记录</button>
       <button class="nav" data-page="purchases" onclick="go('purchases')">购买记录</button>
       <button class="nav" data-page="shorts" onclick="go('shorts')">短视频</button>
       <button class="nav" data-page="audit" onclick="go('audit')">操作日志</button>
-      <div style="flex:1"></div>
+      </div>
       <div id="who" class="sub" style="margin:8px"></div>
       <button class="btn ghost" onclick="logout()">退出</button>
     </aside>
+    <div id="pullRefresh" class="pull-refresh" aria-hidden="true">
+      <svg class="pull-arrow" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="currentColor" d="M17.65 6.35A7.95 7.95 0 0 0 12 4C7.58 4 4.01 7.58 4.01 12S7.58 20 12 20c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+      </svg>
+    </div>
     <main>
       <div class="top">
+        <button class="menu-btn" type="button" onclick="toggleNav()" aria-label="打开菜单" aria-expanded="false"><span></span><span></span><span></span></button>
         <h1 id="title">驾驶舱</h1>
         <div id="hint" class="sub"></div>
       </div>
@@ -261,20 +402,24 @@ const titles = {
   cockpit: ['驾驶舱', '各省注册人数、新增注销、活跃、观看时长、签到与兑礼'],
   overview: ['总览', '注册用户、登录、词书与短信概况'],
   users: ['用户', '账号资料、头像、搭子号、收货地址、登录与改密'],
+  retention: ['留存活跃', '近 7 日 / 30 日活跃人数，以及注册后第 7 天、第 30 天的留存'],
+  closedUsers: ['注销用户', '冷静期结束后保留的账号。同一手机号再注册不算新用户，不发新用户搭币'],
   logins: ['登录记录', '验证码 / 密码登录，成功与失败'],
   sms: ['短信记录', '验证码发送与是否已核销（不展示明文验证码）'],
   notebooks: ['词书 / 生词本', '系统词书可下架与改词；用户生词本可查看删除'],
   checkins: ['签到搭币', '用户累计搭币、连续签到、每日签到明细，以及奖励视频 / 注册邀请搭币'],
   adwatches: ['广告观看', '穿山甲激励视频回调：每天每个用户看了多少条'],
+  adRevenue: ['广告收益', '打开页面显示上次拉取的结果，点「重新拉取」才向穿山甲要新数据'],
+  inviteAds: ['邀请观看', '输入邀请码，查看某一天他邀请的客户看了多少条激励视频'],
   gifts: ['搭币兑礼', '栏目显示、礼品归属分类、库存与搭币价格'],
   giftOrders: ['兑换订单', '用户兑换记录与发货状态'],
-  withdrawals: ['提现记录', '全部客户提现总额、每个用户提了多少，以及每一笔明细'],
+  withdrawals: ['提现记录', '提现前三名，以及每一笔明细'],
   purchases: ['购买记录', '按手机号、昵称、搭子号或用户 ID 查询每笔配图购买'],
   shorts: ['短视频', '视频维护，以及用户在口语/单词/听力的累计停留'],
   audit: ['操作日志', '超级管理员在后台做过的事'],
 };
 
-const state = { page: 'cockpit', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users', withdrawStatus: '', purchaseStatus: '', cockpitGrain: 'day', cockpitAt: '', adDate: '', adTail: '', withdrawDate: '' };
+const state = { page: 'cockpit', pageNo: 1, q: '', kind: '', giftPub: '', shortCat: '', shortPub: '', shortsView: 'list', shortDays: '30', notebookId: null, checkInView: 'users', withdrawStatus: '', purchaseStatus: '', cockpitGrain: 'day', cockpitAt: '', adDate: '', adTail: '', withdrawDate: '', inviteCode: '', inviteAdDate: '', adRevenue: null, adRevenueReady: false };
 
 function token() { return localStorage.getItem('hw_admin_token') || ''; }
 function authHeaders() {
@@ -295,12 +440,141 @@ async function saveGromoreKey() {
     alert(e.message || '保存失败');
   }
 }
+function rateText(value) {
+  if (value == null || value === '') return '—';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  const rounded = Math.round(n * 10000) / 100;
+  return (Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2)) + '%';
+}
+function revenueYuan(value) {
+  if (value == null || value === '') return '—';
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(2) : '—';
+}
+function csjLoginBox(message) {
+  return `<div class="card" style="max-width:560px">
+    <p class="note" style="margin-top:0">${esc(message || '穿山甲登录已失效。填用户名和密码，登录成功后这一页会拉出当天数据。')}</p>
+    <label>用户名</label>
+    <input id="csjUser" autocomplete="username" />
+    <label>密码</label>
+    <input id="csjPass" type="password" autocomplete="current-password" />
+    <button class="btn" style="margin-top:12px" onclick="submitCsjLogin()">登录穿山甲</button>
+    <p class="note">如果穿山甲弹出滑块，服务器没法替你滑。登录网页后打开开发者工具，选一条 union_pangle 请求，把请求头里的整段 Cookie 粘贴到下面。</p>
+    <textarea id="csjCookie" rows="4" placeholder="sessionid=...; csrftoken=..." style="width:100%;margin-top:8px"></textarea>
+    <button class="btn ghost" style="margin-top:8px" onclick="submitCsjCookie()">保存 Cookie</button>
+    <div class="error" id="csjLoginErr"></div>
+  </div>`;
+}
+async function submitCsjLogin() {
+  const err = document.getElementById('csjLoginErr');
+  if (err) err.textContent = '';
+  try {
+    const data = await api('/ad-revenue/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: document.getElementById('csjUser')?.value || '',
+        password: document.getElementById('csjPass')?.value || '',
+      }),
+    });
+    if (data.revenue && !data.revenue.needLogin) {
+      state.adRevenue = data.revenue;
+      state.adRevenueReady = true;
+      render();
+      return;
+    }
+    if (err) err.textContent = data.message || '登录失败';
+  } catch (e) {
+    if (err) err.textContent = e.message || '登录失败';
+  }
+}
+async function submitCsjCookie() {
+  const err = document.getElementById('csjLoginErr');
+  if (err) err.textContent = '';
+  try {
+    const data = await api('/ad-revenue/login', {
+      method: 'POST',
+      body: JSON.stringify({ cookie: document.getElementById('csjCookie')?.value || '' }),
+    });
+    if (data.revenue && !data.revenue.needLogin) {
+      state.adRevenue = data.revenue;
+      state.adRevenueReady = true;
+      render();
+      return;
+    }
+    if (err) err.textContent = data.message || 'Cookie 无效';
+  } catch (e) {
+    if (err) err.textContent = e.message || '保存失败';
+  }
+}
+function renderAdRevenue(d) {
+  const refresh = `<div class="toolbar"><button class="btn" onclick="reloadAdRevenue()">重新拉取</button></div>`;
+  const hasApps = d && (d.apps || []).length > 0;
+  if (!hasApps) {
+    const login = d && d.needLogin ? csjLoginBox(d.message) : '';
+    return `${login}<p class="note">还没有拉取过。点「重新拉取」之后，每次进来都显示这一份，直到你再次拉取。</p>${d && d.error ? `<p class="note">${esc(d.error)}</p>` : ''}${refresh}`;
+  }
+  const apps = d.apps || [];
+  const total = apps.reduce((sum, app) => sum + (app.units || []).reduce((inner, unit) => inner + (Number(unit.revenue) || 0), 0), 0);
+  const tables = apps.map((app) => `
+    <h3>${esc(app.label)} · ${esc(app.siteName || '你的词搭子')}</h3>
+    ${app.error ? `<p class="note">${esc(app.error)}</p>` : ''}
+    <table><thead><tr><th>广告位</th><th>预估收益</th><th>流量填充率</th></tr></thead>
+    <tbody>${(app.units || []).map((unit) => `<tr>
+      <td>${esc(unit.name)}</td>
+      <td class="nowrap">${revenueYuan(unit.revenue)} 元</td>
+      <td>${rateText(unit.waterfallFillRate)}</td>
+    </tr>`).join('')}</tbody></table>`).join('');
+  return `${d.needLogin ? csjLoginBox(d.message) : ''}<div class="stats">
+      <div class="stat"><b>${total.toFixed(2)}<small>元</small></b><span>当天预估收益</span></div>
+      <div class="stat"><b>${esc(d.date || '')}</b><span>上海日期</span></div>
+    </div>
+    <p class="note">数字来自穿山甲聚合应用页，并会留下来。再次进入这一页仍是这份，只有点「重新拉取」才更新。预估收益不是结算金额。流量填充率是瀑布流返回占流量请求的比例。${d.fetchedAt ? `拉取时间 ${fmt(d.fetchedAt)}。` : ''}</p>
+    ${d.error ? `<p class="note">${esc(d.error)}</p>` : ''}
+    ${refresh}
+    ${tables}`;
+}
+async function reloadAdRevenue() {
+  const node = document.getElementById('content');
+  node.innerHTML = '拉取中…';
+  try {
+    const data = await api('/ad-revenue/refresh', { method: 'POST', body: '{}' });
+    if (data.ok) state.adRevenue = data;
+    else if (data.previous && (data.previous.apps || []).length) {
+      state.adRevenue = {
+        ...data.previous,
+        needLogin: Boolean(data.needLogin),
+        message: data.message,
+        error: data.message || '这次没有拉下来，仍显示上次的结果',
+      };
+    } else state.adRevenue = data;
+  } catch (e) {
+    const message = e.message || '拉取失败';
+    if (state.adRevenue && (state.adRevenue.apps || []).length) {
+      state.adRevenue = { ...state.adRevenue, error: message + '，仍显示上次的结果' };
+    } else state.adRevenue = { ok: false, empty: true, apps: [], error: message };
+  }
+  state.adRevenueReady = true;
+  if (state.page === 'adRevenue') render();
+}
 function shiftAdDate(days) {
   const base = state.adDate || shanghaiTodayClient();
   const [y, m, d] = base.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d));
   dt.setUTCDate(dt.getUTCDate() + days);
   go('adwatches', { adDate: dt.toISOString().slice(0, 10), page: 1 });
+}
+function shiftInviteAdDate(days) {
+  const typed = document.getElementById('inviteCodeInput');
+  const base = state.inviteAdDate || shanghaiTodayClient();
+  const [y, m, d] = base.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  go('inviteAds', {
+    inviteAdDate: dt.toISOString().slice(0, 10),
+    inviteCode: typed ? typed.value : state.inviteCode,
+    page: 1,
+  });
 }
 function shiftWithdrawDate(days) {
   const base = state.withdrawDate || shanghaiTodayClient();
@@ -437,7 +711,28 @@ async function doLogin() {
   }
 }
 
+function toggleNav() {
+  document.body.classList.toggle('nav-open');
+  const btn = document.querySelector('.menu-btn');
+  if (btn) btn.setAttribute('aria-expanded', document.body.classList.contains('nav-open') ? 'true' : 'false');
+}
+function closeNav() {
+  document.body.classList.remove('nav-open');
+  const btn = document.querySelector('.menu-btn');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+function wrapTables(root) {
+  if (!root) return;
+  root.querySelectorAll('table').forEach((table) => {
+    if (table.parentElement && table.parentElement.classList.contains('table-scroll')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'table-scroll';
+    table.parentNode.insertBefore(wrap, table);
+    wrap.appendChild(table);
+  });
+}
 function logout() {
+  closeNav();
   localStorage.removeItem('hw_admin_token');
   document.getElementById('app').classList.add('hidden');
   document.getElementById('login').classList.remove('hidden');
@@ -476,9 +771,12 @@ function go(page, extra = {}) {
   if (extra.adDate != null) state.adDate = extra.adDate;
   if (extra.adTail != null) state.adTail = String(extra.adTail).replace(/\D/g, '').slice(0, 4);
   if (extra.withdrawDate != null) state.withdrawDate = extra.withdrawDate;
+  if (extra.inviteCode != null) state.inviteCode = String(extra.inviteCode).trim();
+  if (extra.inviteAdDate != null) state.inviteAdDate = extra.inviteAdDate;
   document.querySelectorAll('.nav').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
   document.getElementById('title').textContent = titles[page][0];
   document.getElementById('hint').textContent = titles[page][1];
+  closeNav();
   render();
 }
 
@@ -722,15 +1020,21 @@ function renderProvinceMap(stats, geo) {
   }
   const ranked = provinces.filter((item) => item.count > 0).sort((a, b) => b.count - a.count || a.short.localeCompare(b.short, 'zh'))
   const emptyProvinces = provinces.filter((item) => !item.count).sort((a, b) => a.short.localeCompare(b.short, 'zh'))
+  const countryMax = Math.max(max, ...(stats.countries || []).map((item) => Number(item.count) || 0))
+  const countryRows = (stats.countries || []).filter((item) => item.count > 0).map((item) => `
+    <div class="map-rank-row">
+      <span>${esc(item.name)}</span>
+      <div class="mini"><i style="width:${((item.count / countryMax) * 100).toFixed(1)}%"></i></div>
+      <b>${fmtCount(item.count)}</b>
+    </div>`).join('')
   const extras = [
-    ['海外', stats.overseas],
     ['本地/内网', stats.local],
     ['未识别', stats.unknown],
   ].filter(([, n]) => Number(n) > 0)
   const rows = ranked.map((item) => `
     <div class="map-rank-row" data-name="${esc(item.name)}">
       <span>${esc(item.short)}</span>
-      <div class="mini"><i style="width:${((item.count / max) * 100).toFixed(1)}%"></i></div>
+      <div class="mini"><i style="width:${((item.count / countryMax) * 100).toFixed(1)}%"></i></div>
       <b>${fmtCount(item.count)}</b>
     </div>`).join('')
   const zeroRows = emptyProvinces.map((item) => `
@@ -749,7 +1053,7 @@ function renderProvinceMap(stats, geo) {
   return `
     <div class="chart-card" style="margin-bottom:14px">
       <h3>注册用户分布</h3>
-      <p class="note">按注册后第一次成功登录的网络属地归省。属地是本地或识别不到时，改用个人资料里的地区，再不行用最近一次登录属地。颜色越亮，人越多。鼠标移到省上可看人数。已归省 ${fmtCount(stats.located)} / 共 ${fmtCount(stats.total)} 人。</p>
+      <p class="note">按注册后第一次成功登录的网络属地归省。属地是本地或识别不到时，改用个人资料里的地区，再不行用最近一次登录属地。颜色越亮，人越多。点省份或移上去可看人数。已归省 ${fmtCount(stats.located)} / 共 ${fmtCount(stats.total)} 人。</p>
       <div class="map-layout">
         <div>
           <div class="map-stage">
@@ -760,7 +1064,8 @@ function renderProvinceMap(stats, geo) {
         </div>
         <div class="map-rank">
           ${rows || empty}
-          ${emptyProvinces.length ? `<p class="note">暂无注册用户：${emptyProvinces.map((item) => esc(item.short)).join('、')}</p>${zeroRows}` : ''}
+          ${countryRows}
+          ${zeroRows}
           ${extraRows}
         </div>
       </div>
@@ -793,6 +1098,18 @@ function bindProvinceMap(root) {
       mark(false)
       tip.hidden = true
     })
+    path.addEventListener('click', (event) => {
+      mark(true)
+      tip.hidden = false
+      tip.textContent = `${path.dataset.short} ${fmtCount(path.dataset.count)} 人`
+      const box = stage.getBoundingClientRect()
+      let left = event.clientX - box.left + 14
+      let top = event.clientY - box.top + 14
+      if (left > box.width - 120) left = Math.max(8, event.clientX - box.left - 120)
+      if (top > box.height - 36) top = Math.max(8, event.clientY - box.top - 36)
+      tip.style.left = `${left}px`
+      tip.style.top = `${top}px`
+    })
   })
   rows.forEach((row) => {
     if (!row.dataset.name) return
@@ -805,6 +1122,13 @@ function bindProvinceMap(root) {
     row.addEventListener('mouseleave', () => {
       root.querySelectorAll('path.prov').forEach((path) => path.classList.remove('hot'))
       rows.forEach((other) => other.classList.remove('hot'))
+    })
+    row.addEventListener('click', () => {
+      const on = !row.classList.contains('hot')
+      root.querySelectorAll('path.prov').forEach((path) => {
+        path.classList.toggle('hot', on && path.dataset.name === row.dataset.name)
+      })
+      rows.forEach((other) => other.classList.toggle('hot', on && other === row))
     })
   })
 }
@@ -830,15 +1154,16 @@ function renderCockpit(d, mapStats, geo) {
   if (d.grain) state.cockpitGrain = d.grain;
   const sum = (key) => points.reduce((acc, p) => acc + (Number(p[key]) || 0), 0);
   const signups = sum('signups');
+  const signupsAndroid = sum('signupsAndroid');
+  const signupsIos = sum('signupsIos');
   const deletions = sum('deletions');
+  const deletionsAndroid = sum('deletionsAndroid');
+  const deletionsIos = sum('deletionsIos');
   const checkins = sum('checkins');
   const orders = sum('giftOrders');
   const giftPoints = sum('giftPoints');
   const loginOk = sum('loginOk');
   const loginFail = sum('loginFail');
-  const watchMs = Number(summary.watchMsWindow || 0);
-  const watchUsers = Number(summary.watchUsersWindow || 0);
-  const avgMs = watchUsers ? Math.round(watchMs / watchUsers) : 0;
   const hours = points.map((p) => ({ ...p, watchHours: (Number(p.watchMs) || 0) / 3600000 }));
   const periodWord = state.cockpitGrain === 'day' ? '当日' : state.cockpitGrain === 'month' ? '当月' : '当年';
   const grains = [
@@ -873,25 +1198,19 @@ function renderCockpit(d, mapStats, geo) {
   const platforms = d.platforms || [];
   const platMax = Math.max(1, ...platforms.map((p) => Number(p.users) || 0));
   const cards = [
-    ['累计注册', fmtCount(summary.users)],
-    ['Android 注册', fmtCount(summary.usersAndroid)],
-    ['iOS 注册', fmtCount(summary.usersIos)],
+    ['累计注册/注销', `${fmtCount(summary.users)}/${fmtCount(summary.deletedTotal)}`],
+    ['Android 注册/注销', `${fmtCount(summary.usersAndroid)}/${fmtCount(summary.deletedAndroid)}`],
+    ['iOS 注册/注销', `${fmtCount(summary.usersIos)}/${fmtCount(summary.deletedIos)}`],
     ['PC 注册', fmtCount(summary.usersPc)],
-    [`${periodWord}新增`, fmtCount(signups)],
-    [`${periodWord}注销`, fmtCount(deletions)],
+    [`${periodWord}新增`, fmtCount(signups), `Android <b>${fmtCount(signupsAndroid)}</b> · iOS <b>${fmtCount(signupsIos)}</b>`],
+    [`${periodWord}注销`, fmtCount(deletions), `Android <b>${fmtCount(deletionsAndroid)}</b> · iOS <b>${fmtCount(deletionsIos)}</b>`],
     ['净增', fmtCount(signups - deletions)],
-    [`${periodWord}活跃`, fmtCount(summary.periodActive)],
     ['iOS 日活', fmtCount(summary.iosDau)],
     ['iOS 日活时长', fmtDuration(summary.iosActiveMs)],
-    ['iOS 人均时长', fmtDuration(Number(summary.iosDau) ? Math.round(Number(summary.iosActiveMs) / Number(summary.iosDau)) : 0)],
     ['Android 日活', fmtCount(summary.androidDau)],
     ['Android 日活时长', fmtDuration(summary.androidActiveMs)],
-    ['Android 人均时长', fmtDuration(Number(summary.androidDau) ? Math.round(Number(summary.androidActiveMs) / Number(summary.androidDau)) : 0)],
     ['冷静期中', fmtCount(summary.pendingDeletions)],
     ['历史注销', fmtCount(summary.deletedTotal)],
-    ['累计观看', fmtDuration(watchMs)],
-    ['观看人数', fmtCount(watchUsers)],
-    ['人均观看', fmtDuration(avgMs)],
     [`${periodWord}签到`, fmtCount(checkins)],
     [`${periodWord}兑礼`, fmtCount(orders)],
     ['兑礼搭币', fmtCount(giftPoints)],
@@ -906,11 +1225,11 @@ function renderCockpit(d, mapStats, geo) {
       ${picker}
       <span class="field-inline">${esc(d.label || '')} · 图表${esc(d.bucketLabel || '')}</span>
     </div>
-    <div class="stats">${cards.map(([label, value]) => `<div class="stat"><b>${value}</b><span>${label}</span></div>`).join('')}</div>
+    <div class="stats">${cards.map(([label, value, extra]) => `<div class="stat"><b>${value}</b><span>${label}</span>${extra ? `<span class="stat-split">${extra}</span>` : ''}</div>`).join('')}</div>
     <div class="cockpit-grid">
       <div class="chart-card">
         <h3>新增注册与注销</h3>
-        <p class="note">注销按账号删除完成时间统计，冷静期中的用户还在「冷静期中」。</p>
+        <p class="note">注销按标记完成时间统计。冷静期中的还在用户列表，到期后账号保留，出现在「注销用户」。</p>
         <div class="legend">${signupChart.legend}</div>
         ${signupChart.svg}
       </div>
@@ -947,16 +1266,38 @@ function renderCockpit(d, mapStats, geo) {
         <p class="note">所选时段里打开过已登录 Android App 的用户。时长是前台停留时间，最后活跃按北京时间。</p>
         ${iosUserRows(d.androidUsers || [], state.cockpitGrain, '这个时段还没有 Android 日活。用户打开已登录的 App 并在前台停留后会出现在这里。')}
       </div>
-      <div class="chart-card">
-        <h3>怎么读这些数</h3>
-        <p class="note">先选按天 / 按月 / 按年，再选具体日期、月份或年份。图表分别按小时、按天、按月展开。iOS 和 Android 日活都是当天至少打开一次已登录 App 的用户，日活时长是这些用户的前台停留时间。上面的「活跃」仍是成功登录人数。PC 含网页版与 Windows / macOS。待处理提现 ${fmtCount((Number(summary.withdrawalsPendingFen) || 0) / 100)} 元还在审核。</p>
-      </div>
     </div>`;
 }
 
-async function render() {
-  const el = document.getElementById('content');
-  el.innerHTML = '加载中…';
+let renderTicket = 0;
+async function render(opts = {}) {
+  const ticket = ++renderTicket;
+  const node = document.getElementById('content');
+  if (state.page === 'adRevenue') {
+    if (!state.adRevenueReady) {
+      node.innerHTML = '加载中…';
+      try {
+        const saved = await api('/ad-revenue');
+        if (ticket !== renderTicket) return;
+        state.adRevenue = saved;
+      } catch (e) {
+        if (ticket !== renderTicket) return;
+        state.adRevenue = { ok: false, empty: true, apps: [], error: e.message || '读取失败' };
+      }
+      state.adRevenueReady = true;
+    }
+    if (ticket !== renderTicket) return;
+    node.innerHTML = renderAdRevenue(state.adRevenue);
+    return;
+  }
+  const el = new Proxy(node, {
+    set(target, prop, value) {
+      if (prop === 'innerHTML' && ticket !== renderTicket) return true;
+      target[prop] = value;
+      return true;
+    },
+  });
+  if (!opts.keep) node.innerHTML = '加载中…';
   try {
     if (state.page === 'cockpit') {
       const grain = state.cockpitGrain || 'day';
@@ -967,14 +1308,15 @@ async function render() {
         loadChinaMap().catch(() => null),
       ]);
       el.innerHTML = renderCockpit(d, mapStats, geo);
-      bindProvinceMap(el);
+      if (ticket !== renderTicket) return;
+      bindProvinceMap(node);
     } else if (state.page === 'overview') {
       const d = await api('/overview');
       el.innerHTML = `
         <div class="stats">
-          <div class="stat"><b>${d.stats.userCount}</b><span>注册用户</span></div>
-          <div class="stat"><b>${d.stats.usersAndroid ?? 0}</b><span>Android 注册</span></div>
-          <div class="stat"><b>${d.stats.usersIos ?? 0}</b><span>iOS 注册</span></div>
+          <div class="stat"><b>${fmtCount(d.stats.userCount)}/${fmtCount(d.stats.deletedTotal)}</b><span>注册/注销</span></div>
+          <div class="stat"><b>${fmtCount(d.stats.usersAndroid)}/${fmtCount(d.stats.deletedAndroid)}</b><span>Android 注册/注销</span></div>
+          <div class="stat"><b>${fmtCount(d.stats.usersIos)}/${fmtCount(d.stats.deletedIos)}</b><span>iOS 注册/注销</span></div>
           <div class="stat"><b>${d.stats.usersPc ?? 0}</b><span>PC 注册</span></div>
           <div class="stat"><b>${d.stats.login7d}</b><span>近 7 天登录</span></div>
           <div class="stat"><b>${d.stats.wordCount}</b><span>词条总数</span></div>
@@ -986,14 +1328,70 @@ async function render() {
         </div>
         <h3>最近注册</h3>
         ${userTable(d.recentUsers)}`;
+    } else if (state.page === 'retention') {
+      const d = await api('/retention');
+      const a = d.active || {};
+      const r7 = d.retention?.d7 || {};
+      const r30 = d.retention?.d30 || {};
+      const cohortCell = (retained, signups) => {
+        if (retained == null) return '—';
+        if (!signups) return '—';
+        const pct = Math.round((retained / signups) * 1000) / 10;
+        return `${fmtCount(retained)}/${fmtCount(signups)} · ${pct}%`;
+      };
+      const cardRate = (block) => block.rate == null ? '—' : `${Math.round(block.rate * 1000) / 10}%`;
+      el.innerHTML = `
+        <div class="stats">
+          <div class="stat"><b>${fmtCount(a.d7)}</b><span>7 日活跃</span><span class="stat-split">Android <b>${fmtCount(a.d7Android)}</b> · iOS <b>${fmtCount(a.d7Ios)}</b></span></div>
+          <div class="stat"><b>${fmtCount(a.d30)}</b><span>30 日活跃</span><span class="stat-split">Android <b>${fmtCount(a.d30Android)}</b> · iOS <b>${fmtCount(a.d30Ios)}</b></span></div>
+          <div class="stat"><b>${fmtCount(a.today)}</b><span>今日活跃</span></div>
+          <div class="stat"><b>${cardRate(r7)}</b><span>7 日留存</span><span class="stat-split">${fmtCount(r7.retained)}/${fmtCount(r7.users)} 人</span></div>
+          <div class="stat"><b>${cardRate(r30)}</b><span>30 日留存</span><span class="stat-split">${fmtCount(r30.retained)}/${fmtCount(r30.users)} 人</span></div>
+        </div>
+        <p class="note">活跃按上海日期统计，含今天。成功登录、打开 App 或学习计时，当天都算活跃；已注销账号不计入活跃人数。7 日留存是注册日之后第 7 天仍活跃的人数，30 日留存是第 30 天。上面两个留存率用最近 7 个已经到期、且有新增的注册日合计。</p>
+        <table><thead><tr>
+          <th>注册日</th><th>新增</th><th>次日留存</th><th>7 日留存</th><th>30 日留存</th>
+        </tr></thead><tbody>${(d.cohorts || []).map(row => `<tr>
+          <td class="nowrap">${esc(row.date)}</td>
+          <td>${fmtCount(row.signups)}</td>
+          <td class="nowrap">${cohortCell(row.d1, row.signups)}</td>
+          <td class="nowrap">${cohortCell(row.d7, row.signups)}</td>
+          <td class="nowrap">${cohortCell(row.d30, row.signups)}</td>
+        </tr>`).join('')}</tbody></table>`;
     } else if (state.page === 'users') {
       const d = await api(`/users?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
       el.innerHTML = `
         <div class="toolbar">
-          <input style="max-width:280px" placeholder="搜索手机号 / 昵称 / 搭子号 / 邮箱 / 收货人" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('users',{q:this.value,page:1})" />
+          <input class="search-wide" placeholder="搜索手机号 / 昵称 / 搭子号 / 邮箱 / 收货人" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('users',{q:this.value,page:1})" />
           <button class="btn" onclick="go('users',{q:document.querySelector('main input').value,page:1})">搜索</button>
         </div>
         ${userTable(d.items, true)}
+        ${pager(d.total)}`;
+    } else if (state.page === 'closedUsers') {
+      const d = await api(`/closed-users?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
+      el.innerHTML = `
+        <div class="toolbar">
+          <input class="search-wide" placeholder="搜索手机号 / 昵称 / 用户 ID" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('closedUsers',{q:this.value,page:1})" />
+          <button class="btn" onclick="go('closedUsers',{q:document.querySelector('main input').value,page:1})">搜索</button>
+        </div>
+        <table class="user-list"><thead><tr>
+          <th>设备</th><th>ID</th><th>手机号</th><th>昵称</th><th>注册时间</th><th>注销时间</th>
+          <th>原因</th><th>剩余搭币</th><th>已提现</th><th>再次注册</th><th></th>
+        </tr></thead><tbody>${d.items.map(n => `<tr>
+          <td class="device-cell">${deviceIcon(n.lastDevicePlatform)}</td>
+          <td>${n.id}</td>
+          <td class="nowrap">${esc(n.phone || '—')}${n.legacy ? ' <span class="sub">历史已清除</span>' : ''}</td>
+          <td class="nowrap">${esc(n.nickname || '—')}</td>
+          <td class="nowrap">${fmt(n.createdAt)}</td>
+          <td class="nowrap">${fmt(n.closedAt)}</td>
+          <td>${esc(n.reason || '—')}</td>
+          <td>${n.points == null ? '—' : n.points}</td>
+          <td class="nowrap">${n.withdrawnFen == null ? '—' : (n.withdrawnFen / 100).toFixed(2) + ' 元'}</td>
+          <td class="nowrap">${n.successorId
+            ? `<button class="btn ghost small" onclick="openUser(${n.successorId})">#${n.successorId}</button> <span class="sub">${fmt(n.successorCreatedAt)} · ${n.successorSignupBonus ? '已发新用户奖励' : '未发新用户奖励'}</span>`
+            : '未再注册'}</td>
+          <td>${n.legacy ? '' : `<button class="btn small" onclick="openUser(${n.id})">详情</button>`}</td>
+        </tr>`).join('') || '<tr><td colspan="11">无</td>'}</tbody></table>
         ${pager(d.total)}`;
     } else if (state.page === 'adwatches') {
       const day = state.adDate || shanghaiTodayClient();
@@ -1015,26 +1413,66 @@ async function render() {
           <button class="btn ghost" onclick="shiftAdDate(-1)">前一天</button>
           <input type="date" value="${esc(d.date)}" onchange="go('adwatches',{adDate:this.value,page:1})" />
           <button class="btn ghost" onclick="shiftAdDate(1)">后一天</button>
-          <input id="adWatchTail" inputmode="numeric" maxlength="4" style="max-width:110px" placeholder="手机后四位" value="${esc(state.adTail || '')}" onkeydown="if(event.key==='Enter')go('adwatches',{adTail:this.value,q:'',page:1})" />
+          <span class="field-clear">
+            <input id="adWatchTail" inputmode="numeric" maxlength="4" placeholder="手机后四位" value="${esc(state.adTail || '')}" oninput="document.getElementById('adWatchTailClear').hidden=!this.value" onkeydown="if(event.key==='Enter')go('adwatches',{adTail:this.value,q:'',page:1})" />
+            <button type="button" id="adWatchTailClear" class="field-x" aria-label="清除后四位" ${state.adTail ? '' : 'hidden'} onclick="go('adwatches',{adTail:'',page:1})">×</button>
+          </span>
           <button class="btn" onclick="go('adwatches',{adTail:document.getElementById('adWatchTail').value,q:'',page:1})">按后四位搜</button>
-          <input id="adWatchQ" style="max-width:200px" placeholder="手机号 / 昵称 / 用户 ID" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('adwatches',{q:this.value,adTail:'',page:1})" />
+          <span class="field-clear wide">
+            <input id="adWatchQ" placeholder="手机号 / 昵称 / 用户 ID" value="${esc(state.q)}" oninput="document.getElementById('adWatchQClear').hidden=!this.value" onkeydown="if(event.key==='Enter')go('adwatches',{q:this.value,adTail:'',page:1})" />
+            <button type="button" id="adWatchQClear" class="field-x" aria-label="清除搜索" ${state.q ? '' : 'hidden'} onclick="go('adwatches',{q:'',page:1})">×</button>
+          </span>
           <button class="btn ghost" onclick="go('adwatches',{q:document.getElementById('adWatchQ').value,adTail:'',page:1})">搜索</button>
-          <span class="sub">${esc(d.date)} · ${d.users} 人 · ${d.watches} 条 · 看 ≥20 条 ${d.usersWatched20Plus ?? 0} 人</span>
+          <span class="sub">${esc(d.date)} · ${d.users} 人 · ${d.watches} 条 · 安卓 ${d.androidUsers ?? 0} 人 ${d.androidWatches ?? 0} 条 · 苹果 ${d.iosUsers ?? 0} 人 ${d.iosWatches ?? 0} 条 · 看 ≥20 条 ${d.usersWatched20Plus ?? 0} 人</span>
         </div>
         <div class="stats" style="margin:0 0 14px">
           <div class="stat"><b>${d.users}</b><span>观看用户</span></div>
           <div class="stat"><b>${d.watches}</b><span>观看条数</span></div>
+          <div class="stat"><b>${d.androidWatches ?? 0}<small>条</small></b><span>${deviceIcon('android')} ${d.androidUsers ?? 0}个安卓用户</span></div>
+          <div class="stat"><b>${d.iosWatches ?? 0}<small>条</small></b><span>${deviceIcon('ios')} ${d.iosUsers ?? 0}个苹果用户</span></div>
           <div class="stat"><b>${d.usersWatched20Plus ?? 0}</b><span>看 ≥20 条</span></div>
         </div>
         <table><thead><tr><th>用户</th><th>手机号</th><th>观看条数</th><th>已发奖</th><th>最后一条</th></tr></thead>
         <tbody>${d.items.length ? d.items.map(r => `<tr>
-          <td>${esc(r.nickname || '—')}<div class="sub">#${r.userId}</div></td>
+          <td><div class="user-with-device">${adPlatformIcon(r.platform)}<span>${esc(r.nickname || '—')}<div class="sub">#${r.userId}</div></span></div></td>
           <td>${esc(r.phone || '—')}</td>
           <td>${r.watches}</td>
           <td>${r.rewarded}</td>
           <td>${fmt(r.lastAt)}</td>
         </tr>`).join('') : '<tr><td colspan="5">这一天还没有回调记录</td></tr>'}</tbody></table>
         ${pager(d.total)}`;
+    } else if (state.page === 'inviteAds') {
+      const day = state.inviteAdDate || shanghaiTodayClient();
+      const code = state.inviteCode || '';
+      const d = code ? await api(`/invite-ad-watches?code=${encodeURIComponent(code)}&date=${encodeURIComponent(day)}`) : null;
+      const inviter = d && d.inviter;
+      el.innerHTML = `
+        <div class="toolbar">
+          <input id="inviteCodeInput" style="max-width:180px" maxlength="16" placeholder="邀请码" value="${esc(code)}" onkeydown="if(event.key==='Enter')go('inviteAds',{inviteCode:this.value,page:1})" />
+          <button class="btn ghost" onclick="shiftInviteAdDate(-1)">前一天</button>
+          <input type="date" value="${esc(d && d.date || day)}" onchange="go('inviteAds',{inviteAdDate:this.value,inviteCode:document.getElementById('inviteCodeInput').value,page:1})" />
+          <button class="btn ghost" onclick="shiftInviteAdDate(1)">后一天</button>
+          <button class="btn" onclick="go('inviteAds',{inviteCode:document.getElementById('inviteCodeInput').value,page:1})">查询</button>
+        </div>
+        ${!code ? '<p class="note">输入邀请码，查询他邀请的客户在这一天看了多少条激励视频。</p>' : ''}
+        ${d && !d.found ? `<p class="note">${esc(d.error || '没有这个邀请码')}</p>` : ''}
+        ${d && d.found ? `
+          <p class="note">${esc(d.date)}：${esc(inviter.nickname || inviter.phone || '—')} · ${esc(inviter.phone || '—')} · #${inviter.userId} · 邀请码 ${esc(inviter.buddyId || code)}。邀请 ${fmtCount(d.inviteeCount)} 人，当天 ${fmtCount(d.watchedUsers)} 人看过，共 ${fmtCount(d.watches)} 条，已发奖 ${fmtCount(d.rewarded)} 条。</p>
+          <div class="stats" style="margin:0 0 14px">
+            <div class="stat"><b>${fmtCount(d.inviteeCount)}</b><span>邀请客户</span></div>
+            <div class="stat"><b>${fmtCount(d.watchedUsers)}</b><span>当天看过</span></div>
+            <div class="stat"><b>${fmtCount(d.watches)}</b><span>观看条数</span></div>
+            <div class="stat"><b>${fmtCount(d.rewarded)}</b><span>已发奖</span></div>
+          </div>
+          <table><thead><tr><th>用户</th><th>手机号</th><th>设备</th><th>观看</th><th>已发奖</th></tr></thead>
+          <tbody>${d.items.length ? d.items.map(r => `<tr>
+            <td><span>${esc(r.nickname || '—')}<div class="sub">#${r.userId}</div></span></td>
+            <td>${esc(r.phone || '—')}</td>
+            <td><span class="user-with-device">${adPlatformIcon(r.platform)}<span>${esc(deviceName(r.platform))}</span></span></td>
+            <td>${fmtCount(r.watches)}</td>
+            <td>${fmtCount(r.rewarded)}</td>
+          </tr>`).join('') : '<tr><td colspan="5">这个邀请码还没有邀请到客户</td></tr>'}</tbody></table>
+        ` : ''}`;
     } else if (state.page === 'logins') {
       const d = await api(`/logins?page=${state.pageNo}&q=${encodeURIComponent(state.q)}`);
       el.innerHTML = `
@@ -1042,13 +1480,15 @@ async function render() {
           <input style="max-width:240px" placeholder="手机号 / 方式 / IP" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('logins',{q:this.value,page:1})" />
           <button class="btn" onclick="go('logins',{q:document.querySelector('main input').value,page:1})">搜索</button>
         </div>
-        <table><thead><tr><th>时间</th><th>手机号</th><th>方式</th><th>结果</th><th>设备</th><th>IP / 归属地</th></tr></thead>
+        <table><thead><tr><th>类型</th><th>设备</th><th>时间</th><th>手机号</th><th>方式</th><th>结果</th><th>IP / 归属地</th><th>设备</th></tr></thead>
         <tbody>${d.items.map(r => `<tr>
+          <td class="nowrap">${loginKindLabel(r)}</td>
+          <td class="device-cell">${deviceIcon(r.devicePlatform)}</td>
           <td>${fmt(r.createdAt)}</td><td>${esc(r.phone||'—')}</td>
           <td>${methodLabel(r.method)}</td>
           <td><span class="tag ${r.success?'':'bad'}">${r.success?'成功':'失败'}</span></td>
+          <td class="nowrap">${esc(r.ip||'—')}${r.ipLocation?` <span class="sub">${esc(r.ipLocation)}</span>`:''}</td>
           <td>${esc(r.deviceLabel || r.devicePlatform || '—')}${r.deviceModel && r.deviceLabel && !String(r.deviceLabel).includes(r.deviceModel) ? `<div class="sub">${esc(r.deviceModel)}</div>` : ''}</td>
-          <td>${esc(r.ip||'—')}${r.ipLocation?`<div class="sub">${esc(r.ipLocation)}</div>`:''}</td>
         </tr>`).join('')}</tbody></table>
         ${pager(d.total)}`;
     } else if (state.page === 'sms') {
@@ -1078,15 +1518,16 @@ async function render() {
           <input style="max-width:240px" placeholder="名称 / slug / 手机号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('notebooks',{q:this.value,page:1})" />
           <button class="btn" onclick="go('notebooks',{q:document.querySelector('main input').value,page:1})">搜索</button>
         </div>
-        <table><thead><tr><th>ID</th><th>名称</th><th>类型</th><th>归属</th><th>词数</th><th>状态</th><th>创建</th><th></th></tr></thead>
-        <tbody>${d.items.map(n => `<tr>
+        <table><thead><tr><th>ID</th><th>名称</th><th>类型</th><th>归属</th><th>词数</th><th>状态</th><th>创建</th><th>修改时间</th><th></th></tr></thead>
+        <tbody>${d.items.map(n => `<tr${n.kind==='catalog'?' class="system-book"':''}>
           <td>${n.id}</td>
-          <td>${esc(n.name)}${n.slug?`<div class="sub">${esc(n.slug)}</div>`:''}</td>
+          <td class="nowrap">${esc(n.name)}${n.slug?` <span class="sub">${esc(n.slug)}</span>`:''}</td>
           <td>${n.kind==='catalog'?'系统词书':'生词本'}</td>
           <td>${n.ownerPhone?esc(n.ownerPhone):'—'}</td>
           <td>${n.wordCount}</td>
           <td><span class="tag ${n.published?'':'bad'}">${n.published?'已发布':'已下架'}</span></td>
-          <td>${fmt(n.createdAt)}</td>
+          <td class="nowrap">${fmt(n.createdAt)}</td>
+          <td class="nowrap">${fmt(n.updatedAt || n.createdAt)}</td>
           <td>
             <button class="btn small" onclick="go('notebooks',{notebookId:${n.id},page:1,q:''})">词条</button>
             ${n.kind==='catalog'
@@ -1299,19 +1740,18 @@ async function render() {
         </div>
         <p class="note">${esc(dayStats.date || day)}：已到账 ${fmtCount(dayStats.successCount)} 笔 / ¥${esc(dayStats.amountYuan || '0.00')}，${fmtCount(dayStats.userCount)} 人发起提现${Number(dayStats.pendingFen) > 0 ? `，另有处理中 ¥${esc(dayStats.pendingYuan)}` : ''}。</p>
         ${Number(overall.sandboxFen) > 0 ? `<p class="note">另有沙箱模拟到账 ¥${esc(overall.sandboxYuan)}，不计入上面的已提现总额。</p>` : ''}
-        <h3 style="margin:16px 0 8px;font-size:15px;color:var(--cyan-soft)">各用户提现</h3>
-        <table><thead><tr>
-          <th>用户</th><th>已提现</th><th>已到账笔数</th><th>消耗搭币</th><th>处理中</th><th>失败</th><th>沙箱</th>
-        </tr></thead><tbody>${users.map((u) => `<tr>
-          <td>${esc(u.phone || '—')}<div class="sub">${esc(u.nickname || '—')} · #${u.userId}</div>${u.buddyId ? `<div class="sub">${esc(u.buddyId)}</div>` : ''}
-            <button class="btn ghost small" onclick="openUser(${Number(u.userId)})">用户详情</button></td>
-          <td><b>¥${esc(u.successYuan)}</b></td>
-          <td>${fmtCount(u.successCount)}</td>
-          <td>${fmtCount(u.successPoints)}</td>
-          <td>${Number(u.pendingFen) > 0 ? `¥${esc(u.pendingYuan)} · ${fmtCount(u.pendingCount)}笔` : '—'}</td>
-          <td>${u.failedCount ? fmtCount(u.failedCount) + '笔' : '—'}</td>
-          <td>${Number(u.sandboxFen) > 0 ? `¥${esc(u.sandboxYuan)}` : '—'}</td>
-        </tr>`).join('') || '<tr><td colspan="7">还没有提现记录</td></tr>'}</tbody></table>
+        <h3 style="margin:16px 0 8px;font-size:15px;color:var(--cyan-soft)">提现前三名</h3>
+        ${users.length ? `<table><thead><tr>
+          <th></th><th>用户</th><th>手机号</th><th>已提现</th><th>笔数</th><th>地区</th><th></th>
+        </tr></thead><tbody>${users.map((u, i) => `<tr>
+          <td>${medalIcon(i)}</td>
+          <td><span class="user-with-device">${adPlatformIcon(u.platform)}<span>${esc(u.nickname || '—')}</span></span></td>
+          <td>${esc(u.phone || '—')} · #${u.userId}</td>
+          <td>¥${esc(u.successYuan)}</td>
+          <td>${fmtCount(u.successCount)} 笔</td>
+          <td>${esc(placeText(u))}</td>
+          <td><button class="btn ghost small" onclick="openUser(${Number(u.userId)})">用户详情</button></td>
+        </tr>`).join('')}</tbody></table>` : '<p class="note">还没有已到账的提现。</p>'}
         <div class="toolbar" style="margin-top:18px">
           <input style="max-width:280px" placeholder="手机号 / 昵称 / 搭子号 / 用户ID / 收款账号" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('withdrawals',{q:this.value,page:1})" />
           <select style="max-width:140px" onchange="go('withdrawals',{withdrawStatus:this.value,page:1})">
@@ -1356,7 +1796,7 @@ async function render() {
             <input style="max-width:200px" placeholder="手机号 / 昵称 / 设备" value="${esc(state.q)}" onkeydown="if(event.key==='Enter')go('shorts',{q:this.value,page:1,shortsView:'stats'})" />
             <button class="btn" onclick="go('shorts',{q:document.querySelector('main input').value,page:1,shortsView:'stats'})">搜索</button>
           </div>
-          <div class="cards" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:12px 0 18px">
+          <div class="cards-3">
             ${(d.categoryTotals||[]).map(c => `
               <div class="card" style="padding:14px;border:1px solid #e5e7eb;border-radius:12px;background:#fff">
                 <div class="sub">${esc(c.categoryName)}</div>
@@ -1433,9 +1873,114 @@ async function render() {
         </tr>`).join('')}</tbody></table>
         ${pager(d.total)}`;
     }
+    if (ticket !== renderTicket) return;
+    wrapTables(node);
   } catch (e) {
-    el.innerHTML = `<div class="error">${esc(e.message)}</div>`;
+    if (ticket !== renderTicket) return;
+    node.innerHTML = `<div class="error">${esc(e.message)}</div>`;
   }
+}
+
+function setupPullToRefresh() {
+  const main = document.querySelector('#app main');
+  const tip = document.getElementById('pullRefresh');
+  if (!main || !tip) return;
+  const phone = window.matchMedia('(max-width: 800px)');
+  const threshold = 68;
+  let startY = 0;
+  let startX = 0;
+  let tracking = false;
+  let dy = 0;
+  let busy = false;
+
+  function atTop() {
+    return (window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0) <= 1;
+  }
+  function blocked(target) {
+    if (!phone.matches || busy) return true;
+    if (document.body.classList.contains('nav-open')) return true;
+    if (document.querySelector('#modalRoot .modal-bg')) return true;
+    if (!document.getElementById('app') || document.getElementById('app').classList.contains('hidden')) return true;
+    if (target && target.closest && target.closest('#login, aside, input, textarea, select, button, a')) return true;
+    return false;
+  }
+  const arrow = tip.querySelector('.pull-arrow');
+  function show(px, spinning) {
+    tip.style.height = px ? px + 'px' : '0px';
+    tip.classList.toggle('refreshing', !!spinning);
+    if (arrow) {
+      if (spinning) {
+        arrow.style.opacity = '1';
+        arrow.style.transform = '';
+      } else {
+        const progress = Math.max(0, Math.min(1, px / threshold));
+        arrow.style.opacity = progress ? String(0.35 + progress * 0.65) : '0';
+        arrow.style.transform = 'rotate(' + Math.round(progress * 320) + 'deg) scale(' + (0.45 + progress * 0.55).toFixed(2) + ')';
+      }
+    }
+    main.style.transform = px ? 'translateY(' + px + 'px)' : '';
+  }
+  document.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || blocked(e.target) || !atTop()) {
+      tracking = false;
+      return;
+    }
+    startY = e.touches[0].clientY;
+    startX = e.touches[0].clientX;
+    dy = 0;
+    tracking = true;
+    main.style.transition = 'none';
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!tracking || busy) return;
+    const touch = e.touches[0];
+    const rawY = touch.clientY - startY;
+    const rawX = Math.abs(touch.clientX - startX);
+    if (!atTop()) {
+      tracking = false;
+      dy = 0;
+      show(0, false);
+      return;
+    }
+    if (rawY <= 0) {
+      dy = 0;
+      show(0, false);
+      return;
+    }
+    if (rawX > rawY && rawX > 12) {
+      tracking = false;
+      show(0, false);
+      return;
+    }
+    dy = Math.min(96, rawY * 0.5);
+    if (e.cancelable) e.preventDefault();
+    show(dy, false);
+  }, { passive: false });
+  document.addEventListener('touchend', async () => {
+    if (!tracking) return;
+    tracking = false;
+    const should = dy >= threshold && !busy;
+    dy = 0;
+    main.style.transition = 'transform .18s ease';
+    if (!should) {
+      show(0, false);
+      return;
+    }
+    busy = true;
+    show(44, true);
+    try {
+      await render({ keep: true });
+    } finally {
+      busy = false;
+      show(0, false);
+    }
+  });
+  document.addEventListener('touchcancel', () => {
+    tracking = false;
+    dy = 0;
+    main.style.transition = 'transform .18s ease';
+    show(0, false);
+  });
 }
 
 function purchaseTable(items, showUser) {
@@ -1463,20 +2008,24 @@ function purchaseTable(items, showUser) {
 }
 
 function withdrawalTable(items, showUser) {
-  const cols = showUser ? 8 : 7;
+  const cols = showUser ? 9 : 8;
   return `<table><thead><tr>
-    <th>时间</th>${showUser ? '<th>用户</th>' : ''}<th>渠道</th><th>收款账号</th><th>金额</th><th>搭币</th><th>状态</th><th>单号 / 说明</th>
-  </tr></thead><tbody>${(items || []).map((w) => `<tr>
-    <td>${fmt(w.createdAt)}${w.updatedAt && w.updatedAt !== w.createdAt ? `<div class="sub">更新 ${fmt(w.updatedAt)}</div>` : ''}</td>
-    ${showUser ? `<td>${esc(w.phone || '—')}<div class="sub">${esc(w.nickname || '—')} · #${w.userId}</div>${w.buddyId ? `<div class="sub">${esc(w.buddyId)}</div>` : ''}
+    <th>提现时间</th><th>到账时间</th>${showUser ? '<th>用户</th>' : ''}<th>渠道</th><th>金额</th><th>搭币</th><th>状态</th><th>单号 / 说明</th><th>收款账号</th>
+  </tr></thead><tbody>${(items || []).map((w) => {
+    const arrived = w.status === 'success' && w.updatedAt ? fmt(w.updatedAt) : '';
+    return `<tr>
+    <td class="nowrap">${fmt(w.createdAt)}</td>
+    <td class="nowrap">${arrived || '—'}</td>
+    ${showUser ? `<td class="nowrap">${esc(w.phone || '—')} <span class="sub">${esc(w.nickname || '—')} · #${w.userId}</span>${w.buddyId ? ` <span class="sub">${esc(w.buddyId)}</span>` : ''}
       <button class="btn ghost small" onclick="openUser(${Number(w.userId)})">用户详情</button></td>` : ''}
-    <td>${esc(w.channelLabel || w.channel || '—')}${w.sandbox ? '<div class="sub">沙箱</div>' : ''}</td>
-    <td class="wrap">${esc(w.account || '—')}</td>
-    <td><b>${esc(w.amountYuan)}</b> 元</td>
+    <td class="nowrap">${esc(w.channelLabel || w.channel || '—')}${w.sandbox ? ' <span class="sub">沙箱</span>' : ''}</td>
+    <td class="nowrap"><b>${esc(w.amountYuan)}</b> 元</td>
     <td>${w.pointsSpent}</td>
     <td><span class="tag ${w.status === 'failed' ? 'bad' : ''}">${esc(w.statusLabel || w.status || '—')}</span></td>
-    <td class="wrap">${esc(w.providerTradeNo || '—')}${w.errorMessage ? `<div class="sub">${esc(w.errorMessage)}</div>` : ''}</td>
-  </tr>`).join('') || `<tr><td colspan="${cols}">暂无提现记录</td></tr>`}</tbody></table>`;
+    <td class="nowrap">${esc(w.providerTradeNo || '—')}${w.errorMessage ? ` <span class="sub">${esc(w.errorMessage)}</span>` : ''}</td>
+    <td class="nowrap">${esc(w.account || '—')}</td>
+  </tr>`;
+  }).join('') || `<tr><td colspan="${cols}">暂无提现记录</td></tr>`}</tbody></table>`;
 }
 
 function genderHtml(g) {
@@ -1489,27 +2038,70 @@ function shippingText(u) {
   const parts = [u.shippingName, u.shippingPhone, u.shippingDetail].filter(Boolean);
   return parts.length ? parts.join(' · ') : '—';
 }
+function medalIcon(rank) {
+  const colors = ['#f5c451', '#d5dbe3', '#e0a36a'];
+  const labels = ['金牌', '银牌', '铜牌'];
+  const color = colors[rank] || colors[2];
+  const label = labels[rank] || '奖牌';
+  return `<svg class="medal" viewBox="0 0 24 24" role="img" aria-label="${label}"><title>${label}</title><path fill="${color}" d="M7.2 2h2.4l2.4 4 2.4-4h2.4l-3.2 5.4h-3.2L7.2 2z"/><circle cx="12" cy="15.2" r="6.3" fill="${color}"/><circle cx="12" cy="15.2" r="4.3" fill="none" stroke="#102018" stroke-width="1.1"/><text x="12" y="17.2" text-anchor="middle" font-size="6.2" font-weight="700" fill="#102018">${rank + 1}</text></svg>`;
+}
+function placeText(u) {
+  const parts = [u.region, u.location].filter(Boolean);
+  return parts.length ? parts.join(' · ') : '地区未知';
+}
+function loginKindIcon(kind) {
+  const child = '<circle cx="12" cy="7.2" r="3.1"/><path d="M8.2 20.2v-1.1c0-2.3 1.7-4.1 3.8-4.1s3.8 1.8 3.8 4.1v1.1z"/><path d="M9.4 4.6c.5-1.3 1.5-2 2.6-1.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>';
+  const elder = '<circle cx="9.2" cy="6.1" r="2.5"/><path d="M5.6 20.4v-.4c.1-2.1 1.4-3.6 3.3-4l1.8-.3c1.5.4 2.5 1.8 2.7 3.9v.8z"/><path d="M15.4 8.6v8.8M14 17.4h2.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>';
+  const label = kind === 'child' ? '新用户登录' : '老用户登录';
+  return `<svg class="login-kind-mark" viewBox="0 0 24 24" role="img" aria-label="${label}"><title>${label}</title><g fill="currentColor">${kind === 'child' ? child : elder}</g></svg>`;
+}
+function loginKindLabel(r) {
+  const n = Number(r.successCount || 0);
+  const isNew = r.success ? n <= 1 : n === 0;
+  if (isNew) return `<span class="login-kind child" title="新用户登录">${loginKindIcon('child')}</span>`;
+  return `<span class="login-kind elder" title="老用户登录 ${n}次">${loginKindIcon('elder')}<span>${n}次</span></span>`;
+}
+function deviceName(platform) {
+  const raw = String(platform || '').trim().toLowerCase();
+  if (raw === 'android') return '安卓';
+  if (raw === 'ios') return 'iOS';
+  return '—';
+}
+function adPlatformIcon(platform) {
+  const raw = String(platform || '').trim().toLowerCase();
+  if (raw !== 'android' && raw !== 'ios') return '';
+  return deviceIcon(raw);
+}
+function deviceIcon(platform) {
+  const raw = String(platform || '').trim().toLowerCase();
+  const kind = raw === 'android' ? 'android' : raw === 'ios' ? 'ios' : 'pc';
+  const label = kind === 'android' ? 'Android' : kind === 'ios' ? 'iOS' : '电脑';
+  const path = kind === 'android'
+    ? 'M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85a.637.637 0 0 0-.83.22l-1.88 3.24a11.43 11.43 0 0 0-8.94 0L5.65 5.67a.643.643 0 0 0-.87-.2.635.635 0 0 0-.22.83L6.4 9.48A10.81 10.81 0 0 0 1 18h22a10.81 10.81 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z'
+    : kind === 'ios'
+    ? 'M16.37 12.65c-.03-2.4 1.96-3.55 2.05-3.61-1.12-1.63-2.86-1.86-3.48-1.88-1.48-.15-2.89.87-3.64.87-.75 0-1.91-.85-3.14-.83-1.61.03-3.1.94-3.93 2.39-1.68 2.91-.43 7.22 1.21 9.58.8 1.16 1.75 2.46 3 2.41 1.2-.05 1.66-.78 3.11-.78 1.45 0 1.86.78 3.14.75 1.3-.02 2.12-1.18 2.91-2.34.92-1.34 1.3-2.64 1.32-2.71-.03-.01-2.53-.97-2.55-3.85zM14.2 6.3c.66-.8 1.11-1.92.99-3.03-1 .04-2.14.64-2.83 1.45-.62.72-1.16 1.87-1.02 2.97 1.08.08 2.19-.55 2.86-1.39z'
+    : 'M4 6.5h16a1.5 1.5 0 0 1 1.5 1.5v8.2H2.5V8A1.5 1.5 0 0 1 4 6.5zm-2 11.2h20v1.1A1.7 1.7 0 0 1 20.3 20.5H3.7A1.7 1.7 0 0 1 2 18.8v-1.1z';
+  return `<svg class="device-mark ${kind}" viewBox="0 0 24 24" role="img" aria-label="${label}"><title>${label}</title><path fill="currentColor" d="${path}"/></svg>`;
+}
 function userTable(items, actions) {
-  return `<table><thead><tr>
-    <th>头像</th><th>ID</th><th>手机号</th><th>昵称</th><th>搭子号</th><th>邮箱</th><th>性别</th><th>地区</th><th>等级</th>
+  return `<table class="user-list"><thead><tr>
+    <th>设备</th><th>头像</th><th>ID</th><th>手机号</th><th>昵称</th><th>搭子号</th><th>等级</th>
     <th>已购配图</th><th>剩余配图</th>
     <th>注册时间</th><th>最近登录</th><th>归属地</th><th>设备数</th>
     <th>登录次数</th>${actions?'<th></th>':''}
   </tr></thead><tbody>${items.map(u => `<tr>
+    <td class="device-cell">${deviceIcon(u.lastDevicePlatform)}</td>
     <td>${avatarCell(u.avatarUrl)}</td>
     <td>${u.id}</td>
-    <td>${esc(u.phone)}${u.deletionDueAt?`<div class="sub">注销中 · ${fmt(u.deletionDueAt)}</div>`:''}</td>
+    <td>${esc(u.phone)}${u.deletionDueAt?`<span class="sub">注销中 · ${fmt(u.deletionDueAt)}</span>`:''}</td>
     <td>${esc(u.nickname || '—')}</td>
     <td>${esc(u.buddyId || '—')}</td>
-    <td class="wrap">${esc(u.email || '—')}</td>
-    <td>${genderHtml(u.gender)}</td>
-    <td>${esc(u.region || '—')}</td>
     <td><span class="tag">Lv.${u.level ?? 1}</span></td>
     <td>${u.imageCreditsPurchased ?? 0} 张</td>
     <td><b>${u.imageCreditsRemaining ?? 0}</b> 张</td>
     <td>${fmt(u.createdAt)}</td>
-    <td>${fmt(u.lastLoginAt)}<div class="sub">${methodLabel(u.lastLoginMethod)}</div></td>
-    <td>${esc(u.lastIpLocation || '—')}${u.lastIp?`<div class="sub">${esc(u.lastIp)}</div>`:''}</td>
+    <td>${fmt(u.lastLoginAt)} <span class="sub">${methodLabel(u.lastLoginMethod)}</span></td>
+    <td>${esc(u.lastIpLocation || '—')}${u.lastIp?` <span class="sub">${esc(u.lastIp)}</span>`:''}</td>
     <td>${u.deviceCount ?? 0}</td>
     <td>${u.loginCount}</td>
     ${actions?`<td>
@@ -1543,6 +2135,7 @@ async function renderWords(el) {
       </td>
     </tr>`).join('')}</tbody></table>
     ${pager(d.total)}`;
+  wrapTables(el);
 }
 
 async function openUser(id) {
@@ -1583,7 +2176,7 @@ async function openUser(id) {
     <tbody>${(d.devices||[]).map(dev => `<tr>
       <td class="wrap">${esc(dev.label)}${dev.model?`<div class="sub" style="margin:4px 0 0">${esc([dev.brand,dev.model].filter(Boolean).join(' '))}</div>`:''}</td>
       <td>${esc(dev.platform||'—')}${dev.osVersion?`<div class="sub" style="margin:4px 0 0">${esc(dev.osVersion)}</div>`:''}</td>
-      <td class="wrap">${esc(dev.lastIp||'—')}${dev.lastIpLocation?`<div class="sub" style="margin:4px 0 0">${esc(dev.lastIpLocation)}</div>`:''}</td>
+      <td class="nowrap">${esc(dev.lastIp||'—')}${dev.lastIpLocation?` <span class="sub">${esc(dev.lastIpLocation)}</span>`:''}</td>
       <td>${fmt(dev.firstSeenAt)}</td>
       <td>${fmt(dev.lastSeenAt)}</td>
       <td>${dev.loginCount}</td>
@@ -1608,11 +2201,11 @@ async function openUser(id) {
       return purchaseTable(rows, false);
     })()}
     <h3>生词本</h3>
-    <table><thead><tr><th>名称</th><th>词数</th><th>创建</th><th></th></tr></thead>
+    <table><thead><tr><th>名称</th><th>词数</th><th>创建</th><th>修改时间</th><th></th></tr></thead>
     <tbody>${d.notebooks.map(n => `<tr>
-      <td>${esc(n.name)}</td><td>${n.wordCount}</td><td>${fmt(n.createdAt)}</td>
+      <td class="nowrap">${esc(n.name)}</td><td>${n.wordCount}</td><td class="nowrap">${fmt(n.createdAt)}</td><td class="nowrap">${fmt(n.updatedAt || n.createdAt)}</td>
       <td><button class="btn small" onclick="closeModal();go('notebooks',{notebookId:${n.id},page:1})">看词</button></td>
-    </tr>`).join('') || '<tr><td colspan="4">无</td></tr>'}</tbody></table>
+    </tr>`).join('') || '<tr><td colspan="5">无</td></tr>'}</tbody></table>
     <h3>短视频收藏（${(d.shortFavorites||[]).length}）</h3>
     <table><thead><tr><th>标题</th><th>分类</th><th>作者</th><th>收藏时间</th></tr></thead>
     <tbody>${(d.shortFavorites||[]).map(v => `<tr>
@@ -1622,11 +2215,14 @@ async function openUser(id) {
       <td>${fmt(v.favoritedAt)}</td>
     </tr>`).join('') || '<tr><td colspan="4">暂无收藏</td></tr>'}</tbody></table>
     <h3>登录记录</h3>
-    <table><thead><tr><th>时间</th><th>方式</th><th>结果</th><th>设备</th><th>IP / 归属地</th></tr></thead>
-    <tbody>${d.logins.map(r => `<tr><td>${fmt(r.createdAt)}</td><td>${methodLabel(r.method)}</td>
+    <table><thead><tr><th>类型</th><th>设备</th><th>时间</th><th>方式</th><th>结果</th><th>IP / 归属地</th><th>设备</th></tr></thead>
+    <tbody>${d.logins.map(r => `<tr>
+      <td class="nowrap">${loginKindLabel(r)}</td>
+      <td class="device-cell">${deviceIcon(r.devicePlatform)}</td>
+      <td>${fmt(r.createdAt)}</td><td>${methodLabel(r.method)}</td>
       <td><span class="tag ${r.success?'':'bad'}">${r.success?'成功':'失败'}</span></td>
-      <td>${esc(r.deviceLabel || '—')}</td>
-      <td class="wrap">${esc(r.ip||'')}${r.ipLocation?`<div class="sub" style="margin:4px 0 0">${esc(r.ipLocation)}</div>`:''}</td></tr>`).join('') || '<tr><td colspan="5">无</td></tr>'}</tbody></table>
+      <td class="nowrap">${esc(r.ip||'')}${r.ipLocation?` <span class="sub">${esc(r.ipLocation)}</span>`:''}</td>
+      <td>${esc(r.deviceLabel || '—')}</td></tr>`).join('') || '<tr><td colspan="7">无</td></tr>'}</tbody></table>
     <h3>改密记录</h3>
     <table><thead><tr><th>时间</th><th>原因</th><th>IP</th></tr></thead>
     <tbody>${d.passwordEvents.map(r => `<tr><td>${fmt(r.createdAt)}</td><td>${methodLabel(r.reason)}</td><td>${esc(r.ip||'')}</td></tr>`).join('') || '<tr><td colspan="3">无</td></tr>'}</tbody></table>
@@ -2068,10 +2664,13 @@ function showModal(html, opts = {}) {
   const bgClick = closeOnBackdrop ? 'onclick="if(event.target===this)closeModal()"' : '';
   document.getElementById('modalRoot').innerHTML =
     `<div class="modal-bg" ${bgClick}><div class="modal">${html}</div></div>`;
+  wrapTables(document.getElementById('modalRoot'));
 }
 function closeModal() { document.getElementById('modalRoot').innerHTML = ''; }
 
 document.getElementById('loginPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeNav(); });
+setupPullToRefresh();
 if (token()) showApp();
 </script>
 </body>

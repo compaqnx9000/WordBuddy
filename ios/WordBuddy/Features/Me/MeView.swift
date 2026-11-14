@@ -454,7 +454,7 @@ struct MeView: View {
                 guardRequireLogin { path.append(MeRoute.buyPoints) }
             }
             menuDivider()
-            menuRow("play.circle", Theme.gold, "看视频领搭币", rewardVideoSubtitle) {
+            menuRow("play.circle", Theme.gold, "看广告领搭币", rewardVideoSubtitle) {
                 Task { await model.watchRewardVideo() }
             }
             menuDivider()

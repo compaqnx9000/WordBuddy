@@ -22,6 +22,14 @@ pangle = "7.8.1.4"
 sigmobAdapter = "4.25.14.1"
 sigmobWind = "4.25.14"
 sigmobWindCommon = "2.0.1"
+# 百度：GroMore 7.8.1.4 对应 adapter 9.4603.0。SDK 本体不在穿山甲仓库，Maven Central 最新是 9.460。
+baiduAdapter = "9.4603.0"
+baiduMobads = "9.460"
+# 快手：GroMore 7.8.1.4 对应 adapter 5.7.20.1.0。SDK 本体不在 Maven，使用平台包 app/libs/kssdk-ad-5.7.20.1.aar。
+kuaishouAdapter = "5.7.20.1.0"
+# 优量汇：GroMore 7.8.1.4 对应 adapter 4.701.1571.0，SDK com.qq.e.union:union:4.701.1571。
+gdtAdapter = "4.701.1571.0"
+gdtUnion = "4.701.1571"
 wechat = "6.8.34"
 # 巨量广告转化 SDK（融合归因）。同意隐私后再初始化，用于激活归因。
 appConvert = "2.0.6"
@@ -31,6 +39,11 @@ pangle-mediation-sdk = { group = "com.pangle.cn", name = "mediation-sdk", versio
 pangle-mediation-sigmob-adapter = { group = "com.pangle.cn", name = "mediation-sigmob-adapter", version.ref = "sigmobAdapter" }
 sigmob-wind-sdk = { group = "com.yodo1.plugin.tobid", name = "wind-sdk", version.ref = "sigmobWind" }
 sigmob-wind-common = { group = "com.yodo1.plugin.tobid", name = "wind-common", version.ref = "sigmobWindCommon" }
+pangle-mediation-baidu-adapter = { group = "com.pangle.cn", name = "mediation-baidu-adapter", version.ref = "baiduAdapter" }
+baidu-mobads = { group = "mobi.baidu.sdk", name = "mobads", version.ref = "baiduMobads" }
+pangle-mediation-ks-adapter = { group = "com.pangle.cn", name = "mediation-ks-adapter", version.ref = "kuaishouAdapter" }
+pangle-mediation-gdt-adapter = { group = "com.pangle.cn", name = "mediation-gdt-adapter", version.ref = "gdtAdapter" }
+gdt-union = { group = "com.qq.e.union", name = "union", version.ref = "gdtUnion" }
 wechat-sdk = { group = "com.tencent.mm.opensdk", name = "wechat-sdk-android", version.ref = "wechat" }
 app-convert = { group = "com.bytedance.ads", name = "AppConvert", version.ref = "appConvert" }
 # 显式覆盖并提升 fragment-ktx 版本，修复 ActivityResultRegistry 兼容性

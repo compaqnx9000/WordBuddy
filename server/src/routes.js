@@ -91,6 +91,7 @@ import {
   finalizeDueAccountByPhone,
   getDeletionStatus,
   requestAccountDeletion,
+  shouldSkipNewUserRewards,
 } from './deletion.js'
 import { lookupDict } from './dictLookup.js'
 
@@ -555,6 +556,40 @@ async function finishLogin(req, res, user, method, invite = null, options = {}) 
   res.json(await issueLogin(req, user, method, invite, options))
 }
 
+async function grantNewUserRewards(userId, { phone, wechatOpenid, appleUserId, alipayAccount, inviteCode } = {}) {
+  const skip = await shouldSkipNewUserRewards({ phone, wechatOpenid, appleUserId, alipayAccount })
+  if (skip) {
+    console.log(`[signup] user ${userId} returning identity, skip new-user rewards`)
+    return { skipped: true, invite: null }
+  }
+  try {
+    const bonus = await grantSignupBonus(userId)
+    if (bonus?.ok && !bonus.skipped) {
+      console.log(`[signup] user ${userId} +${bonus.delta}`)
+    }
+    const imageCredit = await grantSignupImageCredit(userId)
+    if (imageCredit?.ok && !imageCredit.skipped) {
+      console.log(`[signup] user ${userId} +${imageCredit.delta ?? 2} image credits`)
+    }
+  } catch (err) {
+    console.error('[signup] bonus failed', err)
+  }
+  let invite = null
+  if (inviteCode) {
+    try {
+      invite = await bindInviteCode(userId, inviteCode)
+      if (invite?.ok) {
+        console.log(
+          `[invite] user ${userId} bound to ${invite.inviterId} (+${invite.inviteeReward}/+${invite.inviterReward})`,
+        )
+      }
+    } catch (err) {
+      console.error('[invite] bind failed', err)
+    }
+  }
+  return { skipped: false, invite }
+}
+
 router.post('/auth/login', async (req, res) => {
   const phone = normalizePhone(req.body?.phone)
   if (!phone) {
@@ -585,7 +620,12 @@ router.post('/auth/login', async (req, res) => {
       return
     }
     const user = (
-      await query('SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE phone = $1', [phone])
+      await query(
+        `SELECT id, phone, password_hash, avatar_url, user_level
+         FROM users WHERE phone = $1 AND deleted_at IS NULL
+         ORDER BY id DESC LIMIT 1`,
+        [phone],
+      )
     ).rows[0]
     if (!user) {
       await recordLoginEvent(req, { phone, method: 'password', success: false })
@@ -615,7 +655,12 @@ router.post('/auth/login', async (req, res) => {
   }
 
   const user = (
-    await query('SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE phone = $1', [phone])
+    await query(
+      `SELECT id, phone, password_hash, avatar_url, user_level
+       FROM users WHERE phone = $1 AND deleted_at IS NULL
+       ORDER BY id DESC LIMIT 1`,
+      [phone],
+    )
   ).rows[0]
   if (!user || !user.password_hash) {
     // Keep the SMS code unconsumed so /auth/register can verify it again.
@@ -649,7 +694,10 @@ router.post('/auth/register', async (req, res) => {
 
   const passwordHash = hashPassword(password)
   const existing = (
-    await query('SELECT id, phone FROM users WHERE phone = $1', [phone])
+    await query(
+      `SELECT id, phone FROM users WHERE phone = $1 AND deleted_at IS NULL ORDER BY id DESC LIMIT 1`,
+      [phone],
+    )
   ).rows[0]
   if (existing) {
     await query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, existing.id])
@@ -667,36 +715,11 @@ router.post('/auth/register', async (req, res) => {
   await recordPasswordEvent(req, user.id, 'register')
   await consumeSms(checked.smsId)
 
-  try {
-    const bonus = await grantSignupBonus(user.id)
-    if (bonus?.ok && !bonus.skipped) {
-      console.log(`[signup] user ${user.id} +${bonus.delta}`)
-    }
-    const imageCredit = await grantSignupImageCredit(user.id)
-    if (imageCredit?.ok && !imageCredit.skipped) {
-      console.log(`[signup] user ${user.id} +${imageCredit.delta ?? 2} image credits`)
-    }
-  } catch (err) {
-    console.error('[signup] bonus failed', err)
-  }
-
-  let invite = null
-  if (inviteCode) {
-    try {
-      invite = await bindInviteCode(user.id, inviteCode)
-      if (invite?.ok) {
-        console.log(
-          `[invite] user ${user.id} bound to ${invite.inviterId} (+${invite.inviteeReward}/+${invite.inviterReward})`,
-        )
-      }
-    } catch (err) {
-      console.error('[invite] bind failed', err)
-    }
-  }
+  const granted = await grantNewUserRewards(user.id, { phone, inviteCode })
 
   // Ensure buddy id before responding so share works immediately.
   await loadUserProfileRow(user.id)
-  await finishLogin(req, res, user, 'register', invite?.ok ? invite : null)
+  await finishLogin(req, res, user, 'register', granted.invite?.ok ? granted.invite : null)
 })
 
 async function userFromWechatCode(code) {
@@ -708,7 +731,8 @@ async function userFromWechatCode(code) {
   const wxProfile = await fetchWechatUserProfile(exchanged.accessToken, openid)
   const existing = (
     await query(
-      'SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE wechat_openid = $1',
+      `SELECT id, phone, password_hash, avatar_url, user_level
+       FROM users WHERE wechat_openid = $1 AND deleted_at IS NULL`,
       [openid],
     )
   ).rows[0]
@@ -730,12 +754,7 @@ async function userFromWechatCode(code) {
         [openid, exchanged.unionid],
       )
     ).rows[0]
-    try {
-      await grantSignupBonus(user.id)
-      await grantSignupImageCredit(user.id)
-    } catch (err) {
-      console.error('[signup] bonus failed', err)
-    }
+    await grantNewUserRewards(user.id, { wechatOpenid: openid })
   }
   if (wxProfile.ok) await applyWechatProfile(user.id, wxProfile)
   return { ok: true, user }
@@ -747,7 +766,8 @@ async function userFromAlipayCode(code) {
   const identity = exchanged.identity
   const existing = (
     await query(
-      'SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE alipay_account = $1',
+      `SELECT id, phone, password_hash, avatar_url, user_level
+       FROM users WHERE alipay_account = $1 AND deleted_at IS NULL`,
       [identity],
     )
   ).rows[0]
@@ -761,12 +781,7 @@ async function userFromAlipayCode(code) {
         [identity],
       )
     ).rows[0]
-    try {
-      await grantSignupBonus(user.id)
-      await grantSignupImageCredit(user.id)
-    } catch (err) {
-      console.error('[signup] bonus failed', err)
-    }
+    await grantNewUserRewards(user.id, { alipayAccount: identity })
   }
   if (exchanged.accessToken) {
     const aliProfile = await fetchAlipayUserProfile(exchanged.accessToken)
@@ -834,7 +849,8 @@ function appleDisplayName(value) {
 async function userFromAppleIdentity(verified, fullName) {
   const existing = (
     await query(
-      'SELECT id, phone, password_hash, avatar_url, user_level FROM users WHERE apple_user_id = $1',
+      `SELECT id, phone, password_hash, avatar_url, user_level
+       FROM users WHERE apple_user_id = $1 AND deleted_at IS NULL`,
       [verified.sub],
     )
   ).rows[0]
@@ -848,12 +864,7 @@ async function userFromAppleIdentity(verified, fullName) {
         [verified.sub],
       )
     ).rows[0]
-    try {
-      await grantSignupBonus(user.id)
-      await grantSignupImageCredit(user.id)
-    } catch (err) {
-      console.error('[signup] bonus failed', err)
-    }
+    await grantNewUserRewards(user.id, { appleUserId: verified.sub })
   }
   const nickname = appleDisplayName(fullName)
   await query(
@@ -1113,7 +1124,11 @@ router.post('/auth/bind-phone', authRequired, async (req, res) => {
     return
   }
   const taken = (
-    await query('SELECT id, wechat_openid FROM users WHERE phone = $1 AND id <> $2 LIMIT 1', [
+    await query(
+      `SELECT id, wechat_openid FROM users
+       WHERE phone = $1 AND deleted_at IS NULL AND id <> $2
+       LIMIT 1`,
+      [
       phone,
       me.id,
     ])
@@ -1756,7 +1771,12 @@ router.post('/me/checkin', authRequired, async (req, res) => {
 router.post('/me/checkin/makeup', authRequired, async (req, res) => {
   try {
     const date = String(req.body?.date || '').trim()
-    const result = await performMakeupCheckIn(req.user.id, date)
+    const awaitCallback = req.body?.awaitCallback === true
+    const result = await performMakeupCheckIn(req.user.id, date, undefined, { awaitCallback })
+    if (result.pending) {
+      res.json({ ok: false, pending: true })
+      return
+    }
     if (!result.ok) {
       res.json({
         ok: false,
@@ -2120,7 +2140,10 @@ router.post('/auth/change-phone', authRequired, async (req, res) => {
     return
   }
   const taken = (
-    await query('SELECT id FROM users WHERE phone = $1 AND id <> $2 LIMIT 1', [newPhone, user.id])
+    await query(
+      `SELECT id FROM users WHERE phone = $1 AND deleted_at IS NULL AND id <> $2 LIMIT 1`,
+      [newPhone, user.id],
+    )
   ).rows[0]
   if (taken) {
     res.status(400).json({ error: '该手机号已被其他账号使用' })

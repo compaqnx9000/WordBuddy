@@ -1,7 +1,6 @@
 package com.hotgis.wordbuddy.data
 
 import android.content.Context
-import com.hotgis.wordbuddy.LauncherIcons
 
 data class UserSession(
     val token: String,
@@ -47,13 +46,13 @@ class SessionStore(context: Context) {
         migrateLevelOneBasedIfNeeded()
     }
 
-    /** Old builds stored Lv0–7; bump once so icon slots stay aligned (Lv1=default). */
+    /** Old builds stored Lv0–7. Bump once so stored levels match the 1–8 scale. */
     private fun migrateLevelOneBasedIfNeeded() {
         if (prefs.getBoolean(KEY_LEVEL_ONE_BASED, false)) return
         val editor = prefs.edit()
         if (prefs.contains(KEY_LEVEL)) {
             val raw = prefs.getInt(KEY_LEVEL, 0)
-            editor.putInt(KEY_LEVEL, (raw + 1).coerceIn(LauncherIcons.MIN_LEVEL, LauncherIcons.MAX_LEVEL))
+            editor.putInt(KEY_LEVEL, (raw + 1).coerceIn(MIN_LEVEL, MAX_LEVEL))
         }
         editor.putBoolean(KEY_LEVEL_ONE_BASED, true).apply()
     }
@@ -64,7 +63,7 @@ class SessionStore(context: Context) {
         val userId = prefs.getLong(KEY_USER_ID, 0L)
         val vocabId = prefs.getLong(KEY_VOCAB_ID, 0L)
         val avatarUrl = prefs.getString(KEY_AVATAR, null)?.trim()?.takeIf { it.isNotEmpty() }
-        val level = prefs.getInt(KEY_LEVEL, 1).let(LauncherIcons::clamp)
+        val level = prefs.getInt(KEY_LEVEL, 1).coerceIn(MIN_LEVEL, MAX_LEVEL)
         if (token.isEmpty() || userId <= 0L) return null
         // Migrate: keep last-login phone for the next logout prefill.
         if (phone.filter { it.isDigit() }.length == 11 &&
@@ -103,7 +102,7 @@ class SessionStore(context: Context) {
             .putString(KEY_PHONE, session.phone)
             .putLong(KEY_VOCAB_ID, session.vocabNotebookId)
             .putString(KEY_AVATAR, session.avatarUrl.orEmpty())
-            .putInt(KEY_LEVEL, LauncherIcons.clamp(session.level))
+            .putInt(KEY_LEVEL, session.level.coerceIn(MIN_LEVEL, MAX_LEVEL))
             .putString(KEY_NICKNAME, session.nickname.orEmpty())
             .putString(KEY_SHIP_NAME, session.shippingName.orEmpty())
             .putString(KEY_SHIP_PHONE, session.shippingPhone.orEmpty())
@@ -149,6 +148,8 @@ class SessionStore(context: Context) {
         private const val KEY_AVATAR = "avatar_url"
         private const val KEY_LEVEL = "user_level"
         private const val KEY_LEVEL_ONE_BASED = "user_level_one_based"
+        private const val MIN_LEVEL = 1
+        private const val MAX_LEVEL = 8
         private const val KEY_NICKNAME = "nickname"
         private const val KEY_SHIP_NAME = "shipping_name"
         private const val KEY_SHIP_PHONE = "shipping_phone"

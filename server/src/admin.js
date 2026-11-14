@@ -12,6 +12,7 @@ import {
   verifyPassword,
 } from './auth.js'
 import { mapDeviceRow } from './device.js'
+import { phoneHash, recordAccountDeletion } from './deletion.js'
 import {
   todayShanghai,
   getMakeupRewardPoints,
@@ -27,8 +28,9 @@ import {
   listAdWatches,
   REWARD_VIDEO_DAILY_LIMIT,
 } from './rewardVideo.js'
+import { fetchCsjDailyRevenue, loadCsjRevenueSnapshot, loginCsjConsole, saveCsjCookie } from './csjRevenue.js'
 import { getSignupBonusPoints, setSignupBonusPoints } from './points.js'
-import { getInviteRewardPoints, setInviteRewardPoints } from './invite.js'
+import { getInviteRewardPoints, normalizeInviteCode, setInviteRewardPoints } from './invite.js'
 import { getLevelRules, setLevelRules, syncUserLevel } from './levels.js'
 import {
   GIFT_CATEGORY_DEFS,
@@ -133,6 +135,7 @@ function mapLogin(row) {
     deviceModel: row.device_model || null,
     deviceLabel: row.device_label || null,
     createdAt: iso(row.created_at),
+    successCount: Number(row.success_count || 0),
   }
 }
 
@@ -148,6 +151,7 @@ function mapNotebook(row) {
     ownerPhone: row.owner_phone || null,
     wordCount: Number(row.word_count || 0),
     createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at) || iso(row.created_at),
   }
 }
 
@@ -255,7 +259,7 @@ adminRouter.get('/me', adminRequired, async (req, res) => {
   })
 })
 
-/** Count current users by the platform of their first successful login. */
+/** Count current user ids by the platform of their first successful login. */
 async function countUsersByRegisterPlatform() {
   const result = await query(
     `
@@ -281,6 +285,7 @@ async function countUsersByRegisterPlatform() {
         END AS bucket
       FROM users u
       LEFT JOIN first_login f ON f.user_id = u.id
+      WHERE u.deleted_at IS NULL
     )
     SELECT
       count(*) FILTER (WHERE bucket = 'android')::int AS android,
@@ -299,11 +304,37 @@ async function countUsersByRegisterPlatform() {
   }
 }
 
+async function countDeletedByPlatform() {
+  const result = await query(
+    `
+    WITH per_user AS (
+      SELECT DISTINCT ON (user_id)
+             user_id,
+             COALESCE(NULLIF(platform, ''), 'unknown') AS platform
+      FROM account_deletion_logs
+      WHERE user_id IS NOT NULL
+      ORDER BY user_id, completed_at DESC, id DESC
+    )
+    SELECT
+      count(*)::int AS total,
+      count(*) FILTER (WHERE platform = 'android')::int AS android,
+      count(*) FILTER (WHERE platform = 'ios')::int AS ios
+    FROM per_user
+    `,
+  )
+  const row = result.rows[0] || {}
+  return {
+    total: Number(row.total || 0),
+    android: Number(row.android || 0),
+    ios: Number(row.ios || 0),
+  }
+}
+
 adminRouter.get('/overview', adminRequired, async (_req, res) => {
   const today = todayShanghai()
-  const [users, logins, words, catalogs, userBooks, sms, checkInToday, checkInUsers, byPlatform] =
+  const [users, logins, words, catalogs, userBooks, sms, checkInToday, checkInUsers, byPlatform, deletedByPlatform] =
     await Promise.all([
-      query('SELECT count(*)::int AS n FROM users'),
+      query('SELECT count(*)::int AS n FROM users WHERE deleted_at IS NULL'),
       query(`SELECT count(*)::int AS n FROM login_events WHERE created_at > now() - interval '7 days' AND success = TRUE`),
       query('SELECT count(*)::int AS n FROM words'),
       query(`SELECT count(*)::int AS n FROM notebooks WHERE kind = 'catalog'`),
@@ -312,6 +343,7 @@ adminRouter.get('/overview', adminRequired, async (_req, res) => {
       query(`SELECT count(*)::int AS n FROM user_checkin_logs WHERE checkin_date = $1::date`, [today]),
       query(`SELECT count(*)::int AS n FROM user_checkins WHERE total_points > 0`),
       countUsersByRegisterPlatform(),
+      countDeletedByPlatform(),
     ])
   const recentUsers = await query(
     `SELECT id, phone, avatar_url, created_at, last_login_at, login_count,
@@ -325,13 +357,16 @@ adminRouter.get('/overview', adminRequired, async (_req, res) => {
             ), 0) AS image_credits_purchased,
             (password_hash IS NOT NULL) AS has_password,
             (SELECT count(*)::int FROM user_devices d WHERE d.user_id = users.id) AS device_count
-     FROM users ORDER BY created_at DESC LIMIT 8`,
+     FROM users WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 8`,
   )
   res.json({
     stats: {
       userCount: users.rows[0].n,
+      deletedTotal: deletedByPlatform.total,
       usersAndroid: byPlatform.android,
       usersIos: byPlatform.ios,
+      deletedAndroid: deletedByPlatform.android,
+      deletedIos: deletedByPlatform.ios,
       usersPc: byPlatform.pc,
       usersUnknownPlatform: byPlatform.unknown,
       login7d: logins.rows[0].n,
@@ -421,15 +456,38 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
       SELECT generate_series($1::timestamp, $2::timestamp - interval '${period.step}', interval '${period.step}') AS bucket
     ),
     signups AS (
-      SELECT ${bucket(localTs('created_at'))} AS bucket, count(*)::int AS n
-      FROM users
-      WHERE ${inWindow('created_at')}
+      SELECT ${bucket(localTs('created_at'))} AS bucket,
+             count(*)::int AS n,
+             count(*) FILTER (WHERE cls = 'android')::int AS n_android,
+             count(*) FILTER (WHERE cls = 'ios')::int AS n_ios
+      FROM (
+        SELECT u.created_at,
+          CASE
+            WHEN lower(COALESCE(NULLIF(f.platform, ''), NULLIF(u.last_device_platform, ''), '')) = 'android'
+              THEN 'android'
+            WHEN lower(COALESCE(NULLIF(f.platform, ''), NULLIF(u.last_device_platform, ''), '')) = 'ios'
+              THEN 'ios'
+            ELSE 'other'
+          END AS cls
+        FROM users u
+        LEFT JOIN LATERAL (
+          SELECT lower(trim(COALESCE(e.device_platform, ''))) AS platform
+          FROM login_events e
+          WHERE e.success = TRUE AND e.user_id = u.id
+          ORDER BY e.created_at ASC, e.id ASC
+          LIMIT 1
+        ) f ON TRUE
+        WHERE ${inWindow('u.created_at')}
+      ) signed
       GROUP BY 1
     ),
     deletions AS (
-      SELECT ${bucket(localTs('completed_at'))} AS bucket, count(*)::int AS n
+      SELECT ${bucket(localTs('completed_at'))} AS bucket,
+             count(DISTINCT user_id)::int AS n,
+             count(DISTINCT user_id) FILTER (WHERE platform = 'android')::int AS n_android,
+             count(DISTINCT user_id) FILTER (WHERE platform = 'ios')::int AS n_ios
       FROM account_deletion_logs
-      WHERE ${inWindow('completed_at')}
+      WHERE ${inWindow('completed_at')} AND user_id IS NOT NULL
       GROUP BY 1
     ),
     actives AS (
@@ -472,7 +530,11 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
     )
     SELECT to_char(b.bucket, '${period.fmt}') AS label,
            COALESCE(s.n, 0)::int AS signups,
+           COALESCE(s.n_android, 0)::int AS signups_android,
+           COALESCE(s.n_ios, 0)::int AS signups_ios,
            COALESCE(d.n, 0)::int AS deletions,
+           COALESCE(d.n_android, 0)::int AS deletions_android,
+           COALESCE(d.n_ios, 0)::int AS deletions_ios,
            COALESCE(a.n, 0)::int AS active_users,
            COALESCE(w.ms, 0)::bigint AS watch_ms,
            COALESCE(c.n, 0)::int AS checkins,
@@ -492,13 +554,13 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
     `,
     bounds,
   )
-  const [summary, platforms, byPlatform, presence, presenceUsers] = await Promise.all([
+  const [summary, platforms, byPlatform, deletedByPlatform, presence, presenceUsers] = await Promise.all([
     query(
       `
       SELECT
-        (SELECT count(*)::int FROM users) AS users,
-        (SELECT count(*)::int FROM users WHERE deletion_due_at IS NOT NULL) AS pending_deletions,
-        (SELECT count(*)::int FROM account_deletion_logs) AS deleted_total,
+        (SELECT count(*)::int FROM users WHERE deleted_at IS NULL) AS users,
+        (SELECT count(*)::int FROM users WHERE deleted_at IS NULL AND deletion_due_at IS NOT NULL) AS pending_deletions,
+        (SELECT count(DISTINCT user_id)::int FROM account_deletion_logs WHERE user_id IS NOT NULL) AS deleted_total,
         (SELECT count(DISTINCT user_id)::int FROM login_events
            WHERE success = TRUE AND user_id IS NOT NULL
              AND created_at >= (date_trunc('day', timezone('Asia/Shanghai', now())) AT TIME ZONE 'Asia/Shanghai')) AS dau,
@@ -536,6 +598,7 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
       bounds,
     ),
     countUsersByRegisterPlatform(),
+    countDeletedByPlatform(),
     query(
       `
       SELECT
@@ -578,7 +641,11 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
     points: series.rows.map((item) => ({
       label: item.label,
       signups: Number(item.signups || 0),
+      signupsAndroid: Number(item.signups_android || 0),
+      signupsIos: Number(item.signups_ios || 0),
       deletions: Number(item.deletions || 0),
+      deletionsAndroid: Number(item.deletions_android || 0),
+      deletionsIos: Number(item.deletions_ios || 0),
       activeUsers: Number(item.active_users || 0),
       watchMs: Number(item.watch_ms || 0),
       checkins: Number(item.checkins || 0),
@@ -591,6 +658,8 @@ adminRouter.get('/cockpit', adminRequired, async (req, res) => {
       users: Number(row.users || 0),
       usersAndroid: byPlatform.android,
       usersIos: byPlatform.ios,
+      deletedAndroid: deletedByPlatform.android,
+      deletedIos: deletedByPlatform.ios,
       usersPc: byPlatform.pc,
       usersUnknownPlatform: byPlatform.unknown,
       pendingDeletions: Number(row.pending_deletions || 0),
@@ -682,19 +751,26 @@ function matchChinaProvince(text) {
   return null
 }
 
+function countryFromPlace(place) {
+  const text = String(place || '').split('·')[0].trim()
+  if (!text || text === '海外' || text === '本地/内网' || text === '归属地未知') return null
+  if (text.startsWith('中国') || text.startsWith('中华人民共和国')) return null
+  if (matchChinaProvince(text)) return null
+  return text.split(/\s+/)[0] || null
+}
+
 function classifyUserProvince(region, signupLocation, lastLocation) {
   const candidates = [signupLocation, region, lastLocation]
   for (const raw of candidates) {
     const place = String(raw || '').split('·')[0].trim()
-    if (!place || place === '本地/内网' || place === '归属地未知') continue
+    if (!place || place === '本地/内网' || place === '归属地未知' || place === '海外') continue
     const name = matchChinaProvince(place)
     if (name) return { kind: 'province', name }
-    if (place === '海外') return { kind: 'overseas' }
-    if (!place.startsWith('中国') && !place.startsWith('中华人民共和国')) return { kind: 'overseas' }
+    const country = countryFromPlace(place)
+    if (country) return { kind: 'country', name: country }
   }
   const joined = [signupLocation, lastLocation].join(' ')
   if (joined.includes('本地/内网')) return { kind: 'local' }
-  if (String(region || '').trim() === '海外') return { kind: 'overseas' }
   return { kind: 'unknown' }
 }
 
@@ -713,16 +789,17 @@ adminRouter.get('/user-provinces', adminRequired, async (req, res) => {
       ORDER BY e.created_at ASC
       LIMIT 1
     ) s ON TRUE
+    WHERE u.deleted_at IS NULL
     `,
   )
   const counts = new Map(CHINA_PROVINCE_DEFS.map((row) => [row[0], 0]))
-  let overseas = 0
+  const countries = new Map()
   let local = 0
   let unknown = 0
   for (const row of result.rows) {
     const hit = classifyUserProvince(row.region, row.signup_location, row.last_ip_location)
     if (hit.kind === 'province') counts.set(hit.name, (counts.get(hit.name) || 0) + 1)
-    else if (hit.kind === 'overseas') overseas += 1
+    else if (hit.kind === 'country') countries.set(hit.name, (countries.get(hit.name) || 0) + 1)
     else if (hit.kind === 'local') local += 1
     else unknown += 1
   }
@@ -735,10 +812,144 @@ adminRouter.get('/user-provinces', adminRequired, async (req, res) => {
   res.json({
     total: result.rows.length,
     located,
-    overseas,
     local,
     unknown,
     provinces,
+    countries: [...countries.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh')),
+  })
+})
+
+adminRouter.get('/retention', adminRequired, async (_req, res) => {
+  const todayRow = await query(`SELECT (timezone('Asia/Shanghai', now()))::date AS d`)
+  const today = String(todayRow.rows[0].d).slice(0, 10)
+  const activeSql = `
+    WITH active AS (
+      SELECT user_id, activity_date, platform FROM (
+        SELECT e.user_id,
+               (e.created_at AT TIME ZONE 'Asia/Shanghai')::date AS activity_date,
+               lower(trim(COALESCE(e.device_platform, ''))) AS platform
+        FROM login_events e
+        WHERE e.success = TRUE AND e.user_id IS NOT NULL
+        UNION ALL
+        SELECT p.user_id, p.activity_date, lower(trim(COALESCE(p.platform, '')))
+        FROM app_presence_days p
+        UNION ALL
+        SELECT a.user_id, a.activity_date, ''
+        FROM user_activity_days a
+      ) s
+      WHERE user_id IS NOT NULL
+    )
+  `
+  const [summary, cohorts] = await Promise.all([
+    query(`
+      ${activeSql},
+      active_users AS (
+        SELECT a.user_id, a.activity_date,
+               bool_or(a.platform = 'android') AS android,
+               bool_or(a.platform = 'ios') AS ios
+        FROM active a
+        JOIN users u ON u.id = a.user_id AND u.deleted_at IS NULL
+        GROUP BY a.user_id, a.activity_date
+      )
+      SELECT
+        count(DISTINCT user_id) FILTER (WHERE activity_date = $1::date)::int AS today_n,
+        count(DISTINCT user_id) FILTER (WHERE activity_date >= $1::date - 6)::int AS d7_n,
+        count(DISTINCT user_id) FILTER (WHERE activity_date >= $1::date - 29)::int AS d30_n,
+        count(DISTINCT user_id) FILTER (WHERE activity_date >= $1::date - 6 AND android)::int AS d7_android,
+        count(DISTINCT user_id) FILTER (WHERE activity_date >= $1::date - 6 AND ios)::int AS d7_ios,
+        count(DISTINCT user_id) FILTER (WHERE activity_date >= $1::date - 29 AND android)::int AS d30_android,
+        count(DISTINCT user_id) FILTER (WHERE activity_date >= $1::date - 29 AND ios)::int AS d30_ios
+      FROM active_users
+    `, [today]),
+    query(`
+      ${activeSql},
+      days AS (
+        SELECT gs::date AS signup_date
+        FROM generate_series($1::date - 44, $1::date, interval '1 day') gs
+      ),
+      cohort AS (
+        SELECT u.id AS user_id,
+               (u.created_at AT TIME ZONE 'Asia/Shanghai')::date AS signup_date
+        FROM users u
+        WHERE (u.created_at AT TIME ZONE 'Asia/Shanghai')::date BETWEEN $1::date - 44 AND $1::date
+      )
+      SELECT d.signup_date,
+             count(c.user_id)::int AS signups,
+             count(c.user_id) FILTER (
+               WHERE EXISTS (
+                 SELECT 1 FROM active a
+                 WHERE a.user_id = c.user_id AND a.activity_date = d.signup_date + 1
+               )
+             )::int AS d1,
+             count(c.user_id) FILTER (
+               WHERE EXISTS (
+                 SELECT 1 FROM active a
+                 WHERE a.user_id = c.user_id AND a.activity_date = d.signup_date + 7
+               )
+             )::int AS d7,
+             count(c.user_id) FILTER (
+               WHERE EXISTS (
+                 SELECT 1 FROM active a
+                 WHERE a.user_id = c.user_id AND a.activity_date = d.signup_date + 30
+               )
+             )::int AS d30
+      FROM days d
+      LEFT JOIN cohort c ON c.signup_date = d.signup_date
+      GROUP BY d.signup_date
+      ORDER BY d.signup_date DESC
+    `, [today]),
+  ])
+  const row = summary.rows[0] || {}
+  function addDays(iso, n) {
+    const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number)
+    const dt = new Date(Date.UTC(y, m - 1, d + n))
+    const p = (v) => String(v).padStart(2, '0')
+    return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`
+  }
+  function windowRate(dayN) {
+    const ready = cohorts.rows.filter((item) => addDays(item.signup_date, dayN) <= today && Number(item.signups) > 0)
+    const recent = ready.slice(0, 7)
+    const users = recent.reduce((sum, item) => sum + Number(item.signups || 0), 0)
+    const key = dayN === 1 ? 'd1' : dayN === 7 ? 'd7' : 'd30'
+    const retained = recent.reduce((sum, item) => sum + Number(item[key] || 0), 0)
+    return {
+      users,
+      retained,
+      rate: users ? retained / users : null,
+      from: recent.length ? String(recent[recent.length - 1].signup_date).slice(0, 10) : null,
+      to: recent.length ? String(recent[0].signup_date).slice(0, 10) : null,
+      days: recent.length,
+    }
+  }
+  res.json({
+    today,
+    active: {
+      today: Number(row.today_n || 0),
+      d7: Number(row.d7_n || 0),
+      d30: Number(row.d30_n || 0),
+      d7Android: Number(row.d7_android || 0),
+      d7Ios: Number(row.d7_ios || 0),
+      d30Android: Number(row.d30_android || 0),
+      d30Ios: Number(row.d30_ios || 0),
+    },
+    retention: {
+      d7: windowRate(7),
+      d30: windowRate(30),
+    },
+    cohorts: cohorts.rows.map((item) => {
+      const date = String(item.signup_date).slice(0, 10)
+      const signups = Number(item.signups || 0)
+      const cell = (n, value) => (addDays(date, n) <= today ? Number(value || 0) : null)
+      return {
+        date,
+        signups,
+        d1: cell(1, item.d1),
+        d7: cell(7, item.d7),
+        d30: cell(30, item.d30),
+      }
+    }),
   })
 })
 
@@ -746,10 +957,10 @@ adminRouter.get('/users', adminRequired, async (req, res) => {
   const { page, pageSize, offset } = pageParams(req)
   const q = String(req.query.q || '').trim()
   const params = []
-  let where = 'TRUE'
+  let where = 'u.deleted_at IS NULL'
   if (q) {
     params.push(`%${q}%`)
-    where = `(u.phone ILIKE $1 OR u.nickname ILIKE $1 OR u.buddy_id ILIKE $1 OR u.email ILIKE $1 OR u.shipping_name ILIKE $1 OR u.shipping_phone ILIKE $1)`
+    where = `u.deleted_at IS NULL AND (u.phone ILIKE $1 OR u.nickname ILIKE $1 OR u.buddy_id ILIKE $1 OR u.email ILIKE $1 OR u.shipping_name ILIKE $1 OR u.shipping_phone ILIKE $1)`
   }
   const total = (
     await query(`SELECT count(*)::int AS n FROM users u WHERE ${where}`, params)
@@ -784,6 +995,140 @@ adminRouter.get('/users', adminRequired, async (req, res) => {
   res.json({ items: result.rows.map(mapUser), total, page, pageSize })
 })
 
+adminRouter.get('/closed-users', adminRequired, async (req, res) => {
+  const { page, pageSize, offset } = pageParams(req)
+  const q = String(req.query.q || '').trim()
+  const params = []
+  let filter = 'TRUE'
+  if (q) {
+    params.push(`%${q}%`, q)
+    filter = `(phone ILIKE $1 OR COALESCE(nickname, '') ILIKE $1 OR id::text = $2)`
+  }
+  const from = `
+    WITH marked AS (
+      SELECT
+        u.id,
+        u.phone,
+        NULL::text AS phone_hash,
+        u.nickname,
+        u.created_at,
+        u.deleted_at AS closed_at,
+        u.deletion_reason AS reason,
+        u.last_device_platform,
+        COALESCE(c.total_points, 0)::int AS points,
+        COALESCE(w.fen, 0)::int AS withdrawn_fen,
+        s.id AS successor_id,
+        s.created_at AS successor_created_at,
+        CASE WHEN s.id IS NULL THEN NULL
+             ELSE EXISTS (
+               SELECT 1 FROM points_ledger p
+               WHERE p.user_id = s.id AND p.reason = 'signup_bonus'
+             )
+        END AS successor_signup_bonus,
+        FALSE AS legacy
+      FROM users u
+      LEFT JOIN user_checkins c ON c.user_id = u.id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(amount_fen), 0)::int AS fen
+        FROM withdrawals
+        WHERE user_id = u.id AND status = 'success'
+      ) w ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT a.id, a.created_at
+        FROM users a
+        WHERE a.deleted_at IS NULL AND a.phone = u.phone
+        ORDER BY a.id DESC
+        LIMIT 1
+      ) s ON TRUE
+      WHERE u.deleted_at IS NOT NULL
+    ),
+    legacy AS (
+      SELECT DISTINCT ON (l.user_id)
+        l.user_id AS id,
+        l.phone_masked AS phone,
+        l.phone_hash,
+        NULL::text AS nickname,
+        l.requested_at AS created_at,
+        l.completed_at AS closed_at,
+        l.reason,
+        l.platform AS last_device_platform,
+        NULL::int AS points,
+        NULL::int AS withdrawn_fen,
+        NULL::bigint AS successor_id,
+        NULL::timestamptz AS successor_created_at,
+        NULL::boolean AS successor_signup_bonus,
+        TRUE AS legacy
+      FROM account_deletion_logs l
+      WHERE l.user_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = l.user_id)
+      ORDER BY l.user_id, l.completed_at DESC
+    ),
+    all_rows AS (
+      SELECT * FROM marked
+      UNION ALL
+      SELECT * FROM legacy
+    )
+  `
+  const total = (
+    await query(`${from} SELECT count(*)::int AS n FROM all_rows WHERE ${filter}`, params)
+  ).rows[0].n
+  params.push(pageSize, offset)
+  const result = await query(
+    `${from}
+     SELECT * FROM all_rows
+     WHERE ${filter}
+     ORDER BY closed_at DESC NULLS LAST, id DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params,
+  )
+  const items = result.rows.map((row) => ({
+    id: Number(row.id),
+    phone: row.phone || null,
+    phoneHash: row.phone_hash || null,
+    nickname: row.nickname || null,
+    createdAt: iso(row.created_at),
+    closedAt: iso(row.closed_at),
+    reason: row.reason || '',
+    lastDevicePlatform: row.last_device_platform || null,
+    points: row.points == null ? null : Number(row.points),
+    withdrawnFen: row.withdrawn_fen == null ? null : Number(row.withdrawn_fen),
+    successorId: row.successor_id ? Number(row.successor_id) : null,
+    successorCreatedAt: iso(row.successor_created_at),
+    successorSignupBonus: row.successor_signup_bonus == null ? null : Boolean(row.successor_signup_bonus),
+    legacy: Boolean(row.legacy),
+  }))
+  const unmatched = items.filter((item) => item.legacy && item.phoneHash && !item.successorId)
+  if (unmatched.length) {
+    const actives = await query(
+      `SELECT id, phone, created_at FROM users WHERE deleted_at IS NULL AND phone IS NOT NULL`,
+    )
+    const byHash = new Map()
+    for (const row of actives.rows) byHash.set(phoneHash(row.phone), row)
+    const matchedIds = []
+    for (const item of unmatched) {
+      const hit = byHash.get(item.phoneHash)
+      if (!hit) continue
+      item.successorId = Number(hit.id)
+      item.successorCreatedAt = iso(hit.created_at)
+      matchedIds.push(item.successorId)
+    }
+    if (matchedIds.length) {
+      const paid = await query(
+        `SELECT DISTINCT user_id FROM points_ledger
+         WHERE reason = 'signup_bonus' AND user_id = ANY($1::bigint[])`,
+        [matchedIds],
+      )
+      const paidIds = new Set(paid.rows.map((row) => Number(row.user_id)))
+      for (const item of unmatched) {
+        if (!item.successorId) continue
+        item.successorSignupBonus = paidIds.has(item.successorId)
+      }
+    }
+  }
+  for (const item of items) delete item.phoneHash
+  res.json({ items, total, page, pageSize })
+})
+
 adminRouter.get('/users/:id', adminRequired, async (req, res) => {
   const id = Number(req.params.id)
   const user = (
@@ -815,17 +1160,25 @@ adminRouter.get('/users/:id', adminRequired, async (req, res) => {
   const [notebooks, logins, passwords, sms, devices, checkIn, checkInLogs, shortFavorites, withdrawals, withdrawalSummary, imageOrders] =
     await Promise.all([
     query(
-      `SELECT n.id, n.kind, n.slug, n.name, n.published, n.sort_order, n.owner_user_id, n.created_at,
+      `SELECT n.id, n.kind, n.slug, n.name, n.published, n.sort_order, n.owner_user_id, n.created_at, n.updated_at,
               (SELECT count(*)::int FROM words w WHERE w.notebook_id = n.id) AS word_count
        FROM notebooks n WHERE n.owner_user_id = $1
-       ORDER BY n.sort_order ASC, n.id ASC`,
+       ORDER BY n.updated_at DESC, n.id DESC`,
       [id],
     ),
     query(
-      `SELECT id, user_id, phone, method, success, ip, user_agent,
-              device_platform, device_brand, device_model, device_label, ip_location, created_at
-       FROM login_events WHERE user_id = $1
-       ORDER BY created_at DESC LIMIT 50`,
+      `SELECT * FROM (
+         SELECT id, user_id, phone, method, success, ip, user_agent,
+                device_platform, device_brand, device_model, device_label, ip_location, created_at,
+                SUM(CASE WHEN success THEN 1 ELSE 0 END) OVER (
+                  ORDER BY created_at, id
+                  ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                )::int AS success_count
+         FROM login_events
+         WHERE user_id = $1
+       ) s
+       ORDER BY created_at DESC
+       LIMIT 50`,
       [id],
     ),
     query(
@@ -1030,6 +1383,7 @@ adminRouter.delete('/users/:id', adminRequired, async (req, res) => {
     res.status(404).json({ error: '用户不存在' })
     return
   }
+  await recordAccountDeletion(id, 'admin_delete')
   await query('DELETE FROM users WHERE id = $1', [id])
   await audit(req, 'delete_user', 'user', id, { phone: user.phone })
   res.json({ ok: true })
@@ -1052,7 +1406,17 @@ adminRouter.get('/logins', adminRequired, async (req, res) => {
   const result = await query(
     `
     SELECT e.id, e.user_id, e.phone, e.method, e.success, e.ip, e.user_agent,
-           e.device_platform, e.device_brand, e.device_model, e.device_label, e.ip_location, e.created_at
+           e.device_platform, e.device_brand, e.device_model, e.device_label, e.ip_location, e.created_at,
+           (
+             SELECT count(*)::int
+             FROM login_events p
+             WHERE p.success = TRUE
+               AND (
+                 (e.user_id IS NOT NULL AND p.user_id = e.user_id)
+                 OR (e.user_id IS NULL AND p.user_id IS NULL AND p.phone IS NOT DISTINCT FROM e.phone)
+               )
+               AND (p.created_at, p.id) <= (e.created_at, e.id)
+           ) AS success_count
     FROM login_events e
     WHERE ${where}
     ORDER BY e.created_at DESC
@@ -1133,13 +1497,18 @@ adminRouter.get('/notebooks', adminRequired, async (req, res) => {
   params.push(pageSize, offset)
   const result = await query(
     `
-    SELECT n.id, n.kind, n.slug, n.name, n.published, n.sort_order, n.owner_user_id, n.created_at,
+    SELECT n.id, n.kind, n.slug, n.name, n.published, n.sort_order, n.owner_user_id, n.created_at, n.updated_at,
            u.phone AS owner_phone,
            (SELECT count(*)::int FROM words w WHERE w.notebook_id = n.id) AS word_count
     FROM notebooks n
     LEFT JOIN users u ON u.id = n.owner_user_id
     WHERE ${where}
-    ORDER BY n.kind ASC, n.sort_order ASC, n.id ASC
+    ORDER BY
+      CASE WHEN n.kind = 'catalog' THEN 0 ELSE 1 END,
+      CASE WHEN n.kind = 'catalog' THEN n.sort_order END ASC,
+      CASE WHEN n.kind = 'catalog' THEN n.id END ASC,
+      n.updated_at DESC,
+      n.id DESC
     LIMIT $${params.length - 1} OFFSET $${params.length}
     `,
     params,
@@ -1166,7 +1535,7 @@ adminRouter.patch('/notebooks/:id', adminRequired, async (req, res) => {
     await query(
       `UPDATE notebooks SET name = $1, published = $2, sort_order = $3
        WHERE id = $4
-       RETURNING id, kind, slug, name, published, sort_order, owner_user_id, created_at`,
+       RETURNING id, kind, slug, name, published, sort_order, owner_user_id, created_at, updated_at`,
       [name, published, sortOrder, id],
     )
   ).rows[0]
@@ -1416,6 +1785,56 @@ adminRouter.put('/gromore-reward', adminRequired, async (req, res) => {
   res.json({ configured: saved.configured, callbackUrl: 'https://wordbuddy.cc/gromore/reward' })
 })
 
+adminRouter.get('/ad-revenue', adminRequired, async (_req, res) => {
+  res.json(await loadCsjRevenueSnapshot())
+})
+
+adminRouter.post('/ad-revenue/refresh', adminRequired, async (_req, res) => {
+  const revenue = await fetchCsjDailyRevenue()
+  if (revenue.ok) {
+    res.json(revenue)
+    return
+  }
+  const previous = await loadCsjRevenueSnapshot()
+  res.json({
+    ...revenue,
+    previous: previous.empty ? null : previous,
+    message: revenue.needLogin ? '穿山甲登录已失效，仍显示上次拉取的结果' : '这次没有拉下来，仍显示上次拉取的结果',
+  })
+})
+
+adminRouter.post('/ad-revenue/login', adminRequired, async (req, res) => {
+  const cookie = String(req.body?.cookie || '').trim()
+  if (cookie) {
+    const saved = await saveCsjCookie(cookie)
+    if (!saved.ok) {
+      res.status(400).json({ error: saved.error })
+      return
+    }
+    const revenue = await fetchCsjDailyRevenue()
+    res.json({
+      ok: !revenue.needLogin,
+      needLogin: Boolean(revenue.needLogin),
+      message: revenue.needLogin ? '这份 Cookie 已经失效，请重新登录穿山甲后再复制' : '已保存',
+      revenue,
+    })
+    return
+  }
+  const username = String(req.body?.username || '').trim()
+  const password = String(req.body?.password || '')
+  if (!username || !password) {
+    res.status(400).json({ error: '请填写用户名和密码' })
+    return
+  }
+  const result = await loginCsjConsole(username, password)
+  if (!result.ok) {
+    res.json(result)
+    return
+  }
+  const revenue = await fetchCsjDailyRevenue()
+  res.json({ ok: !revenue.needLogin, needLogin: Boolean(revenue.needLogin), message: '已登录', revenue })
+})
+
 adminRouter.get('/ad-watches', adminRequired, async (req, res) => {
   const { page, pageSize } = pageParams(req)
   const data = await listAdWatches({
@@ -1430,6 +1849,68 @@ adminRouter.get('/ad-watches', adminRequired, async (req, res) => {
     page,
     pageSize,
     items: data.items.map((row) => ({ ...row, lastAt: iso(row.lastAt) })),
+  })
+})
+
+adminRouter.get('/invite-ad-watches', adminRequired, async (req, res) => {
+  const dayRaw = String(req.query.date || '').trim()
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(dayRaw) ? dayRaw : todayShanghai()
+  const code = normalizeInviteCode(req.query.code)
+  if (!code) {
+    res.json({ date: day, found: false, error: '请输入邀请码' })
+    return
+  }
+  const inviter = (
+    await query(
+      `SELECT id, phone, nickname, buddy_id, last_device_platform
+       FROM users
+       WHERE lower(btrim(buddy_id)) = $1
+       LIMIT 1`,
+      [code],
+    )
+  ).rows[0]
+  if (!inviter) {
+    res.json({ date: day, found: false, code, error: '没有这个邀请码' })
+    return
+  }
+  const rows = (
+    await query(
+      `SELECT u.id AS user_id, u.phone, u.nickname, u.last_device_platform AS platform,
+              COUNT(c.id)::int AS watches,
+              COUNT(c.id) FILTER (WHERE c.reward_allowed)::int AS rewarded
+       FROM users u
+       LEFT JOIN reward_video_callbacks c
+         ON c.user_id = u.id AND c.watch_date = $2::date
+       WHERE u.invited_by_user_id = $1
+       GROUP BY u.id
+       ORDER BY watches DESC, u.id`,
+      [inviter.id, day],
+    )
+  ).rows
+  const items = rows.map((row) => ({
+    userId: Number(row.user_id),
+    phone: row.phone || null,
+    nickname: row.nickname || null,
+    platform: row.platform || null,
+    watches: Number(row.watches || 0),
+    rewarded: Number(row.rewarded || 0),
+  }))
+  res.json({
+    date: day,
+    found: true,
+    code: inviter.buddy_id,
+    inviter: {
+      userId: Number(inviter.id),
+      phone: inviter.phone || null,
+      nickname: inviter.nickname || null,
+      buddyId: inviter.buddy_id || null,
+      platform: inviter.last_device_platform || null,
+    },
+    inviteeCount: items.length,
+    watchedUsers: items.filter((row) => row.watches > 0).length,
+    watches: items.reduce((sum, row) => sum + row.watches, 0),
+    rewarded: items.reduce((sum, row) => sum + row.rewarded, 0),
+    items,
   })
 })
 
@@ -1929,6 +2410,7 @@ adminRouter.get('/withdrawals', adminRequired, async (req, res) => {
   const byUserRows = (
     await query(
       `SELECT u.id AS user_id, u.phone, u.nickname, u.buddy_id,
+              u.last_device_platform, u.region, u.last_ip_location,
               count(*)::int AS n,
               count(*) FILTER (WHERE w.status = 'success' AND w.sandbox = FALSE)::int AS success_n,
               COALESCE(SUM(w.amount_fen) FILTER (WHERE w.status = 'success' AND w.sandbox = FALSE), 0)::bigint AS success_fen,
@@ -1940,7 +2422,8 @@ adminRouter.get('/withdrawals', adminRequired, async (req, res) => {
               COALESCE(SUM(w.amount_fen) FILTER (WHERE w.sandbox = TRUE AND w.status = 'success'), 0)::bigint AS sandbox_fen
        FROM withdrawals w
        JOIN users u ON u.id = w.user_id
-       GROUP BY u.id, u.phone, u.nickname, u.buddy_id
+       GROUP BY u.id, u.phone, u.nickname, u.buddy_id,
+                u.last_device_platform, u.region, u.last_ip_location
        ORDER BY success_fen DESC, n DESC, u.id DESC`,
     )
   ).rows
@@ -1953,6 +2436,9 @@ adminRouter.get('/withdrawals', adminRequired, async (req, res) => {
       phone: row.phone || null,
       nickname: row.nickname || null,
       buddyId: row.buddy_id || null,
+      platform: row.last_device_platform || null,
+      region: row.region || null,
+      location: row.last_ip_location || null,
       count: Number(row.n || 0),
       successCount: Number(row.success_n || 0),
       successFen,
@@ -2032,7 +2518,7 @@ adminRouter.get('/withdrawals', adminRequired, async (req, res) => {
       pendingFen: dayPendingFen,
       pendingYuan: (dayPendingFen / 100).toFixed(2),
     },
-    byUser,
+    byUser: byUser.filter((row) => row.successFen > 0).slice(0, 3),
   })
 })
 

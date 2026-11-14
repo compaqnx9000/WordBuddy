@@ -617,6 +617,8 @@ struct WithdrawResult: Equatable {
     var checkIn: CheckInState?
 }
 
+struct MakeupCallbackPending: Error {}
+
 struct APIError: LocalizedError, Equatable {
     var message: String
     var code: String?

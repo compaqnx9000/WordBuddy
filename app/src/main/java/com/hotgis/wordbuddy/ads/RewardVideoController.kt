@@ -52,6 +52,16 @@ object RewardVideoController {
     @Volatile
     private var rewardGranted = false
 
+    /** Ad countdown reached the end. Some networks never send the reward callback. */
+    @Volatile
+    private var videoCompleted = false
+
+    @Volatile
+    private var videoSkipped = false
+
+    @Volatile
+    private var closeDelivered = false
+
     @Volatile
     private var retryAttempt = 0
     private var retryRunnable: Runnable? = null
@@ -153,6 +163,9 @@ object RewardVideoController {
         _ready.value = false
         showing = true
         rewardGranted = false
+        videoCompleted = false
+        videoSkipped = false
+        closeDelivered = false
         shownAd = ad
         pendingCallbacks = callbacks
         try {
@@ -277,16 +290,15 @@ object RewardVideoController {
             }
 
             override fun onAdClose() {
-                Log.i(TAG, "reward closed")
+                Log.i(TAG, "reward closed completed=$videoCompleted skipped=$videoSkipped granted=$rewardGranted")
                 mainHandler.removeCallbacks(showTimeout)
-                val cb = pendingCallbacks
-                clearShowing(ad)
-                cb?.onClosed()
-                activity.runOnUiThread { preload(activity) }
+                // Reward callbacks often arrive after close, or never arrive after the countdown hits zero.
+                mainHandler.post { settleClose(activity, ad) }
             }
 
             override fun onVideoComplete() {
                 Log.i(TAG, "reward video complete")
+                if (!videoSkipped) videoCompleted = true
             }
 
             override fun onVideoError() {
@@ -301,18 +313,46 @@ object RewardVideoController {
                 errorMsg: String?,
             ) {
                 Log.i(TAG, "reward verify=$rewardVerify amount=$rewardAmount name=$rewardName err=$errorCode $errorMsg")
-                if (rewardVerify) notifyRewarded()
+                if (rewardVerify && !videoSkipped) notifyRewarded()
             }
 
             override fun onRewardArrived(isRewardValid: Boolean, rewardType: Int, extraInfo: Bundle?) {
-                Log.i(TAG, "reward arrived valid=$isRewardValid type=$rewardType")
-                if (isRewardValid) notifyRewarded()
+                Log.i(TAG, "reward arrived valid=$isRewardValid type=$rewardType completed=$videoCompleted")
+                if (!videoSkipped && (isRewardValid || videoCompleted)) notifyRewarded()
             }
 
             override fun onSkippedVideo() {
                 Log.i(TAG, "reward skipped")
+                videoSkipped = true
+                videoCompleted = false
             }
         }
+    }
+
+    private fun settleClose(activity: Activity, ad: TTRewardVideoAd) {
+        if (closeDelivered) return
+        if (!videoSkipped && (videoCompleted || rewardGranted)) {
+            notifyRewarded()
+            finishClose(activity, ad)
+            return
+        }
+        if (videoSkipped) {
+            finishClose(activity, ad)
+            return
+        }
+        mainHandler.postDelayed({
+            if (!videoSkipped && (videoCompleted || rewardGranted)) notifyRewarded()
+            finishClose(activity, ad)
+        }, 800L)
+    }
+
+    private fun finishClose(activity: Activity, ad: TTRewardVideoAd) {
+        if (closeDelivered) return
+        closeDelivered = true
+        val cb = pendingCallbacks
+        clearShowing(ad)
+        cb?.onClosed()
+        activity.runOnUiThread { preload(activity) }
     }
 
     private fun notifyRewarded() {
@@ -322,6 +362,8 @@ object RewardVideoController {
     }
 
     private fun finishFailed(activity: Activity?, ad: TTRewardVideoAd?, reason: String) {
+        if (closeDelivered) return
+        closeDelivered = true
         mainHandler.removeCallbacks(showTimeout)
         val cb = pendingCallbacks
         clearShowing(ad)
@@ -332,6 +374,8 @@ object RewardVideoController {
     private fun clearShowing(ad: TTRewardVideoAd?) {
         showing = false
         rewardGranted = false
+        videoCompleted = false
+        videoSkipped = false
         pendingCallbacks = null
         shownAd = null
         destroyAd(ad)

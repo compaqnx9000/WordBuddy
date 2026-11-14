@@ -53,6 +53,9 @@ sealed class CheckInResult {
 
     data class Failed(val message: String) : CheckInResult()
 
+    /** GroMore reward callback has not arrived yet. The caller retries. */
+    data object Pending : CheckInResult()
+
     data object NeedLogin : CheckInResult()
 }
 

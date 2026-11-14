@@ -1,8 +1,8 @@
 {
-  "versionCode": 212,
-  "versionName": "2.21",
+  "versionCode": 217,
+  "versionName": "2.26",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "打开 App 会记入日活，前台停留时间会统计到后台。",
-  "releasedAt": "2026-11-09T14:46:00.000Z"
+  "notes": "当月补签在广告回调成功后发放搭币并记为已补签。桌面图标不再随等级变化。",
+  "releasedAt": "2026-11-14T06:42:00.000Z"
 }

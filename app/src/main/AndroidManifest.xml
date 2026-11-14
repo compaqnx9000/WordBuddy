@@ -99,6 +99,7 @@
     <application
         android:name=".WordBuddyApp"
         android:allowBackup="true"
+        tools:replace="android:allowBackup"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
@@ -158,7 +159,7 @@
             </intent-filter>
         </service>
 
-        <!-- Launcher icons by user level (only one alias enabled at a time). -->
+        <!-- Default launcher. Level aliases stay disabled so older installs can be switched back. -->
         <activity-alias
             android:name=".LauncherLevel0"
             android:enabled="true"
@@ -272,6 +273,15 @@
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
+        </provider>
+        <provider
+            android:name="com.qq.e.comm.GDTFileProvider"
+            android:authorities="${applicationId}.gdt.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/gdt_file_path" />
         </provider>
         <!-- Do NOT declare TTFileProvider: ads-sdk-pro 7.x merges its own
              com.byazt.ae.FileProvider. Declaring the legacy TTFileProvider

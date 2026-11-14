@@ -163,7 +163,7 @@ export async function claimRewardVideo(userId) {
           : `${cooldownLeft} 秒`
       return {
         ok: false,
-        error: `看视频领搭币需间隔 ${formatInterval(cooldownSec)}，请再等 ${waitLabel}`,
+        error: `看广告领搭币需间隔 ${formatInterval(cooldownSec)}，请再等 ${waitLabel}`,
         status,
       }
     }
@@ -283,7 +283,8 @@ export async function verifyGromoreReward(params) {
     )
   ).rows[0]
   if (existing) {
-    return { is_verify: Boolean(existing.reward_allowed), reason: 0 }
+    // 签名已经核过。补签是否给搭币不看每日 20 次；那条上限只在领取「看视频」时生效。
+    return { is_verify: true, reason: 0 }
   }
 
   const userRaw = String(params.user_id || '').trim()
@@ -298,14 +299,15 @@ export async function verifyGromoreReward(params) {
   // 间隔 30 秒，下一次真正的观看不会落在这 40 秒里。
   const recent = (
     await query(
-      `SELECT reward_allowed FROM reward_video_callbacks
+      `SELECT consumed_at FROM reward_video_callbacks
        WHERE user_id = $1 AND created_at > now() - interval '40 seconds'
        ORDER BY id DESC
        LIMIT 1`,
       [userId],
     )
   ).rows[0]
-  if (recent) return { is_verify: Boolean(recent.reward_allowed), reason: 0 }
+  // 同一次观看的第二次回调不再插一行。上一条已经用于发奖时，这是新的一次观看，要单独记下。
+  if (recent && !recent.consumed_at) return { is_verify: true, reason: 0 }
 
   const amount = Number(params.reward_amount)
   const status = await rewardVideoStatus(userId)
@@ -330,7 +332,7 @@ export async function verifyGromoreReward(params) {
       todayShanghai(),
     ],
   )
-  return { is_verify: allow, reason: 0 }
+  return { is_verify: true, reason: 0 }
 }
 
 export async function listAdWatches({ date, q = '', tail = '', page = 1, pageSize = 20 }) {
@@ -376,12 +378,26 @@ export async function listAdWatches({ date, q = '', tail = '', page = 1, pageSiz
       params,
     )
   ).rows[0]
+  const platformRow = (
+    await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE lower(COALESCE(u.last_device_platform, '')) = 'android')::int AS android,
+         COUNT(*) FILTER (WHERE lower(COALESCE(u.last_device_platform, '')) = 'ios')::int AS ios,
+         COUNT(DISTINCT c.user_id) FILTER (WHERE lower(COALESCE(u.last_device_platform, '')) = 'android')::int AS android_users,
+         COUNT(DISTINCT c.user_id) FILTER (WHERE lower(COALESCE(u.last_device_platform, '')) = 'ios')::int AS ios_users
+       FROM reward_video_callbacks c
+       JOIN users u ON u.id = c.user_id
+       WHERE c.watch_date = $1::date AND c.user_id IS NOT NULL`,
+      [day],
+    )
+  ).rows[0]
   const offset = (Math.max(1, page) - 1) * pageSize
   const listParams = [...params, pageSize, offset]
   const limitAt = params.length + 1
   const rows = (
     await query(
       `SELECT u.id AS "userId", u.phone, u.nickname, u.avatar_url AS "avatarUrl",
+              u.last_device_platform AS platform,
               COUNT(*)::int AS watches,
               COUNT(*) FILTER (WHERE c.reward_allowed)::int AS rewarded,
               MAX(c.created_at) AS "lastAt"
@@ -398,6 +414,10 @@ export async function listAdWatches({ date, q = '', tail = '', page = 1, pageSiz
     date: day,
     watches: totalRow?.watches || 0,
     users: totalRow?.users || 0,
+    androidWatches: platformRow?.android || 0,
+    iosWatches: platformRow?.ios || 0,
+    androidUsers: platformRow?.android_users || 0,
+    iosUsers: platformRow?.ios_users || 0,
     usersWatched20Plus: heavyRow?.n || 0,
     total: totalRow?.users || 0,
     items: rows,

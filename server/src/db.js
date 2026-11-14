@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import dotenv from 'dotenv'
@@ -18,6 +19,44 @@ export const pool = new pg.Pool({
 
 export function query(text, params) {
   return pool.query(text, params)
+}
+
+function bucketDeletionPlatform(raw) {
+  const value = String(raw || '').trim().toLowerCase()
+  if (value === 'android') return 'android'
+  if (value === 'ios') return 'ios'
+  if (['web', 'windows', 'macos', 'mac os', 'linux', 'pc'].includes(value)) return 'pc'
+  return 'unknown'
+}
+
+/** Older deletion rows have no platform. Match the phone hash to the earliest login. */
+async function backfillDeletionPlatforms() {
+  const missing = await query(
+    `SELECT id, phone_hash FROM account_deletion_logs WHERE COALESCE(platform, '') = ''`,
+  )
+  if (!missing.rows.length) return
+  const logins = await query(
+    `SELECT phone, user_id, lower(trim(COALESCE(device_platform, ''))) AS platform
+     FROM login_events
+     WHERE success = TRUE AND COALESCE(phone, '') <> ''
+     ORDER BY created_at ASC, id ASC`,
+  )
+  const byHash = new Map()
+  for (const row of logins.rows) {
+    const hash = createHash('sha256').update(String(row.phone)).digest('hex')
+    const orphan = row.user_id == null
+    const prev = byHash.get(hash)
+    if (!prev || (orphan && !prev.orphan)) {
+      byHash.set(hash, { platform: row.platform, orphan })
+    }
+  }
+  for (const log of missing.rows) {
+    const hit = byHash.get(log.phone_hash)
+    await query('UPDATE account_deletion_logs SET platform = $2 WHERE id = $1 AND COALESCE(platform, \'\') = \'\'', [
+      log.id,
+      bucketDeletionPlatform(hit?.platform),
+    ])
+  }
 }
 
 export async function ensureSchema() {
@@ -51,14 +90,25 @@ export async function ensureSchema() {
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS alipay_name TEXT`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_account TEXT`)
   await query(`ALTER TABLE users ALTER COLUMN phone DROP NOT NULL`)
+  await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_openid TEXT`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_unionid TEXT`)
+  await query(`DROP INDEX IF EXISTS users_wechat_openid_unique`)
   await query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS users_wechat_openid_unique ON users (wechat_openid) WHERE wechat_openid IS NOT NULL`,
+    `CREATE UNIQUE INDEX users_wechat_openid_unique ON users (wechat_openid) WHERE wechat_openid IS NOT NULL AND deleted_at IS NULL`,
   )
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_user_id TEXT`)
+  await query(`DROP INDEX IF EXISTS users_apple_user_id_unique`)
   await query(
-    `CREATE UNIQUE INDEX IF NOT EXISTS users_apple_user_id_unique ON users (apple_user_id) WHERE apple_user_id IS NOT NULL`,
+    `CREATE UNIQUE INDEX users_apple_user_id_unique ON users (apple_user_id) WHERE apple_user_id IS NOT NULL AND deleted_at IS NULL`,
+  )
+  await query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_phone_key`)
+  await query(`DROP INDEX IF EXISTS users_phone_key`)
+  await query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS users_phone_active ON users (phone) WHERE phone IS NOT NULL AND deleted_at IS NULL`,
+  )
+  await query(
+    `CREATE INDEX IF NOT EXISTS users_deleted_at ON users (deleted_at DESC) WHERE deleted_at IS NOT NULL`,
   )
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invited_by_user_id BIGINT REFERENCES users (id) ON DELETE SET NULL`)
   await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_bound_at TIMESTAMPTZ`)
@@ -433,8 +483,13 @@ export async function ensureSchema() {
       completed_reason TEXT
     )
   `)
-  await query('CREATE INDEX IF NOT EXISTS users_deletion_due ON users (deletion_due_at) WHERE deletion_due_at IS NOT NULL')
+  await query('DROP INDEX IF EXISTS users_deletion_due')
+  await query(
+    'CREATE INDEX IF NOT EXISTS users_deletion_due ON users (deletion_due_at) WHERE deletion_due_at IS NOT NULL AND deleted_at IS NULL',
+  )
   await query('CREATE INDEX IF NOT EXISTS account_deletion_logs_completed ON account_deletion_logs (completed_at DESC)')
+  await query('ALTER TABLE account_deletion_logs ADD COLUMN IF NOT EXISTS platform TEXT')
+  await backfillDeletionPlatforms()
   await query(`
     CREATE TABLE IF NOT EXISTS short_videos (
       id BIGSERIAL PRIMARY KEY,
@@ -632,5 +687,43 @@ export async function ensureSchema() {
           AND o.owner_user_id = n.owner_user_id
           AND o.name = '默认生词本'
       )
+  `)
+  await query('ALTER TABLE notebooks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ')
+  await query('UPDATE notebooks SET updated_at = created_at WHERE updated_at IS NULL')
+  await query('ALTER TABLE notebooks ALTER COLUMN updated_at SET DEFAULT now()')
+  await query('ALTER TABLE notebooks ALTER COLUMN updated_at SET NOT NULL')
+  await query(`
+    CREATE OR REPLACE FUNCTION notebooks_set_updated_at()
+    RETURNS trigger AS $$
+    BEGIN
+      NEW.updated_at = now();
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `)
+  await query('DROP TRIGGER IF EXISTS notebooks_set_updated_at ON notebooks')
+  await query(`
+    CREATE TRIGGER notebooks_set_updated_at
+    BEFORE UPDATE ON notebooks
+    FOR EACH ROW
+    EXECUTE FUNCTION notebooks_set_updated_at()
+  `)
+  await query(`
+    CREATE OR REPLACE FUNCTION words_touch_notebook()
+    RETURNS trigger AS $$
+    BEGIN
+      UPDATE notebooks
+      SET updated_at = now()
+      WHERE id = COALESCE(NEW.notebook_id, OLD.notebook_id);
+      RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql
+  `)
+  await query('DROP TRIGGER IF EXISTS words_touch_notebook ON words')
+  await query(`
+    CREATE TRIGGER words_touch_notebook
+    AFTER INSERT OR UPDATE OR DELETE ON words
+    FOR EACH ROW
+    EXECUTE FUNCTION words_touch_notebook()
   `)
 }

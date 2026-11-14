@@ -215,6 +215,7 @@ fun ProfileScreen(
                 ).show()
             }
             CheckInResult.NeedLogin -> onLogin()
+            CheckInResult.Pending -> Unit
             is CheckInResult.Failed -> {
                 Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
             }
@@ -230,8 +231,10 @@ fun ProfileScreen(
         if (checkInBusy) return
         checkInBusy = true
         makeupDate = date
-        var rewarded = false
+        var confirmStarted = false
         fun finishMakeupApi() {
+            if (confirmStarted) return
+            confirmStarted = true
             onMakeupCheckIn(date.toString()) { result ->
                 checkInBusy = false
                 makeupDate = null
@@ -261,15 +264,10 @@ fun ProfileScreen(
                             object : RewardVideoController.Callbacks {
                                 override fun onShown() = Unit
                                 override fun onRewarded() {
-                                    rewarded = true
                                     finishMakeupApi()
                                 }
                                 override fun onClosed() {
-                                    if (!rewarded) {
-                                        checkInBusy = false
-                                        makeupDate = null
-                                        Toast.makeText(context, "需看完广告才能补签", Toast.LENGTH_SHORT).show()
-                                    }
+                                    finishMakeupApi()
                                 }
                                 override fun onFailed(reason: String) {
                                     checkInBusy = false
@@ -287,15 +285,10 @@ fun ProfileScreen(
                 object : RewardVideoController.Callbacks {
                     override fun onShown() = Unit
                     override fun onRewarded() {
-                        rewarded = true
                         finishMakeupApi()
                     }
                     override fun onClosed() {
-                        if (!rewarded) {
-                            checkInBusy = false
-                            makeupDate = null
-                            Toast.makeText(context, "需看完广告才能补签", Toast.LENGTH_SHORT).show()
-                        }
+                        finishMakeupApi()
                     }
                     override fun onFailed(reason: String) {
                         checkInBusy = false
@@ -319,7 +312,7 @@ fun ProfileScreen(
         if (rewardCooldownLeft > 0) {
             Toast.makeText(
                 context,
-                "看视频领搭币需间隔 ${formatRewardCooldown(rewardVideo.cooldownSec)}，请再等 ${formatRewardCooldown(rewardCooldownLeft)}",
+                "看广告领搭币需间隔 ${formatRewardCooldown(rewardVideo.cooldownSec)}，请再等 ${formatRewardCooldown(rewardCooldownLeft)}",
                 Toast.LENGTH_SHORT,
             ).show()
             return
@@ -631,7 +624,7 @@ fun ProfileScreen(
                 ProfileMenuRow(
                     icon = Icons.Outlined.PlayCircle,
                     iconTint = Stellar.Gold,
-                    title = "看视频领搭币",
+                    title = "看广告领搭币",
                     trailing = when {
                         !loggedIn -> "登录后每日 ${rewardVideo.dailyLimit} 次"
                         rewardVideo.remaining <= 0 ->

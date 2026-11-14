@@ -834,9 +834,12 @@ actor WordBuddyAPI {
             method: "POST",
             path: "/me/checkin/makeup",
             auth: token,
-            body: ["date": date]
+            body: ["date": date, "awaitCallback": true]
         )
         if !JSONValue.bool(root, key: "ok") {
+            if JSONValue.bool(root, key: "pending") {
+                throw MakeupCallbackPending()
+            }
             if JSONValue.bool(root, key: "already") {
                 let state = try await fetchCheckIn(token: token)
                 return CheckInOutcome(already: true, pointsEarned: 0, streakDays: state.streakDays, totalPoints: state.totalPoints, state: state)
