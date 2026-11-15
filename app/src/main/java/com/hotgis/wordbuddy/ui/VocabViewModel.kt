@@ -9,6 +9,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.hotgis.wordbuddy.ads.RewardVideoController
 import com.hotgis.wordbuddy.audio.TtsPlayer
 import com.hotgis.wordbuddy.data.BuiltInWordbookSeeder
 import com.hotgis.wordbuddy.data.DictionaryClient
@@ -47,6 +48,7 @@ import com.hotgis.wordbuddy.data.NotebookImportResult
 import com.hotgis.wordbuddy.data.VocabBackupNotebook
 import com.hotgis.wordbuddy.data.VocabNotebookExporter
 import com.hotgis.wordbuddy.data.VocabNotebookImporter
+import org.json.JSONObject
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -2817,14 +2819,36 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun claimRewardVideo(onResult: (Result<RewardVideoClaim>) -> Unit) {
+    /**
+     * [confirmed] is false when the ad closed before the SDK reported the reward. The server then
+     * pays only if the ad network's callback arrived during this watch, so keep asking for a few seconds.
+     */
+    fun claimRewardVideo(
+        watch: RewardVideoController.Watch?,
+        confirmed: Boolean,
+        onResult: (Result<RewardVideoClaim>) -> Unit,
+    ) {
         val token = _session.value?.token
         if (token.isNullOrBlank()) {
             onResult(Result.failure(IllegalStateException("请先登录")))
             return
         }
         viewModelScope.launch {
-            val result = runCatching { api.claimRewardVideo(token) }
+            val attempts = if (confirmed) 8 else 6
+            var result: Result<RewardVideoClaim> = Result.failure(IllegalStateException("搭币发放失败"))
+            for (attempt in 0 until attempts) {
+                val last = attempt == attempts - 1
+                // 奖励通知在广告关闭之后才到，也算手机已确认。
+                val nowConfirmed = confirmed || watch?.verified == true
+                result = runCatching { api.claimRewardVideo(token, rewardWatchReport(watch, nowConfirmed, last)) }
+                val waiting = result.exceptionOrNull()?.message?.contains("还没有收到这次视频的奖励确认") == true
+                if (!waiting) break
+                if (last) {
+                    if (!nowConfirmed) result = Result.failure(IllegalStateException("需看完广告才能领搭币"))
+                    break
+                }
+                delay(1_000)
+            }
             result.onSuccess { claim ->
                 _rewardVideo.value = claim.offer
                 applyCheckInPoints(claim.offer.totalPoints)
@@ -2833,6 +2857,23 @@ class VocabViewModel(application: Application) : AndroidViewModel(application) {
             }
             onResult(result)
         }
+    }
+
+    private fun rewardWatchReport(
+        watch: RewardVideoController.Watch?,
+        confirmed: Boolean,
+        final: Boolean,
+    ): JSONObject {
+        val report = JSONObject().put("confirmed", confirmed).put("final", final)
+        if (watch == null) return report
+        report.put("shownAgoSec", watch.shownAgoSec)
+        report.put("adnSignal", watch.adnSignal)
+        report.put("playFinished", watch.playFinished)
+        report.put("skipped", watch.skipped)
+        watch.adn?.let { report.put("adn", it) }
+        watch.ecpm?.let { report.put("ecpm", it) }
+        watch.reason?.let { report.put("reason", it) }
+        return report
     }
 
     fun applyCheckInPoints(totalPoints: Int) {

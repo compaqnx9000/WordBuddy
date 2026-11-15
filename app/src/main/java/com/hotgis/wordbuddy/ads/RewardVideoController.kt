@@ -4,6 +4,7 @@ import android.app.Activity
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import java.lang.ref.WeakReference
 import com.bytedance.sdk.openadsdk.AdSlot
@@ -45,19 +46,60 @@ object RewardVideoController {
     @Volatile
     private var lastFailAtMs = 0L
 
+    /** After close, wait this long for a reward notice before reporting the ad as unconfirmed. */
+    private const val CLOSE_GRACE_MS = 1_500L
+
+    /** How long a closed ad stays alive. Destroying it at close dropped reward checks that were still on the way. */
+    private const val LINGER_MS = 20_000L
+
+    /**
+     * What the SDK reported for one reward ad. The reward notice can land after the ad has closed,
+     * so callers keep this object and re-read [verified] while they ask the server.
+     */
+    class Watch {
+        @Volatile
+        var shownAtMs: Long = SystemClock.elapsedRealtime()
+
+        /** The server-side check passed. Only this pays without asking the server again. */
+        @Volatile
+        var verified = false
+
+        /** The ad network reported a reward, whether or not the server-side check passed. */
+        @Volatile
+        var adnSignal = false
+
+        @Volatile
+        var playFinished = false
+
+        @Volatile
+        var skipped = false
+
+        @Volatile
+        var adn: String? = null
+
+        @Volatile
+        var ecpm: String? = null
+
+        @Volatile
+        var reason: String? = null
+
+        @Volatile
+        internal var notified = false
+
+        val shownAgoSec: Int
+            get() = ((SystemClock.elapsedRealtime() - shownAtMs + 999L) / 1000L).toInt().coerceAtLeast(0)
+    }
+
     private var cachedAd: TTRewardVideoAd? = null
     private var cachedForUserId = ""
     private var pendingCallbacks: Callbacks? = null
     private var shownAd: TTRewardVideoAd? = null
-    @Volatile
-    private var rewardGranted = false
+    private var activeWatch: Watch? = null
 
-    /** Ad countdown reached the end. Some networks never send the reward callback. */
+    /** Signals of the reward ad that was shown last. */
     @Volatile
-    private var videoCompleted = false
-
-    @Volatile
-    private var videoSkipped = false
+    var lastWatch: Watch? = null
+        private set
 
     @Volatile
     private var closeDelivered = false
@@ -109,6 +151,15 @@ object RewardVideoController {
         fun onRewarded()
         fun onClosed()
         fun onFailed(reason: String)
+
+        /**
+         * The ad closed before the SDK confirmed a reward. Screens that pay coins override this and
+         * ask the server. The default keeps the old rule for local gates: a video played to the end counts.
+         */
+        fun onClosedUnconfirmed(watch: Watch) {
+            if (watch.playFinished && !watch.skipped) onRewarded()
+            onClosed()
+        }
     }
 
     fun preload(activity: Activity) {
@@ -162,14 +213,14 @@ object RewardVideoController {
         cachedAd = null
         _ready.value = false
         showing = true
-        rewardGranted = false
-        videoCompleted = false
-        videoSkipped = false
         closeDelivered = false
+        val watch = Watch()
+        activeWatch = watch
+        lastWatch = watch
         shownAd = ad
         pendingCallbacks = callbacks
         try {
-            ad.setRewardAdInteractionListener(interactionListener(activity, ad))
+            ad.setRewardAdInteractionListener(interactionListener(activity, ad, watch))
             ad.showRewardVideoAd(activity)
             mainHandler.postDelayed(showTimeout, SHOW_TIMEOUT_MS)
         } catch (t: Throwable) {
@@ -277,11 +328,18 @@ object RewardVideoController {
     private fun interactionListener(
         activity: Activity,
         ad: TTRewardVideoAd,
+        watch: Watch,
     ): TTRewardVideoAd.RewardAdInteractionListener {
         return object : TTRewardVideoAd.RewardAdInteractionListener {
             override fun onAdShow() {
                 Log.i(TAG, "reward shown")
                 mainHandler.removeCallbacks(showTimeout)
+                watch.shownAtMs = SystemClock.elapsedRealtime()
+                runCatching {
+                    val info = ad.mediationManager?.showEcpm
+                    watch.adn = info?.sdkName
+                    watch.ecpm = info?.ecpm
+                }
                 pendingCallbacks?.onShown()
             }
 
@@ -290,15 +348,18 @@ object RewardVideoController {
             }
 
             override fun onAdClose() {
-                Log.i(TAG, "reward closed completed=$videoCompleted skipped=$videoSkipped granted=$rewardGranted")
+                Log.i(
+                    TAG,
+                    "reward closed adn=${watch.adn} verified=${watch.verified} signal=${watch.adnSignal} " +
+                        "finished=${watch.playFinished} skipped=${watch.skipped}",
+                )
                 mainHandler.removeCallbacks(showTimeout)
-                // Reward callbacks often arrive after close, or never arrive after the countdown hits zero.
-                mainHandler.post { settleClose(activity, ad) }
+                mainHandler.post { settleClose(activity, ad, watch) }
             }
 
             override fun onVideoComplete() {
                 Log.i(TAG, "reward video complete")
-                if (!videoSkipped) videoCompleted = true
+                watch.playFinished = true
             }
 
             override fun onVideoError() {
@@ -313,52 +374,77 @@ object RewardVideoController {
                 errorMsg: String?,
             ) {
                 Log.i(TAG, "reward verify=$rewardVerify amount=$rewardAmount name=$rewardName err=$errorCode $errorMsg")
-                if (rewardVerify && !videoSkipped) notifyRewarded()
+                watch.adnSignal = true
+                if (rewardVerify) {
+                    markVerified(watch)
+                } else {
+                    watch.reason = "verify=false $errorCode ${errorMsg.orEmpty()}".trim().take(160)
+                }
             }
 
             override fun onRewardArrived(isRewardValid: Boolean, rewardType: Int, extraInfo: Bundle?) {
-                Log.i(TAG, "reward arrived valid=$isRewardValid type=$rewardType completed=$videoCompleted")
-                if (!videoSkipped && (isRewardValid || videoCompleted)) notifyRewarded()
+                Log.i(TAG, "reward arrived valid=$isRewardValid type=$rewardType finished=${watch.playFinished}")
+                watch.adnSignal = true
+                if (isRewardValid) {
+                    markVerified(watch)
+                } else if (watch.reason == null) {
+                    watch.reason = "arrived invalid type=$rewardType"
+                }
             }
 
             override fun onSkippedVideo() {
-                Log.i(TAG, "reward skipped")
-                videoSkipped = true
-                videoCompleted = false
+                // 看到「已获得奖励」后点跳过很常见。跳过不取消已经确认或稍后确认的奖励。
+                Log.i(TAG, "reward skipped verified=${watch.verified}")
+                watch.skipped = true
             }
         }
     }
 
-    private fun settleClose(activity: Activity, ad: TTRewardVideoAd) {
-        if (closeDelivered) return
-        if (!videoSkipped && (videoCompleted || rewardGranted)) {
-            notifyRewarded()
-            finishClose(activity, ad)
-            return
-        }
-        if (videoSkipped) {
-            finishClose(activity, ad)
-            return
-        }
-        mainHandler.postDelayed({
-            if (!videoSkipped && (videoCompleted || rewardGranted)) notifyRewarded()
-            finishClose(activity, ad)
-        }, 800L)
+    /** A verified reward counts whenever it arrives: before skip, after skip, or after close. */
+    private fun markVerified(watch: Watch) {
+        watch.verified = true
+        if (watch.notified) return
+        if (watch !== activeWatch || closeDelivered) return
+        watch.notified = true
+        pendingCallbacks?.onRewarded()
     }
 
-    private fun finishClose(activity: Activity, ad: TTRewardVideoAd) {
+    private fun settleClose(activity: Activity, ad: TTRewardVideoAd, watch: Watch) {
+        if (closeDelivered || watch !== activeWatch) return
+        if (watch.verified) {
+            markVerified(watch)
+            finishClose(activity, ad, watch, confirmed = true)
+            return
+        }
+        // The reward notice often lands just after close. Give it a moment before asking the server.
+        val deadline = SystemClock.elapsedRealtime() + CLOSE_GRACE_MS
+        val check = object : Runnable {
+            override fun run() {
+                if (closeDelivered || watch !== activeWatch) return
+                if (watch.verified) {
+                    markVerified(watch)
+                    finishClose(activity, ad, watch, confirmed = true)
+                    return
+                }
+                if (SystemClock.elapsedRealtime() >= deadline) {
+                    finishClose(activity, ad, watch, confirmed = false)
+                    return
+                }
+                mainHandler.postDelayed(this, 150L)
+            }
+        }
+        mainHandler.postDelayed(check, 150L)
+    }
+
+    private fun finishClose(activity: Activity, ad: TTRewardVideoAd, watch: Watch, confirmed: Boolean) {
         if (closeDelivered) return
         closeDelivered = true
         val cb = pendingCallbacks
-        clearShowing(ad)
-        cb?.onClosed()
+        releaseShowing()
+        // 广告对象先留一会儿再销毁。关闭时立刻销毁，会把还在路上的奖励校验一起丢掉。
+        mainHandler.postDelayed({ destroyAd(ad) }, LINGER_MS)
+        if (confirmed) cb?.onClosed() else cb?.onClosedUnconfirmed(watch)
         activity.runOnUiThread { preload(activity) }
-    }
-
-    private fun notifyRewarded() {
-        if (rewardGranted) return
-        rewardGranted = true
-        pendingCallbacks?.onRewarded()
     }
 
     private fun finishFailed(activity: Activity?, ad: TTRewardVideoAd?, reason: String) {
@@ -366,19 +452,17 @@ object RewardVideoController {
         closeDelivered = true
         mainHandler.removeCallbacks(showTimeout)
         val cb = pendingCallbacks
-        clearShowing(ad)
+        releaseShowing()
+        destroyAd(ad)
         cb?.onFailed(reason)
         activity?.let { preload(it) }
     }
 
-    private fun clearShowing(ad: TTRewardVideoAd?) {
+    private fun releaseShowing() {
         showing = false
-        rewardGranted = false
-        videoCompleted = false
-        videoSkipped = false
         pendingCallbacks = null
         shownAd = null
-        destroyAd(ad)
+        activeWatch = null
     }
 
     private fun destroyAd(ad: TTRewardVideoAd?) {

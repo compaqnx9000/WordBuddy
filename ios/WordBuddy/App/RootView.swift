@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum MainTab: Hashable {
     case home
@@ -274,4 +275,85 @@ private struct StellarTabBar: View {
         }
         return Color(uiColor: UIColor(palette.background).withAlphaComponent(0.80))
     }
+}
+
+/// Android-style toast. Its own window sits above a rewarded-video controller,
+/// and it does not take taps.
+enum AppToast {
+    private static var window: ToastWindow?
+    private static var hideWork: DispatchWorkItem?
+
+    static func show(_ text: String) {
+        DispatchQueue.main.async {
+            present(text)
+        }
+    }
+
+    private static func present(_ text: String) {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive })
+            ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
+        else { return }
+
+        hideWork?.cancel()
+        let host = ensureWindow(in: scene)
+        host.isHidden = false
+        let root = host.rootViewController?.view
+        root?.subviews.forEach { $0.removeFromSuperview() }
+
+        let label = UILabel()
+        label.text = text
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 15, weight: .medium)
+        label.numberOfLines = 0
+        label.textAlignment = .center
+
+        let bubble = UIView()
+        bubble.backgroundColor = UIColor.black.withAlphaComponent(0.82)
+        bubble.layer.cornerRadius = 8
+        bubble.clipsToBounds = true
+        bubble.isUserInteractionEnabled = false
+        bubble.translatesAutoresizingMaskIntoConstraints = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        bubble.addSubview(label)
+        root?.addSubview(bubble)
+
+        guard let root else { return }
+        let guide = root.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 10),
+            label.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -10),
+            label.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -16),
+            bubble.centerXAnchor.constraint(equalTo: guide.centerXAnchor),
+            bubble.leadingAnchor.constraint(greaterThanOrEqualTo: guide.leadingAnchor, constant: 32),
+            bubble.trailingAnchor.constraint(lessThanOrEqualTo: guide.trailingAnchor, constant: -32),
+            bubble.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -72),
+        ])
+
+        let work = DispatchWorkItem {
+            host.isHidden = true
+            root.subviews.forEach { $0.removeFromSuperview() }
+        }
+        hideWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+    }
+
+    private static func ensureWindow(in scene: UIWindowScene) -> ToastWindow {
+        if let window, window.windowScene === scene { return window }
+        let created = ToastWindow(windowScene: scene)
+        created.windowLevel = .alert + 1
+        created.backgroundColor = .clear
+        let controller = UIViewController()
+        controller.view.backgroundColor = .clear
+        created.rootViewController = controller
+        created.isHidden = true
+        window = created
+        return created
+    }
+}
+
+private final class ToastWindow: UIWindow {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
 }

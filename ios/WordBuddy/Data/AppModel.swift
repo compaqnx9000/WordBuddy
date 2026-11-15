@@ -822,29 +822,40 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Bottom toast, same idea as Android. Gone after one second, no button to tap.
+    /// Shown on its own window so a rewarded-video controller still on screen cannot cover it.
+    func showToast(_ message: String) {
+        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        AppToast.show(text)
+    }
+
     func watchRewardVideo() async {
         guard session != nil else {
             openLogin()
             return
         }
         if rewardVideo.remaining <= 0 {
-            banner = "今日奖励视频已达 \(rewardVideo.dailyLimit) 次"
+            showToast("今日奖励视频已达 \(rewardVideo.dailyLimit) 次")
             return
         }
         if rewardCooldownLeft > 0 {
-            banner = "看广告领搭币需间隔 \(formatRewardCooldown(rewardVideo.cooldownSec))，请再等 \(formatRewardCooldown(rewardCooldownLeft))"
+            showToast("看广告领搭币需间隔 \(formatRewardCooldown(rewardVideo.cooldownSec))，请再等 \(formatRewardCooldown(rewardCooldownLeft))")
             return
         }
         guard !rewardBusy else { return }
         rewardBusy = true
         let result = await PangleAds.shared.showReward(userId: session.map { String($0.userId) })
+        let watch = PangleAds.shared.lastRewardWatch
         switch result {
         case .rewarded:
-            await claimRewardVideo()
+            await claimRewardVideo(watch: watch, confirmed: true)
         case .skipped:
-            banner = "需看完广告才能领搭币"
+            // 广告关掉时手机没收到奖励通知，不等于没看完。
+            // 用户看到「已获得奖励」马上点跳过时，通知常常晚到。以服务器这次观看期间收到的回调为准。
+            await claimRewardVideo(watch: watch, confirmed: false)
         case .failed(let message):
-            banner = message
+            showToast(message)
         }
         rewardBusy = false
     }
@@ -877,29 +888,52 @@ final class AppModel: ObservableObject {
         return max(0, Int((millis + 999) / 1000))
     }
 
-    private func claimRewardVideo() async {
+    /// `confirmed` is false when the ad closed before the SDK reported the reward.
+    /// The server then pays only if the ad network's callback arrived during this watch.
+    private func claimRewardVideo(watch: RewardWatch?, confirmed: Bool) async {
         guard let session else { return }
-        for attempt in 0..<8 {
+        let attempts = confirmed ? 8 : 6
+        for attempt in 0..<attempts {
+            let last = attempt == attempts - 1
+            // 奖励通知在广告关闭之后才到，也算手机已确认。
+            let nowConfirmed = confirmed || (watch?.verified ?? false)
             do {
-                let claim = try await api.claimRewardVideo(token: session.token)
+                let claim = try await api.claimRewardVideo(
+                    token: session.token,
+                    watch: rewardWatchReport(watch, confirmed: nowConfirmed, final: last)
+                )
                 rewardVideo = claim.offer
                 if claim.offer.totalPoints > 0 {
                     checkIn.totalPoints = claim.offer.totalPoints
                 }
-                banner = "获得 \(claim.points) 搭币，今日剩余 \(claim.offer.remaining)/\(claim.offer.dailyLimit)"
+                showToast("获得 \(claim.points) 搭币，今日剩余 \(claim.offer.remaining)/\(claim.offer.dailyLimit)")
                 return
             } catch {
                 let message = (error as? APIError)?.message ?? error.localizedDescription
-                if message.contains("还没有收到这次视频的奖励确认"), attempt < 7 {
+                let waiting = message.contains("还没有收到这次视频的奖励确认")
+                if waiting, !last {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     continue
                 }
                 if !noteSessionError(error) {
-                    banner = message
+                    showToast(waiting && !nowConfirmed ? "需看完广告才能领搭币" : message)
                 }
                 return
             }
         }
+    }
+
+    private func rewardWatchReport(_ watch: RewardWatch?, confirmed: Bool, final: Bool) -> [String: Any] {
+        var report: [String: Any] = ["confirmed": confirmed, "final": final]
+        guard let watch else { return report }
+        report["shownAgoSec"] = watch.shownAgoSec
+        report["adnSignal"] = watch.adnSignal
+        report["playFinished"] = watch.playFinished
+        report["skipped"] = watch.skipped
+        if let adn = watch.adn { report["adn"] = adn }
+        if let ecpm = watch.ecpm { report["ecpm"] = ecpm }
+        if let reason = watch.reason { report["reason"] = reason }
+        return report
     }
 
     func makeupCheckIn(date: String) async throws {

@@ -651,6 +651,27 @@ export async function ensureSchema() {
     'CREATE INDEX IF NOT EXISTS reward_video_callbacks_user_date ON reward_video_callbacks (user_id, watch_date)',
   )
   await query(`
+    CREATE TABLE IF NOT EXISTS reward_video_reports (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT REFERENCES users (id) ON DELETE CASCADE,
+      platform TEXT,
+      outcome TEXT NOT NULL,
+      adn TEXT,
+      ecpm TEXT,
+      shown_sec INTEGER,
+      confirmed BOOLEAN NOT NULL DEFAULT false,
+      adn_signal BOOLEAN NOT NULL DEFAULT false,
+      play_finished BOOLEAN NOT NULL DEFAULT false,
+      skipped BOOLEAN NOT NULL DEFAULT false,
+      reason TEXT,
+      watch_date DATE NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query(
+    'CREATE INDEX IF NOT EXISTS reward_video_reports_date ON reward_video_reports (watch_date, outcome)',
+  )
+  await query(`
     CREATE TABLE IF NOT EXISTS user_notebook_orders (
       user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
       notebook_id BIGINT NOT NULL REFERENCES notebooks (id) ON DELETE CASCADE,

@@ -137,8 +137,70 @@ export async function rewardVideoStatus(userId) {
   }
 }
 
-export async function claimRewardVideo(userId) {
+function clip(value, max) {
+  const text = String(value ?? '').trim()
+  return text ? text.slice(0, max) : null
+}
+
+/**
+ * What the phone saw for one watch. `confirmed` is false when the ad closed before the SDK
+ * reported the reward, so only a callback that arrived during this watch may pay for it.
+ */
+function normalizeWatch(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const shown = Math.trunc(Number(raw.shownAgoSec))
+  return {
+    confirmed: raw.confirmed !== false,
+    shownAgoSec: Number.isFinite(shown) ? Math.min(900, Math.max(0, shown)) : null,
+    final: raw.final === true,
+    adn: clip(raw.adn, 32),
+    ecpm: clip(raw.ecpm, 32),
+    adnSignal: raw.adnSignal === true,
+    playFinished: raw.playFinished === true,
+    skipped: raw.skipped === true,
+    reason: clip(raw.reason, 200),
+  }
+}
+
+/** Keeps one row per watch that closed without a local reward, so missing callbacks can be traced to a network. */
+async function recordWatchReport(userId, platform, outcome, watch) {
+  try {
+    await query(
+      `INSERT INTO reward_video_reports
+         (user_id, platform, outcome, adn, ecpm, shown_sec, confirmed, adn_signal, play_finished, skipped, reason, watch_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::date)`,
+      [
+        userId,
+        clip(platform, 16),
+        outcome,
+        watch.adn,
+        watch.ecpm,
+        watch.shownAgoSec,
+        watch.confirmed,
+        watch.adnSignal,
+        watch.playFinished,
+        watch.skipped,
+        watch.reason,
+        todayShanghai(),
+      ],
+    )
+  } catch (error) {
+    console.error('[reward-video/report]', error)
+  }
+}
+
+export async function claimRewardVideo(userId, rawWatch = null, platform = null) {
   const today = todayShanghai()
+  const watch = normalizeWatch(rawWatch)
+  const result = await claimRewardVideoOnce(userId, today, watch)
+  if (watch) {
+    if (result.ok && !watch.confirmed) await recordWatchReport(userId, platform, 'recovered', watch)
+    else if (result.pending && watch.final) await recordWatchReport(userId, platform, 'missing', watch)
+  }
+  return result
+}
+
+async function claimRewardVideoOnce(userId, today, watch) {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
@@ -170,27 +232,37 @@ export async function claimRewardVideo(userId) {
     const keyRow = (
       await client.query('SELECT value FROM app_settings WHERE key = $1', [GROMORE_KEY])
     ).rows[0]
-    if (String(keyRow?.value || '').trim()) {
-      const consumed = (
-        await client.query(
-          `UPDATE reward_video_callbacks
-           SET consumed_at = now()
-           WHERE id = (
-             SELECT id FROM reward_video_callbacks
-             WHERE user_id = $1 AND reward_allowed AND consumed_at IS NULL
-               AND created_at > now() - interval '30 minutes'
-             ORDER BY id
-             LIMIT 1
-             FOR UPDATE SKIP LOCKED
-           )
-           RETURNING id`,
-          [userId],
-        )
-      ).rows[0]
+    const callbackRequired = Boolean(String(keyRow?.value || '').trim())
+    if (!callbackRequired && watch && !watch.confirmed) {
+      // 没配回调密钥时只能信手机。手机自己都没收到奖励，就不发。
+      await client.query('ROLLBACK')
+      const status = await rewardVideoStatus(userId)
+      return { ok: false, error: '需看完广告才能领搭币', status }
+    }
+    if (callbackRequired) {
+      const consumed =
+        watch && !watch.confirmed
+          ? await consumeCallbackSinceShown(client, userId, watch.shownAgoSec)
+          : (
+              await client.query(
+                `UPDATE reward_video_callbacks
+                 SET consumed_at = now()
+                 WHERE id = (
+                   SELECT id FROM reward_video_callbacks
+                   WHERE user_id = $1 AND reward_allowed AND consumed_at IS NULL
+                     AND created_at > now() - interval '30 minutes'
+                   ORDER BY id
+                   LIMIT 1
+                   FOR UPDATE SKIP LOCKED
+                 )
+                 RETURNING id`,
+                [userId],
+              )
+            ).rows[0]
       if (!consumed) {
         await client.query('ROLLBACK')
         const status = await rewardVideoStatus(userId)
-        return { ok: false, error: '还没有收到这次视频的奖励确认', status }
+        return { ok: false, pending: true, error: '还没有收到这次视频的奖励确认', status }
       }
     }
     const pointsRow = (
@@ -225,9 +297,38 @@ export async function claimRewardVideo(userId) {
   }
 }
 
-function clip(value, max) {
-  const text = String(value ?? '').trim()
-  return text ? text.slice(0, max) : null
+/**
+ * The ad closed before the phone heard about the reward. Pay only from a callback that arrived
+ * while this ad was on screen. A code-slot callback that trails an earlier Pangle watch by up to
+ * three minutes is that watch's second notice, not proof of this one.
+ */
+async function consumeCallbackSinceShown(client, userId, shownAgoSec) {
+  const windowSec = (shownAgoSec ?? 120) + 5
+  return (
+    await client.query(
+      `UPDATE reward_video_callbacks
+       SET consumed_at = now()
+       WHERE id = (
+         SELECT c.id FROM reward_video_callbacks c
+         WHERE c.user_id = $1 AND c.reward_allowed AND c.consumed_at IS NULL
+           AND c.created_at > now() - make_interval(secs => $2)
+           AND NOT (
+             c.prime_rit IS NULL AND EXISTS (
+               SELECT 1 FROM reward_video_callbacks p
+               WHERE p.user_id = c.user_id AND p.id < c.id
+                 AND p.adn_name = 'pangle'
+                 AND p.created_at > c.created_at - interval '180 seconds'
+                 AND p.created_at <= now() - make_interval(secs => $2)
+             )
+           )
+         ORDER BY c.id
+         LIMIT 1
+         FOR UPDATE OF c SKIP LOCKED
+       )
+       RETURNING id`,
+      [userId, windowSec],
+    )
+  ).rows[0]
 }
 
 function safeEqual(left, right) {
@@ -391,6 +492,24 @@ export async function listAdWatches({ date, q = '', tail = '', page = 1, pageSiz
       [day],
     )
   ).rows[0]
+  // 广告关掉时手机还没收到奖励的那些次：后来等到回调补发了多少，始终没等到回调的又是哪家广告。
+  const reportRows = (
+    await query(
+      `SELECT outcome, COALESCE(NULLIF(adn, ''), '未知') AS adn, COUNT(*)::int AS n
+       FROM reward_video_reports
+       WHERE watch_date = $1::date
+       GROUP BY 1, 2
+       ORDER BY 3 DESC`,
+      [day],
+    )
+  ).rows
+  const closeRecovered = reportRows
+    .filter((row) => row.outcome === 'recovered')
+    .reduce((sum, row) => sum + row.n, 0)
+  const missingByAdn = reportRows
+    .filter((row) => row.outcome === 'missing')
+    .map((row) => ({ adn: row.adn, count: row.n }))
+  const closeMissing = missingByAdn.reduce((sum, row) => sum + row.count, 0)
   const offset = (Math.max(1, page) - 1) * pageSize
   const listParams = [...params, pageSize, offset]
   const limitAt = params.length + 1
@@ -419,6 +538,9 @@ export async function listAdWatches({ date, q = '', tail = '', page = 1, pageSiz
     androidUsers: platformRow?.android_users || 0,
     iosUsers: platformRow?.ios_users || 0,
     usersWatched20Plus: heavyRow?.n || 0,
+    closeRecovered,
+    closeMissing,
+    missingByAdn,
     total: totalRow?.users || 0,
     items: rows,
   }

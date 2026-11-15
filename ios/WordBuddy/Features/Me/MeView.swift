@@ -438,14 +438,14 @@ struct MeView: View {
 
     private var rewardVideoSubtitle: String {
         let offer = model.rewardVideo
-        guard loggedIn else { return "登录后每日 \(offer.dailyLimit) 次" }
+        guard loggedIn else { return "登录后可领" }
         if offer.remaining <= 0 {
-            return "今日已看完 \(offer.usedToday)/\(offer.dailyLimit)"
+            return "今日已看完"
         }
         if model.rewardCooldownLeft > 0 {
-            return "需间隔 \(formatRewardCooldown(offer.cooldownSec)) · 还剩 \(formatRewardCooldown(model.rewardCooldownLeft))"
+            return "等\(formatRewardCooldown(model.rewardCooldownLeft))"
         }
-        return "剩余 \(offer.remaining)/\(offer.dailyLimit) · +\(offer.pointsPerWatch)"
+        return "剩\(offer.remaining)/\(offer.dailyLimit)次 · +\(offer.pointsPerWatch)"
     }
 
     private var rewardsMenu: some View {

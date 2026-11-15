@@ -1431,7 +1431,10 @@ async function render(opts = {}) {
           <div class="stat"><b>${d.androidWatches ?? 0}<small>条</small></b><span>${deviceIcon('android')} ${d.androidUsers ?? 0}个安卓用户</span></div>
           <div class="stat"><b>${d.iosWatches ?? 0}<small>条</small></b><span>${deviceIcon('ios')} ${d.iosUsers ?? 0}个苹果用户</span></div>
           <div class="stat"><b>${d.usersWatched20Plus ?? 0}</b><span>看 ≥20 条</span></div>
+          <div class="stat"><b>${d.closeRecovered ?? 0}<small>条</small></b><span>关闭后等到回调并补发</span></div>
+          <div class="stat"><b>${d.closeMissing ?? 0}<small>条</small></b><span>关闭后一直没有回调</span></div>
         </div>
+        ${(d.missingByAdn || []).length ? `<p class="note">一直没有回调的广告来源：${d.missingByAdn.map((row) => `${esc(row.adn)} ${row.count} 条`).join('、')}。这些次数没有发搭币。新版 App 才会上报这两项。</p>` : ''}
         <table><thead><tr><th>用户</th><th>手机号</th><th>观看条数</th><th>已发奖</th><th>最后一条</th></tr></thead>
         <tbody>${d.items.length ? d.items.map(r => `<tr>
           <td><div class="user-with-device">${adPlatformIcon(r.platform)}<span>${esc(r.nickname || '—')}<div class="sub">#${r.userId}</div></span></div></td>

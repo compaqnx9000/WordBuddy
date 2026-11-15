@@ -16,6 +16,26 @@ enum RewardShowResult {
     case failed(String)
 }
 
+/// What the SDK reported for one reward ad. The reward notice can land after the ad has closed,
+/// so the caller keeps this object and re-reads `verified` while it asks the server.
+@MainActor
+final class RewardWatch {
+    var shownAt = Date()
+    /// The server-side check passed. Only this pays without asking the server again.
+    var verified = false
+    /// The ad network reported a reward, whether or not the server-side check passed.
+    var adnSignal = false
+    var playFinished = false
+    var skipped = false
+    var adn: String?
+    var ecpm: String?
+    var reason: String?
+
+    var shownAgoSec: Int {
+        max(0, Int(Date().timeIntervalSince(shownAt).rounded(.up)))
+    }
+}
+
 @MainActor
 final class PangleAds: NSObject {
     static let shared = PangleAds()
@@ -25,6 +45,9 @@ final class PangleAds: NSObject {
     private var waiters: [(Bool) -> Void] = []
     private var consent: Task<Void, Never>?
     private let rewards = RewardPresenter()
+
+    /// Signals of the reward ad that was shown last.
+    var lastRewardWatch: RewardWatch? { rewards.lastWatch }
 
     /// Shows the tracking prompt once the window is on screen. Ads must wait for this.
     func ensureConsent() -> Task<Void, Never> {
@@ -225,14 +248,22 @@ final class ColdSplashController: UIViewController, BUSplashAdDelegate {
 
 @MainActor
 final class RewardPresenter: NSObject, BUNativeExpressRewardedVideoAdDelegate {
+    /// How long a closed ad stays alive. Releasing it at close dropped reward checks that were still on the way.
+    private static let lingerSeconds: TimeInterval = 20
+    /// After close, wait this long for a reward notice before reporting the ad as unconfirmed.
+    private static let closeGraceSeconds: TimeInterval = 1.5
+
     private var ad: BUNativeExpressRewardedVideoAd?
     private var host: UIViewController?
     private var completion: ((RewardShowResult) -> Void)?
-    private var rewarded = false
+    private var watch: RewardWatch?
+    private var lingering: [(ad: BUNativeExpressRewardedVideoAd, watch: RewardWatch)] = []
     private var settled = false
     private var shown = false
     private var presented = false
     private var timeout: DispatchWorkItem?
+
+    private(set) var lastWatch: RewardWatch?
 
     func show(userId: String?) async -> RewardShowResult {
         await withCheckedContinuation { continuation in
@@ -258,7 +289,9 @@ final class RewardPresenter: NSObject, BUNativeExpressRewardedVideoAdDelegate {
         }
         self.host = host
         self.completion = completion
-        rewarded = false
+        let watch = RewardWatch()
+        self.watch = watch
+        lastWatch = watch
         settled = false
         shown = false
         presented = false
@@ -309,24 +342,82 @@ final class RewardPresenter: NSObject, BUNativeExpressRewardedVideoAdDelegate {
         presentIfReady(rewardedVideoAd)
     }
 
+    /// The ad on screen, or one that closed a moment ago and is still being kept alive.
+    private func watch(for rewardedVideoAd: BUNativeExpressRewardedVideoAd) -> RewardWatch? {
+        if rewardedVideoAd === ad { return watch }
+        return lingering.first { $0.ad === rewardedVideoAd }?.watch
+    }
+
+    private func noteNetwork(_ rewardedVideoAd: BUNativeExpressRewardedVideoAd, into watch: RewardWatch) {
+        if let info = rewardedVideoAd.mediation?.getShowEcpmInfo() {
+            watch.adn = info.adnName
+            watch.ecpm = info.ecpm
+        }
+    }
+
     func nativeExpressRewardedVideoAdDidVisible(_ rewardedVideoAd: BUNativeExpressRewardedVideoAd) {
         shown = true
         timeout?.cancel()
+        guard let watch = watch(for: rewardedVideoAd) else { return }
+        watch.shownAt = Date()
+        noteNetwork(rewardedVideoAd, into: watch)
+    }
+
+    func nativeExpressRewardedVideoAdDidClickSkip(_ rewardedVideoAd: BUNativeExpressRewardedVideoAd) {
+        watch(for: rewardedVideoAd)?.skipped = true
+    }
+
+    func nativeExpressRewardedVideoAdDidPlayFinish(_ rewardedVideoAd: BUNativeExpressRewardedVideoAd, didFailWithError error: Error?) {
+        if error == nil {
+            watch(for: rewardedVideoAd)?.playFinished = true
+        }
     }
 
     func nativeExpressRewardedVideoAdDidClose(_ rewardedVideoAd: BUNativeExpressRewardedVideoAd) {
-        if !settled {
-            finish(rewarded ? .rewarded : .skipped)
+        guard rewardedVideoAd === ad, let watch else { return }
+        // 用户看到「已获得奖励」后马上点跳过时，奖励校验还在路上。
+        // 广告对象先留着，校验结果回来还能收到，服务器也还能收到回调。
+        lingering.append((rewardedVideoAd, watch))
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.lingerSeconds) { [weak self] in
+            self?.lingering.removeAll { $0.ad === rewardedVideoAd }
         }
         ad = nil
         host = nil
+        self.watch = nil
+        guard !settled else { return }
+        if watch.verified {
+            finish(.rewarded)
+            return
+        }
+        Task { @MainActor [weak self] in
+            let deadline = Date().addingTimeInterval(Self.closeGraceSeconds)
+            while !watch.verified, Date() < deadline {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
+            self?.finish(watch.verified ? .rewarded : .skipped)
+        }
     }
 
     func nativeExpressRewardedVideoAdServerRewardDidSucceed(_ rewardedVideoAd: BUNativeExpressRewardedVideoAd, verify: Bool) {
+        guard let watch = watch(for: rewardedVideoAd) else { return }
+        watch.adnSignal = true
+        let detail = rewardedVideoAd.rewardedVideoModel.mediation
+        if let name = detail.adnName, !name.isEmpty { watch.adn = name }
+        if let ecpm = detail.ecpm, !ecpm.isEmpty { watch.ecpm = ecpm }
         if verify {
-            rewarded = true
-            finish(.rewarded)
+            watch.verified = true
+            if rewardedVideoAd === ad {
+                finish(.rewarded)
+            }
+        } else {
+            watch.reason = detail.reason ?? "verify=false"
         }
+    }
+
+    func nativeExpressRewardedVideoAdServerRewardDidFail(_ rewardedVideoAd: BUNativeExpressRewardedVideoAd, error: Error?) {
+        guard let watch = watch(for: rewardedVideoAd) else { return }
+        watch.adnSignal = true
+        watch.reason = error?.localizedDescription ?? "reward check failed"
     }
 }
 
@@ -505,8 +596,22 @@ enum RewardShowResult {
 }
 
 @MainActor
+final class RewardWatch {
+    var verified = false
+    var adnSignal = false
+    var playFinished = false
+    var skipped = false
+    var adn: String?
+    var ecpm: String?
+    var reason: String?
+    var shownAgoSec: Int { 0 }
+}
+
+@MainActor
 final class PangleAds: NSObject {
     static let shared = PangleAds()
+
+    var lastRewardWatch: RewardWatch? { nil }
 
     func showReward(userId: String?) async -> RewardShowResult {
         .failed("广告暂未开放")

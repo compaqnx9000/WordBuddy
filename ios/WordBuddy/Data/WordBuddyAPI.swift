@@ -823,8 +823,11 @@ actor WordBuddyAPI {
         return parseRewardVideo(JSONValue.childObject(root, key: "rewardVideo") ?? [:])
     }
 
-    func claimRewardVideo(token: String) async throws -> (points: Int, offer: RewardVideoOffer) {
-        let root = try await request(method: "POST", path: "/me/reward-video/claim", auth: token, body: [:])
+    /// `watch` tells the server what the phone saw. With `confirmed` false the server pays only
+    /// from a callback that arrived while this ad was on screen.
+    func claimRewardVideo(token: String, watch: [String: Any]? = nil) async throws -> (points: Int, offer: RewardVideoOffer) {
+        let body: [String: Any] = watch.map { ["watch": $0] } ?? [:]
+        let root = try await request(method: "POST", path: "/me/reward-video/claim", auth: token, body: body)
         let offer = parseRewardVideo(JSONValue.childObject(root, key: "rewardVideo") ?? [:])
         return (JSONValue.int(root, key: "pointsEarned"), offer)
     }

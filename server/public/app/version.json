@@ -1,8 +1,8 @@
 {
-  "versionCode": 217,
-  "versionName": "2.26",
+  "versionCode": 218,
+  "versionName": "2.27",
   "apkPath": "/app/WordBuddy-release.apk",
   "force": false,
-  "notes": "当月补签在广告回调成功后发放搭币并记为已补签。桌面图标不再随等级变化。",
-  "releasedAt": "2026-11-14T06:42:00.000Z"
+  "notes": "广告关闭后会再向服务器确认奖励。看完广告后点了跳过，只要奖励确认到了也会发搭币。",
+  "releasedAt": "2026-11-15T03:05:19.000Z"
 }

@@ -135,7 +135,11 @@ fun ProfileScreen(
         cb(CheckInResult.Failed("未实现"))
     },
     rewardVideo: RewardVideoOffer = RewardVideoOffer(),
-    onClaimRewardVideo: ((Result<com.hotgis.wordbuddy.data.RewardVideoClaim>) -> Unit) -> Unit = { cb ->
+    onClaimRewardVideo: (
+        watch: RewardVideoController.Watch?,
+        confirmed: Boolean,
+        onResult: (Result<com.hotgis.wordbuddy.data.RewardVideoClaim>) -> Unit,
+    ) -> Unit = { _, _, cb ->
         cb(Result.failure(IllegalStateException("未实现")))
     },
     onOpenPointsMall: () -> Unit = {},
@@ -325,8 +329,8 @@ fun ProfileScreen(
         if (rewardVideoBusy) return
         rewardVideoBusy = true
         var rewarded = false
-        fun grant() {
-            onClaimRewardVideo { result ->
+        fun grant(watch: RewardVideoController.Watch?, confirmed: Boolean) {
+            onClaimRewardVideo(watch, confirmed) { result ->
                 rewardVideoBusy = false
                 result
                     .onSuccess { claim ->
@@ -348,14 +352,17 @@ fun ProfileScreen(
                 object : RewardVideoController.Callbacks {
                     override fun onShown() = Unit
                     override fun onRewarded() {
+                        if (rewarded) return
                         rewarded = true
-                        grant()
+                        grant(RewardVideoController.lastWatch, confirmed = true)
                     }
-                    override fun onClosed() {
-                        if (!rewarded) {
-                            rewardVideoBusy = false
-                            Toast.makeText(context, "需看完广告才能领搭币", Toast.LENGTH_SHORT).show()
-                        }
+                    override fun onClosed() = Unit
+                    override fun onClosedUnconfirmed(watch: RewardVideoController.Watch) {
+                        if (rewarded) return
+                        rewarded = true
+                        // 广告关掉时手机没收到奖励通知，不等于没看完。
+                        // 以服务器这次观看期间收到的回调为准，等几秒还没有才提示没看完。
+                        grant(watch, confirmed = false)
                     }
                     override fun onFailed(reason: String) {
                         rewardVideoBusy = false

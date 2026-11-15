@@ -606,8 +606,14 @@ class WordBuddyApi {
         parseRewardVideo(root.optJSONObject("rewardVideo"))
     }
 
-    suspend fun claimRewardVideo(token: String): RewardVideoClaim = withContext(Dispatchers.IO) {
-        val root = request("POST", "/me/reward-video/claim", auth = token, body = JSONObject())
+    /**
+     * [watch] tells the server what the phone saw. With `confirmed` false the server pays only
+     * from a callback that arrived while this ad was on screen.
+     */
+    suspend fun claimRewardVideo(token: String, watch: JSONObject? = null): RewardVideoClaim = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+        if (watch != null) body.put("watch", watch)
+        val root = request("POST", "/me/reward-video/claim", auth = token, body = body)
         RewardVideoClaim(
             pointsEarned = root.optInt("pointsEarned", 0),
             offer = parseRewardVideo(root.optJSONObject("rewardVideo")),

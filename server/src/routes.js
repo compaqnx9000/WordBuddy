@@ -1731,9 +1731,14 @@ router.get('/me/reward-video', authRequired, async (req, res) => {
 
 router.post('/me/reward-video/claim', authRequired, async (req, res) => {
   try {
-    const result = await claimRewardVideo(req.user.id)
+    const result = await claimRewardVideo(req.user.id, req.body?.watch, extractDeviceInfo(req).platform)
     if (!result.ok) {
-      res.status(400).json({ ok: false, error: result.error, rewardVideo: result.status || null })
+      res.status(400).json({
+        ok: false,
+        pending: Boolean(result.pending),
+        error: result.error,
+        rewardVideo: result.status || null,
+      })
       return
     }
     res.json({
